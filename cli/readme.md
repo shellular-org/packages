@@ -99,22 +99,7 @@ pnpm run format
 
 - Filesystem access is restricted to the `--dir` root (path traversal is rejected).
 - Files larger than **2 MB** are rejected on read.
-- The CLI connects **outbound only** — no ports are opened on the host machine.
-
-## Contributing & Publishing
-
-This repo uses [Changesets](https://github.com/changesets/changesets) to manage versioning and publishing.
-
-**To propose a version bump for a package:**
-
-```bash
-pnpm changeset
-```
-
-Follow the prompts to select which packages changed and whether the bump is `major`, `minor`, or `patch`. Commit the generated file in `.changeset/`.
-
-**Releasing is fully automated.** The `.github/workflows/release.yml` workflow runs on every push to `main`. It detects pending changeset files, bumps versions, updates changelogs, opens a release PR, and publishes to npm once that PR is merged — no manual steps needed.
 
 ## License
 
-MIT
+Source-Available License
