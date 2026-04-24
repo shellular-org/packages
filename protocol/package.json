@@ -1,6 +1,6 @@
 {
   "name": "@shellular/protocol",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "Shellular wire protocol — shared Zod schemas and TypeScript types.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -20,12 +20,11 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "pnpm run build",
-    "ci:publish": "pnpm publish -r --access public"
+    "ci:publish": "pnpm publish --access public"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "packageManager": "pnpm@10.33.0",
   "dependencies": {
     "zod": "^4.3.6"
   },

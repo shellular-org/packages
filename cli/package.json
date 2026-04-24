@@ -8,7 +8,7 @@
 		"start": "tsx src/main.ts",
 		"build": "tsc && tsup",
 		"prepublishOnly": "pnpm run build",
-		"ci:publish": "pnpm publish -r --access public"
+		"ci:publish": "pnpm publish --access public"
 	},
 	"bin": {
 		"shellular": "dist/main.js"

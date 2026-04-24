@@ -4,13 +4,12 @@
   "description": "",
   "scripts": {
     "build": "pnpm -r run build",
-    "ci:publish": "pnpm publish -r",
+    "ci:publish": "pnpm -r run ci:publish",
     "format": "pnpx @biomejs/biome check --write"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "packageManager": "pnpm@10.33.0",
   "devDependencies": {
     "@biomejs/biome": "^2.4.13",
     "@changesets/cli": "^2.31.0"
