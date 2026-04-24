@@ -592,6 +592,8 @@ export class Connection extends EventEmitter {
 				logger.error(
 					`Decrypted message of type ${baseMsg.data.type} failed validation:`,
 					plaintext,
+					"\nerror",
+					innerMsg.error,
 				);
 				return;
 			}
