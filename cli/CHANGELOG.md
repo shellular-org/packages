@@ -1,5 +1,13 @@
 # shellular
 
+## 0.0.7
+
+### Patch Changes
+
+- d6ec5f0: feat: move all protocol in @shellular/protocol package
+- Updated dependencies [d6ec5f0]
+  - @shellular/protocol@0.0.2
+
 ## 0.0.6
 
 ### Patch Changes
