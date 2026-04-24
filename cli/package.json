@@ -1,0 +1,59 @@
+{
+	"name": "shellular",
+	"version": "0.0.6",
+	"description": "Shellular CLI — host your dev environment for remote access from your phone.",
+	"main": "dist/main.js",
+	"scripts": {
+		"dev": "cross-env SHELLULAR_DEV=true tsx --watch src/main.ts",
+		"start": "tsx src/main.ts",
+		"build": "tsc && tsup",
+		"prepublishOnly": "pnpm run build",
+		"ci:publish": "pnpm publish -r --access public"
+	},
+	"bin": {
+		"shellular": "dist/main.js"
+	},
+	"keywords": [
+		"shellular",
+		"remote",
+		"development",
+		"cli"
+	],
+	"license": "MIT",
+	"type": "module",
+	"files": [
+		"dist",
+		"readme.md",
+		"LICENSE"
+	],
+	"dependencies": {
+		"@anthropic-ai/claude-agent-sdk": "^0.2.112",
+		"@inquirer/prompts": "^8.4.2",
+		"@opencode-ai/sdk": "1.4.3",
+		"@shellular/protocol": "workspace:*",
+		"@xterm/addon-serialize": "^0.14.0",
+		"@xterm/headless": "^6.0.0",
+		"chalk": "^5.6.2",
+		"commander": "^14.0.3",
+		"libsodium-wrappers": "^0.8.3",
+		"nanoid": "^5.1.7",
+		"node-machine-id": "^1.1.12",
+		"node-pty": "^1.2.0-beta.12",
+		"pm2": "^6.0.14",
+		"qrcode-terminal": "^0.12.0",
+		"semver": "^7.7.4",
+		"ws": "^8.20.0",
+		"zod": "^4.3.6"
+	},
+	"devDependencies": {
+		"@types/node": "^22.0.0",
+		"@types/qrcode-terminal": "^0.12.2",
+		"@types/semver": "^7.7.1",
+		"@types/vscode": "^1.116.0",
+		"@types/ws": "^8.18.0",
+		"cross-env": "^10.1.0",
+		"tsup": "^8.5.1",
+		"tsx": "^4.21.0",
+		"typescript": "^6.0.2"
+	}
+}

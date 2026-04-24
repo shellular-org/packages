@@ -1,0 +1,96 @@
+import { z } from "zod";
+
+import {
+	AiAbortMsgSchema,
+	AiAgentsListMsgSchema,
+	AiAuthSetMsgSchema,
+	AiAvailabilityMsgSchema,
+	AiCommandMsgSchema,
+	AiMessagesListMsgSchema,
+	AiPermissionReplyMsgSchema,
+	AiPromptMsgSchema,
+	AiProvidersListMsgSchema,
+	AiQuestionRejectMsgSchema,
+	AiQuestionReplyMsgSchema,
+	AiRevertMsgSchema,
+	AiSessionCreateMsgSchema,
+	AiSessionDeleteMsgSchema,
+	AiSessionGetMsgSchema,
+	AiSessionListMsgSchema,
+	AiShareMsgSchema,
+	AiUnrevertMsgSchema,
+} from "@/ai";
+import { PongMsgSchema } from "@/base";
+import {
+	FsDeleteMsgSchema,
+	FsListMsgSchema,
+	FsMkdirMsgSchema,
+	FsReadMsgSchema,
+	FsRenameMsgSchema,
+	FsStatMsgSchema,
+	FsWriteMsgSchema,
+	GitReadMsgSchema,
+	ProjectInfoMsgSchema,
+} from "@/filesystem";
+import {
+	HttpRequestMsgSchema,
+	WsCloseMsgSchema,
+	WsDataMsgSchema,
+	WsOpenMsgSchema,
+} from "@/http";
+import { PortsKillMsgSchema, PortsListMsgSchema } from "@/ports";
+import { SysmonGetMsgSchema } from "@/sysmon";
+import {
+	TerminalAttachMsgSchema,
+	TerminalCloseMsgSchema,
+	TerminalCreateMsgSchema,
+	TerminalDataMsgSchema,
+	TerminalListMsgSchema,
+	TerminalResizeMsgSchema,
+} from "@/terminal";
+
+export const ClientToHostMsgSchema = z.discriminatedUnion("type", [
+	TerminalCreateMsgSchema,
+	TerminalListMsgSchema,
+	TerminalAttachMsgSchema,
+	TerminalDataMsgSchema,
+	TerminalResizeMsgSchema,
+	TerminalCloseMsgSchema,
+	FsListMsgSchema,
+	FsReadMsgSchema,
+	FsWriteMsgSchema,
+	FsMkdirMsgSchema,
+	FsDeleteMsgSchema,
+	FsRenameMsgSchema,
+	FsStatMsgSchema,
+	SysmonGetMsgSchema,
+	HttpRequestMsgSchema,
+	WsOpenMsgSchema,
+	WsDataMsgSchema,
+	WsCloseMsgSchema,
+	PongMsgSchema,
+	PortsListMsgSchema,
+	PortsKillMsgSchema,
+	ProjectInfoMsgSchema,
+	GitReadMsgSchema,
+	AiAvailabilityMsgSchema,
+	AiSessionListMsgSchema,
+	AiSessionCreateMsgSchema,
+	AiSessionGetMsgSchema,
+	AiSessionDeleteMsgSchema,
+	AiMessagesListMsgSchema,
+	AiPromptMsgSchema,
+	AiAbortMsgSchema,
+	AiAgentsListMsgSchema,
+	AiProvidersListMsgSchema,
+	AiAuthSetMsgSchema,
+	AiCommandMsgSchema,
+	AiRevertMsgSchema,
+	AiUnrevertMsgSchema,
+	AiShareMsgSchema,
+	AiPermissionReplyMsgSchema,
+	AiQuestionReplyMsgSchema,
+	AiQuestionRejectMsgSchema,
+]);
+
+export type ClientToHostMsg = z.infer<typeof ClientToHostMsgSchema>;

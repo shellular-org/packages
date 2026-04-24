@@ -1,0 +1,6 @@
+packages:
+  - 'cli'
+  - 'protocol'
+allowBuilds:
+  esbuild: true
+  node-pty: true

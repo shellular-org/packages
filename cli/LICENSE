@@ -1,0 +1,77 @@
+Shellular Source-Available License
+Copyright (c) 2026 Foxbiz Software Pvt. Ltd. All rights reserved.
+
+Contact: contact@shellular.dev | shellular@foxbiz.io
+Website: https://shellular.dev
+
+────────────────────────────────────────────────────────────────────────────────
+
+1. DEFINITIONS
+   ────────────────────────────────────────────────────────────────────────────────
+   "Software" means the source code, compiled binaries, documentation, and any
+   other files in this repository or distribution.
+
+"Non-Commercial Use" means personal, educational, research, or open-source
+use where no revenue, compensation, or commercial advantage is derived,
+directly or indirectly, from the Software or any product or service that
+incorporates it.
+
+"Commercial Use" means any use of the Software — including internal business
+use, SaaS, on-premises deployment, resale, or integration into a paid product
+or service — that generates revenue, reduces cost, or provides any commercial
+benefit to any individual, company, or organisation.
+
+"You" (or "Your") refers to the individual or legal entity exercising rights
+under this License.
+
+──────────────────────────────────────────────────────────────────────────────── 2. NON-COMMERCIAL USE — PERMITTED
+────────────────────────────────────────────────────────────────────────────────
+Subject to the attribution requirements in Section 4, You are free to:
+a. Use the Software for Non-Commercial Use.
+b. Copy, modify, and distribute the Software (or derivatives) for
+Non-Commercial Use, provided all copies retain this License in full
+and clearly state any modifications You made.
+
+──────────────────────────────────────────────────────────────────────────────── 3. COMMERCIAL USE — REQUIRES WRITTEN PERMISSION
+────────────────────────────────────────────────────────────────────────────────
+Commercial Use of the Software, in original or modified form, requires prior
+written permission from Foxbiz Software Pvt. Ltd.
+
+To request a commercial licence, contact: contact@shellular.dev
+
+Using the Software for Commercial Use without such permission is a breach of
+this License and an infringement of copyright.
+
+──────────────────────────────────────────────────────────────────────────────── 4. ATTRIBUTION (REQUIRED IN ALL CASES)
+────────────────────────────────────────────────────────────────────────────────
+Any distribution, publication, or public deployment of the Software or a
+derivative work — whether under Non-Commercial or a granted Commercial licence
+— must:
+a. Retain this License file unmodified.
+b. Display the following notice in a prominent location (e.g. README,
+About page, CLI help text, or documentation):
+
+       "Built with Shellular CLI Bridge by Foxbiz Software Pvt. Ltd.
+        https://shellular.dev"
+
+c. Not remove or obscure any copyright, trademark, or attribution notices
+present in the original Software.
+
+──────────────────────────────────────────────────────────────────────────────── 5. RESTRICTIONS
+────────────────────────────────────────────────────────────────────────────────
+You may NOT:
+a. Sub-license, sell, or transfer this License or any rights granted by it
+without written permission from Foxbiz Software Pvt. Ltd.
+b. Use the name "Shellular", "Foxbiz", or any associated trademarks to
+endorse or promote derivative works without prior written consent.
+c. Remove or alter this License from any copy of the Software.
+
+──────────────────────────────────────────────────────────────────────────────── 6. DISCLAIMER OF WARRANTIES
+────────────────────────────────────────────────────────────────────────────────
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. IN NO EVENT SHALL FOXBIZ
+SOFTWARE PVT. LTD. BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF,
+OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

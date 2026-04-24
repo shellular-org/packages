@@ -1,0 +1,99 @@
+{
+	"name": "shellular",
+	"displayName": "Shellular Extension for GitHub Copilot",
+	"description": "Exposes VS Code Copilot language models to the Shellular CLI via a local Unix socket",
+	"version": "1.0.0",
+	"publisher": "shellular",
+	"license": "SEE LICENSE IN LICENSE",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/shellular-org/cli"
+	},
+	"author": {
+		"name": "Foxbiz Software Pvt. Ltd.",
+		"email": "contact@shellular.dev"
+	},
+	"bugs": {
+		"url": "https://github.com/shellular-org/cli/issues",
+		"email": "contact@shellular.dev"
+	},
+	"homepage": "https://shellular.dev",
+	"engines": {
+		"vscode": "^1.90.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./dist/extension.js",
+	"icon": "assets/logo.png",
+	"contributes": {
+		"commands": [
+			{
+				"command": "shellular.startBridge",
+				"title": "Shellular: Start CLI Bridge"
+			},
+			{
+				"command": "shellular.refreshDevices",
+				"title": "Shellular: Refresh",
+				"icon": "$(refresh)"
+			},
+			{
+				"command": "shellular.clearLogs",
+				"title": "Shellular: Clear Activity Log",
+				"icon": "$(clear-all)"
+			}
+		],
+		"menus": {
+			"view/title": [
+				{
+					"command": "shellular.refreshDevices",
+					"when": "view == shellularBridge.devices",
+					"group": "navigation"
+				},
+				{
+					"command": "shellular.clearLogs",
+					"when": "view == shellularBridge.devices",
+					"group": "navigation"
+				}
+			],
+			"view/item/context": [
+				{
+					"command": "shellular.clearLogs",
+					"when": "viewItem == shellularLogsSection",
+					"group": "inline"
+				}
+			]
+		},
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "shellularBridge",
+					"title": "Shellular",
+					"icon": "assets/logo.png"
+				}
+			]
+		},
+		"views": {
+			"shellularBridge": [
+				{
+					"id": "shellularBridge.devices",
+					"name": "Shellular Bridge"
+				}
+			]
+		}
+	},
+	"scripts": {
+		"compile": "tsc -p tsconfig.json",
+		"watch": "tsc -watch -p tsconfig.json",
+		"build:vsix": "vsce package --out ../shellular-cli-bridge.vsix"
+	},
+	"devDependencies": {
+		"@types/node": "^22.0.0",
+		"@types/vscode": "^1.90.0",
+		"@vscode/vsce": "^3.0.0",
+		"typescript": "^5.0.0"
+	}
+}

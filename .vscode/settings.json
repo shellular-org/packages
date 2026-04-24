@@ -1,0 +1,18 @@
+{
+	"editor.codeActionsOnSave": {
+		"quickFix.biome": "explicit",
+		"source.organizeImports.biome": "explicit"
+	},
+	"[json]": {
+		"editor.defaultFormatter": "biomejs.biome"
+	},
+	"cSpell.words": [
+		"ciphertext",
+		"collab",
+		"EUNAVAILABLE",
+		"opencode",
+		"SHELLULAR",
+		"unarchived",
+		"unrevert"
+	]
+}
