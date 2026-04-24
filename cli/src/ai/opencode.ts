@@ -8,9 +8,8 @@ import {
 	createOpencodeClient,
 	createOpencodeServer,
 } from "@opencode-ai/sdk/v2";
-
-import { logger } from "@/logger";
 import type { AiMessage, AiSession } from "@shellular/protocol";
+import { logger } from "@/logger";
 import type {
 	AIProvider,
 	AiEventEmitter,

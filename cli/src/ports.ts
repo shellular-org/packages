@@ -1,12 +1,11 @@
 import { execSync, spawnSync } from "node:child_process";
 import os from "node:os";
-
-import type { Connection } from "./connection";
 import {
 	MsgType,
 	type PortsKillResultMsg,
 	type PortsListResultMsg,
 } from "@shellular/protocol";
+import type { Connection } from "./connection";
 
 export function initPortsHandler(conn: Connection) {
 	conn.on(MsgType.PORTS_LIST, (msg) => {

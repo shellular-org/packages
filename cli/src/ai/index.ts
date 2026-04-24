@@ -1,5 +1,5 @@
-import { logger } from "@/logger";
 import type { AiBackend, AiSession } from "@shellular/protocol";
+import { logger } from "@/logger";
 import { ClaudeCodeProvider } from "./claude-code";
 import { CodexProvider } from "./codex";
 import { CopilotProvider } from "./copilot";

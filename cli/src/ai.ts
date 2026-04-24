@@ -1,6 +1,3 @@
-import type { AiManager } from "./ai/index";
-import type { Connection } from "./connection";
-import { logger } from "./logger";
 import {
 	type AiAbortMsg,
 	type AiAgentsListMsg,
@@ -18,6 +15,9 @@ import {
 	type AiSessionListMsg,
 	MsgType,
 } from "@shellular/protocol";
+import type { AiManager } from "./ai/index";
+import type { Connection } from "./connection";
+import { logger } from "./logger";
 
 function getErrorMessage(err: unknown): string {
 	if (err instanceof Error) return err.message;

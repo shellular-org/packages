@@ -2,13 +2,12 @@ import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import { promisify } from "node:util";
-
-import type { Connection } from "./connection";
 import {
 	type BatteryUpdateMsg,
 	MsgType,
 	type SysmonResultMsg,
 } from "@shellular/protocol";
+import type { Connection } from "./connection";
 
 const execFileAsync = promisify(execFile);
 

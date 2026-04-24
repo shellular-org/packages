@@ -4,10 +4,16 @@ import os from "node:os";
 import path from "node:path";
 
 import { checkbox, confirm } from "@inquirer/prompts";
+import type { HostInfo } from "@shellular/protocol";
+import {
+	type AiAvailabilityResultMsg,
+	MsgType,
+	type SessionClientJoinMsg,
+	type SessionClientLeftMsg,
+} from "@shellular/protocol";
 import chalk from "chalk";
 import { Command } from "commander";
 import qrcode from "qrcode-terminal";
-
 import { initAiHandler } from "@/ai";
 import {
 	notifyExtensionClientPresence,
@@ -41,17 +47,10 @@ import { installVsCodeExtension } from "@/install-extension";
 import { logger } from "@/logger";
 import { notify } from "@/notify";
 import { initPortsHandler } from "@/ports";
-import {
-	type AiAvailabilityResultMsg,
-	MsgType,
-	type SessionClientJoinMsg,
-	type SessionClientLeftMsg,
-} from "@shellular/protocol";
 import { cleanupProxy, initProxyHandler } from "@/proxy";
 import { ServerUrl } from "@/server-url";
 import { initBatteryStream, initSysmonHandler } from "@/sysmon";
 import { initTerminalHandler } from "@/terminal";
-import type { HostInfo } from "@shellular/protocol";
 import { checkForUpdate } from "@/update-check";
 import packageJson from "../package.json";
 

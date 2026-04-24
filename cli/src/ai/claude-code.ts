@@ -13,14 +13,13 @@ import {
 	listSessions,
 	query,
 } from "@anthropic-ai/claude-agent-sdk";
-
-import { logger } from "@/logger";
 import type {
 	AiMessage,
 	AiMessagePart,
 	AiMessagePartToolCall,
 	AiSession,
 } from "@shellular/protocol";
+import { logger } from "@/logger";
 import type {
 	ClaudeAssistantMessage,
 	ClaudeSessionEntry,

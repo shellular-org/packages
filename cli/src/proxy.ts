@@ -1,10 +1,8 @@
 import type http from "node:http";
 import { request as httpRequest } from "node:http";
-
-import WebSocket from "ws";
-
-import type { Connection } from "./connection";
 import { MsgType } from "@shellular/protocol";
+import WebSocket from "ws";
+import type { Connection } from "./connection";
 
 const ALLOWED_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
 const CHUNK_SIZE = 256 * 1024; // 256KB per chunk

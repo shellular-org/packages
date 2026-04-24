@@ -238,3 +238,70 @@ export const ProjectInfoResultMsgSchema = z.object({
 		.optional(),
 });
 export type ProjectInfoResultMsg = z.infer<typeof ProjectInfoResultMsgSchema>;
+
+export const ProjectFileSearchMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.PROJECT_FILE_SEARCH),
+	clientId: z.string(),
+	data: z.object({
+		path: z.string(),
+		query: z.string(),
+		limit: z.number().optional(),
+		selectedPath: z.string().optional(),
+		includeHistory: z.boolean().optional(),
+		refresh: z.boolean().optional(),
+	}),
+});
+export type ProjectFileSearchMsg = z.infer<typeof ProjectFileSearchMsgSchema>;
+
+export const ProjectFileSearchResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.PROJECT_FILE_SEARCH_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			path: z.string(),
+			query: z.string(),
+			entries: z.array(
+				z.object({
+					name: z.string(),
+					path: z.string(),
+					relativePath: z.string(),
+					type: z.enum(["directory", "file"]),
+					size: z.number(),
+					modified: z.number(),
+					gitStatus: GitStatusSchema.nullable().optional(),
+					score: z
+						.object({
+							total: z.number(),
+							matchType: z.string(),
+							exactMatch: z.boolean(),
+							filenameBonus: z.number(),
+							frecencyBoost: z.number(),
+							comboMatchBoost: z.number(),
+						})
+						.optional(),
+				}),
+			),
+			history: z.array(z.string()),
+			status: z.object({
+				isScanning: z.boolean(),
+				scannedFilesCount: z.number(),
+				indexedFiles: z.number().optional(),
+				diagnostics: z
+					.object({
+						nativeAvailable: z.boolean(),
+						gitAvailable: z.boolean().optional(),
+						repositoryFound: z.boolean().optional(),
+						issues: z.array(z.string()),
+					})
+					.optional(),
+			}),
+		})
+		.optional(),
+});
+export type ProjectFileSearchResultMsg = z.infer<
+	typeof ProjectFileSearchResultMsgSchema
+>;

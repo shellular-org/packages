@@ -6,11 +6,6 @@ import XtermHeadless, { type Terminal } from "@xterm/headless";
 
 const { Terminal: HeadlessTerminal } = XtermHeadless;
 
-import chalk from "chalk";
-import * as nodePty from "node-pty";
-
-import type { Connection } from "./connection";
-import { logger } from "./logger";
 import {
 	MsgType,
 	type TerminalAttachResultMsg,
@@ -18,6 +13,10 @@ import {
 	type TerminalCreateResultMsg,
 	type TerminalListResultMsg,
 } from "@shellular/protocol";
+import chalk from "chalk";
+import * as nodePty from "node-pty";
+import type { Connection } from "./connection";
+import { logger } from "./logger";
 import { mapGetOrInsert } from "./utils";
 
 interface TerminalEntry {

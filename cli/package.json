@@ -28,6 +28,7 @@
 	],
 	"dependencies": {
 		"@anthropic-ai/claude-agent-sdk": "^0.2.112",
+		"@ff-labs/fff-node": "^0.6.4",
 		"@inquirer/prompts": "^8.4.2",
 		"@opencode-ai/sdk": "1.4.3",
 		"@shellular/protocol": "workspace:*",

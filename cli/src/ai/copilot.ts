@@ -4,8 +4,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline/promises";
-import { logger } from "@/logger";
 import type { AiMessage, AiMessagePart, AiSession } from "@shellular/protocol";
+import { logger } from "@/logger";
 import type {
 	AIProvider,
 	AiEventEmitter,

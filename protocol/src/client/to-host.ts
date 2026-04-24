@@ -30,6 +30,7 @@ import {
 	FsStatMsgSchema,
 	FsWriteMsgSchema,
 	GitReadMsgSchema,
+	ProjectFileSearchMsgSchema,
 	ProjectInfoMsgSchema,
 } from "@/filesystem";
 import {
@@ -72,6 +73,7 @@ export const ClientToHostMsgSchema = z.discriminatedUnion("type", [
 	PortsListMsgSchema,
 	PortsKillMsgSchema,
 	ProjectInfoMsgSchema,
+	ProjectFileSearchMsgSchema,
 	GitReadMsgSchema,
 	AiAvailabilityMsgSchema,
 	AiSessionListMsgSchema,

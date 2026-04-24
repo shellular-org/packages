@@ -1,12 +1,7 @@
 import { EventEmitter } from "node:events";
-import { nanoid } from "nanoid";
-import WebSocket from "ws";
-import { decrypt, encrypt } from "./encryption";
-import { logger } from "./logger";
+
+import type { HostInfo } from "@shellular/protocol";
 import {
-	BaseMsgSchema,
-	type HostToClientMsg,
-	type HostToServerMsg,
 	type AiAbortMsg,
 	type AiAgentsListMsg,
 	type AiAuthSetMsg,
@@ -25,6 +20,7 @@ import {
 	type AiSessionListMsg,
 	type AiShareMsg,
 	type AiUnrevertMsg,
+	BaseMsgSchema,
 	EncryptedMsgSchema,
 	type FsDeleteMsg,
 	type FsListMsg,
@@ -36,13 +32,16 @@ import {
 	type GitReadMsg,
 	type HostHandshakeMsg,
 	HostHandshakeRespMsgSchema,
-	type HttpRequestMsg,
 	type HostIncomingMsg,
 	HostIncomingMsgSchema,
+	type HostToClientMsg,
+	type HostToServerMsg,
+	type HttpRequestMsg,
 	MsgType,
 	PLAINTEXT_TYPES,
 	type PortsKillMsg,
 	type PortsListMsg,
+	type ProjectFileSearchMsg,
 	type ProjectInfoMsg,
 	parseMessage,
 	type SessionClientJoinedMsg,
@@ -61,8 +60,12 @@ import {
 	type WsDataMsg,
 	type WsOpenMsg,
 } from "@shellular/protocol";
-import type { HostInfo } from "@shellular/protocol";
+import { nanoid } from "nanoid";
+import WebSocket from "ws";
+
 import { config } from "./config";
+import { decrypt, encrypt } from "./encryption";
+import { logger } from "./logger";
 
 export interface ClientInfo {
 	clientId: string;
@@ -183,6 +186,10 @@ export class Connection extends EventEmitter {
 	on(
 		eventName: typeof MsgType.PROJECT_INFO,
 		listener: (msg: ProjectInfoMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.PROJECT_FILE_SEARCH,
+		listener: (msg: ProjectFileSearchMsg) => void,
 	): this;
 	on(
 		eventName: typeof MsgType.GIT_READ,
@@ -377,6 +384,10 @@ export class Connection extends EventEmitter {
 		listener: (msg: ProjectInfoMsg) => void,
 	): this;
 	once(
+		eventName: typeof MsgType.PROJECT_FILE_SEARCH,
+		listener: (msg: ProjectFileSearchMsg) => void,
+	): this;
+	once(
 		eventName: typeof MsgType.GIT_READ,
 		listener: (msg: GitReadMsg) => void,
 	): this;
@@ -463,6 +474,10 @@ export class Connection extends EventEmitter {
 	emit(eventName: typeof MsgType.FS_RENAME, msg: FsRenameMsg): boolean;
 	emit(eventName: typeof MsgType.FS_STAT, msg: FsStatMsg): boolean;
 	emit(eventName: typeof MsgType.PROJECT_INFO, msg: ProjectInfoMsg): boolean;
+	emit(
+		eventName: typeof MsgType.PROJECT_FILE_SEARCH,
+		msg: ProjectFileSearchMsg,
+	): boolean;
 	emit(eventName: typeof MsgType.GIT_READ, msg: GitReadMsg): boolean;
 	emit(eventName: typeof MsgType.PORTS_LIST, msg: PortsListMsg): boolean;
 	emit(eventName: typeof MsgType.PORTS_KILL, msg: PortsKillMsg): boolean;

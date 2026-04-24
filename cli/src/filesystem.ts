@@ -1,13 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import type { Connection } from "./connection";
-import {
-	computeEntryGitStatus,
-	findGitRoot,
-	getFileGitStatuses,
-	getProjectGitInfo,
-} from "./git";
 import {
 	type FsListMsg,
 	type FsListResultMsg,
@@ -23,9 +16,20 @@ import {
 	type GitReadMsg,
 	type GitReadResultMsg,
 	MsgType,
+	type ProjectFileSearchMsg,
+	type ProjectFileSearchResultMsg,
 	type ProjectInfoMsg,
 	type ProjectInfoResultMsg,
 } from "@shellular/protocol";
+
+import type { Connection } from "./connection";
+import {
+	computeEntryGitStatus,
+	findGitRoot,
+	getFileGitStatuses,
+	getProjectGitInfo,
+} from "./git";
+import { searchProjectFiles } from "./project-search";
 
 /**
  * Resolve a path relative to rootDir and verify it doesn't escape.
@@ -411,6 +415,63 @@ export function initFilesystemHandler(conn: Connection, rootDir: string) {
 		} catch (err) {
 			const respMsg: ProjectInfoResultMsg = {
 				type: MsgType.PROJECT_INFO_RESULT,
+				clientId,
+				respTo: msg.id,
+				error: (err as Error).message,
+			};
+			conn.send(respMsg);
+		}
+	});
+
+	conn.on(MsgType.PROJECT_FILE_SEARCH, async (msg: ProjectFileSearchMsg) => {
+		const { clientId } = msg;
+		const projectPath = safePath(rootDir, msg.data.path);
+		if (!projectPath) {
+			const respMsg: ProjectFileSearchResultMsg = {
+				type: MsgType.PROJECT_FILE_SEARCH_RESULT,
+				clientId,
+				respTo: msg.id,
+				error: "Access denied: path outside workspace",
+			};
+			conn.send(respMsg);
+			return;
+		}
+
+		try {
+			const stat = fs.statSync(projectPath);
+			if (!stat.isDirectory()) {
+				const respMsg: ProjectFileSearchResultMsg = {
+					type: MsgType.PROJECT_FILE_SEARCH_RESULT,
+					clientId,
+					respTo: msg.id,
+					error: "Project path is not a directory",
+				};
+				conn.send(respMsg);
+				return;
+			}
+
+			const entries = await searchProjectFiles(projectPath, msg.data.query, {
+				limit: msg.data.limit,
+				selectedPath: msg.data.selectedPath,
+				includeHistory: msg.data.includeHistory,
+				refresh: msg.data.refresh,
+			});
+			const respMsg: ProjectFileSearchResultMsg = {
+				type: MsgType.PROJECT_FILE_SEARCH_RESULT,
+				clientId,
+				respTo: msg.id,
+				data: {
+					path: msg.data.path,
+					query: msg.data.query,
+					entries: entries.entries,
+					history: entries.history,
+					status: entries.status,
+				},
+			};
+			conn.send(respMsg);
+		} catch (err) {
+			const respMsg: ProjectFileSearchResultMsg = {
+				type: MsgType.PROJECT_FILE_SEARCH_RESULT,
 				clientId,
 				respTo: msg.id,
 				error: (err as Error).message,

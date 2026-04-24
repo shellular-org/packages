@@ -88,6 +88,10 @@ export const MsgType = {
 	PROJECT_INFO: "project:info",
 	/** Response with git info for a project directory */
 	PROJECT_INFO_RESULT: "project:info:result",
+	/** Request to search project files */
+	PROJECT_FILE_SEARCH: "project:file-search",
+	/** Response with project file search results */
+	PROJECT_FILE_SEARCH_RESULT: "project:file-search:result",
 	/** Request to read original file content from git */
 	GIT_READ: "git:read",
 	/** Response with original file content from git */
