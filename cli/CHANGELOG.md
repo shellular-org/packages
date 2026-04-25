@@ -1,5 +1,11 @@
 # shellular
 
+## 0.0.10
+
+### Patch Changes
+
+- 745d948: fix: improve clients command printing & add client --delete option
+
 ## 0.0.9
 
 ### Patch Changes
