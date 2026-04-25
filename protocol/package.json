@@ -22,6 +22,9 @@
     "prepublishOnly": "pnpm run build",
     "ci:publish": "pnpm publish --access public"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
