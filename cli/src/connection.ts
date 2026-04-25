@@ -21,6 +21,7 @@ import {
 	type AiShareMsg,
 	type AiUnrevertMsg,
 	BaseMsgSchema,
+	type ClientInfo,
 	EncryptedMsgSchema,
 	type FsDeleteMsg,
 	type FsListMsg,
@@ -66,12 +67,6 @@ import WebSocket from "ws";
 import { config } from "./config";
 import { decrypt, encrypt } from "./encryption";
 import { logger } from "./logger";
-
-export interface ClientInfo {
-	clientId: string;
-	appVersion: string;
-	platform: string;
-}
 
 const HEARTBEAT_INTERVAL_MS = 25_000;
 
@@ -556,6 +551,7 @@ export class Connection extends EventEmitter {
 					logger.error(
 						`Received invalid message of type ${baseMsg.data.type}:`,
 						msg.error,
+						JSON.stringify(baseMsg.data),
 					);
 				} else {
 					logger.error(`Received invalid message of type ${baseMsg.data.type}`);
@@ -605,11 +601,7 @@ export class Connection extends EventEmitter {
 	private dispatchMessage(msg: HostIncomingMsg) {
 		// Handle client joined/left events
 		if (msg.type === MsgType.SESSION_CLIENT_JOINED) {
-			this.connectedClients.set(msg.data.clientId, {
-				clientId: msg.data.clientId,
-				appVersion: msg.data.appVersion,
-				platform: msg.data.platform,
-			});
+			this.connectedClients.set(msg.data.clientId, msg.data);
 		} else if (msg.type === MsgType.SESSION_CLIENT_LEFT) {
 			this.connectedClients.delete(msg.data.clientId);
 		}

@@ -1,5 +1,5 @@
 import fs from "node:fs";
-
+import type { ClientInfo } from "@shellular/protocol";
 import { z } from "zod";
 
 import { config } from "@/config";
@@ -7,8 +7,12 @@ import { logger } from "@/logger";
 
 const KnownClientSchema = z.object({
 	clientId: z.string(),
+	hostId: z.string().optional(),
 	platform: z.string(),
 	appVersion: z.string(),
+	deviceModel: z.string().optional(),
+	deviceIsEmulator: z.boolean().optional(),
+	deviceManufacturer: z.string().optional(),
 	firstSeen: z.string(),
 	lastSeen: z.string(),
 	approved: z.boolean(),
@@ -55,13 +59,11 @@ export function getClientApproval(clientId: string): boolean | null {
 	return client.approved;
 }
 
-export function upsertClient(
-	info: { clientId: string; platform: string; appVersion: string },
-	approved: boolean,
-): void {
+export function upsertClient(info: ClientInfo, approved: boolean): void {
 	const clients = readKnownClients();
 	const now = new Date().toISOString();
 	const existing = clients[info.clientId];
+
 	clients[info.clientId] = existing
 		? {
 				...existing,
@@ -69,6 +71,11 @@ export function upsertClient(
 				lastSeen: now,
 				approved,
 			}
-		: { ...info, firstSeen: now, lastSeen: now, approved };
+		: {
+				...info,
+				firstSeen: now,
+				lastSeen: now,
+				approved,
+			};
 	writeKnownClients(clients);
 }

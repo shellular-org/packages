@@ -318,12 +318,8 @@ export function initTerminalHandler(conn: Connection, workDir: string) {
 			orphanedSince.set(clientId, Date.now());
 			logger.log(
 				chalk.yellow(
-					`⏳ Client ${clientId} disconnected — keeping ${termCount} PTY(s) alive (TTL: 7 days)\n`,
+					`⏳ Client ${clientId} disconnected — keeping ${termCount} PTY(s) alive (TTL: 7 days)`,
 				),
-			);
-		} else {
-			logger.log(
-				chalk.red(`✗ Client ${clientId} disconnected (no active terminals)\n`),
 			);
 		}
 	});

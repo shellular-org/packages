@@ -55,14 +55,24 @@ export const SessionErrorMsgSchema = z.object({
 });
 export type SessionErrorMsg = z.infer<typeof SessionErrorMsgSchema>;
 
+export const ClientInfoSchema = z.object({
+	hostId: z.string(),
+	clientId: z.string(),
+	appVersion: z.string(),
+	platform: z.string(),
+	deviceModel: z.string(),
+	deviceIsEmulator: z.union([
+		z.boolean(),
+		z.enum(["true", "false"]).transform((val) => val === "true"),
+	]),
+	deviceManufacturer: z.string(),
+});
+export type ClientInfo = z.infer<typeof ClientInfoSchema>;
+
 export const SessionClientJoinedMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.SESSION_CLIENT_JOINED),
-	data: z.object({
-		clientId: z.string(),
-		appVersion: z.string(),
-		platform: z.string(),
-	}),
+	data: ClientInfoSchema,
 });
 export type SessionClientJoinedMsg = z.infer<
 	typeof SessionClientJoinedMsgSchema
@@ -82,11 +92,7 @@ export type SessionClientLeftMsg = z.infer<typeof SessionClientLeftMsgSchema>;
 export const SessionClientJoinMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.SESSION_CLIENT_JOIN),
-	data: z.object({
-		clientId: z.string(),
-		appVersion: z.string(),
-		platform: z.string(),
-	}),
+	data: ClientInfoSchema,
 });
 export type SessionClientJoinMsg = z.infer<typeof SessionClientJoinMsgSchema>;
 

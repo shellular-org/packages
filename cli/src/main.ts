@@ -184,7 +184,9 @@ function createProgram(): Command {
 				}
 
 				const choices = all.map((c) => ({
-					name: `${chalk.blueBright(c.clientId)} - ${chalk.yellowBright(c.platform)} ${chalk.gray(`v${c.appVersion}`)}. ${chalk.gray(`first seen: ${new Date(c.firstSeen).toLocaleString()}`)}`,
+					name: `${chalk.blueBright(c.clientId)}
+    - ${formatClientDeviceInfo(c)}
+    - ${chalk.gray(`App v${c.appVersion}`)}. ${chalk.gray(`first seen: ${new Date(c.firstSeen).toLocaleString()}`)}`,
 					value: c.clientId,
 					checked: c.approved,
 				}));
@@ -230,6 +232,35 @@ async function confirmWrapper(message: string): Promise<boolean> {
 		);
 		return false;
 	}
+}
+
+function formatClientDeviceInfo({
+	deviceManufacturer: manufacturer,
+	deviceModel: model,
+	deviceIsEmulator: isEmulator,
+	platform,
+}: {
+	deviceManufacturer?: string;
+	deviceModel?: string;
+	deviceIsEmulator?: boolean;
+	platform: string;
+}): string {
+	manufacturer = manufacturer?.trim() ?? "";
+	model = model?.trim() ?? "";
+
+	let deviceName = [manufacturer, model]
+		.filter((value, index, values) => value && values.indexOf(value) === index)
+		.join(" ");
+
+	if (!deviceName) {
+		deviceName = platform;
+	} else {
+		deviceName = `${deviceName}, ${platform}`;
+	}
+
+	return isEmulator
+		? `${deviceName} ${chalk.yellowBright("[Emulator]")}`
+		: deviceName;
 }
 
 async function runCli({
@@ -387,7 +418,9 @@ async function runCli({
 				conn.on(
 					MsgType.SESSION_CLIENT_JOIN,
 					async (msg: SessionClientJoinMsg) => {
-						const { clientId, appVersion, platform } = msg.data;
+						const { clientId } = msg.data;
+
+						const deviceSummary = formatClientDeviceInfo(msg.data);
 
 						const approval = getClientApproval(clientId);
 						if (approval === true) {
@@ -427,12 +460,12 @@ async function runCli({
 						}
 
 						// Record as pending/unapproved
-						upsertClient({ clientId, appVersion, platform }, false);
+						upsertClient(msg.data, false);
 
 						notify({
 							title: "Shellular Client Approval",
 							body: [
-								`Client ${clientId} (${platform}, v${appVersion}) is requesting to connect.`,
+								`Client ${clientId} (${deviceSummary}) is requesting to connect.`,
 								isDaemon
 									? "Run `npx shellular clients` to manage approvals."
 									: "Approve or reject the connection in the terminal.",
@@ -442,10 +475,10 @@ async function runCli({
 						if (!isDaemon) {
 							// Foreground: ask the user interactively
 							const allow = await confirmWrapper(
-								`Allow ${chalk.cyan(clientId)} (${platform}, v${appVersion}) to connect?`,
+								`Allow ${chalk.cyan(clientId)} (${deviceSummary}) to connect?`,
 							);
 							if (allow) {
-								upsertClient({ clientId, appVersion, platform }, true);
+								upsertClient(msg.data, true);
 								conn.send({
 									type: MsgType.SESSION_CLIENT_JOIN_RESULT,
 									data: { clientId, approved: true },
@@ -463,7 +496,7 @@ async function runCli({
 								data: { clientId, approved: false },
 							});
 							logger.warn(
-								`Unknown client ${clientId} (${platform}) tried to connect. Run ${chalk.cyan("npx shellular clients")} to approve.`,
+								`Unknown client ${clientId} (${deviceSummary}) tried to connect. Run \`${chalk.cyan("npx shellular clients")}\` to approve.`,
 							);
 						}
 					},
@@ -475,9 +508,22 @@ async function runCli({
 				});
 
 				conn.on(MsgType.SESSION_CLIENT_JOINED, (msg) => {
+					upsertClient(
+						{
+							clientId: msg.data.clientId,
+							hostId: msg.data.hostId,
+							appVersion: msg.data.appVersion,
+							platform: msg.data.platform,
+							deviceModel: msg.data.deviceModel,
+							deviceIsEmulator: msg.data.deviceIsEmulator,
+							deviceManufacturer: msg.data.deviceManufacturer,
+						},
+						true,
+					);
+					const deviceSummary = formatClientDeviceInfo(msg.data);
 					notify({
 						title: "Shellular Client Connected",
-						body: `Client ${msg.data.clientId} connected (${msg.data.platform}, v${msg.data.appVersion}).`,
+						body: `Client ${msg.data.clientId} connected on ${deviceSummary} (${msg.data.platform}, v${msg.data.appVersion}).`,
 					});
 
 					logger.log(
@@ -485,7 +531,7 @@ async function runCli({
 							`✓ Client ${msg.data.clientId} connected on ${new Date().toLocaleString()}`,
 						),
 					);
-					logger.log(`  - ${chalk.green("Platform:")} ${msg.data.platform}`);
+					logger.log(`  - ${chalk.green("Device:")} ${deviceSummary}`);
 					logger.log(
 						`  - ${chalk.green("App Version:")} v${msg.data.appVersion}\n`,
 					);
