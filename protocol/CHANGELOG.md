@@ -1,5 +1,11 @@
 # @shellular/protocol
 
+## 0.0.4
+
+### Patch Changes
+
+- 776c3d1: feat: accept device info from client during connection
+
 ## 0.0.3
 
 ### Patch Changes
