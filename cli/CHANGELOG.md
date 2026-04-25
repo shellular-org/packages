@@ -1,5 +1,13 @@
 # shellular
 
+## 0.0.8
+
+### Patch Changes
+
+- 4409fb6: fix: add username to hostinfo & remove npm_config_prefix from PTY env
+- Updated dependencies [4409fb6]
+  - @shellular/protocol@0.0.3
+
 ## 0.0.7
 
 ### Patch Changes
