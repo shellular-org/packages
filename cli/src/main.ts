@@ -284,6 +284,7 @@ async function runCli({
 
 	const hostInfo: HostInfo = {
 		id: hostId,
+		username: config.USERNAME,
 		hostname: os.hostname(),
 		platform: os.platform(),
 		dir: workDir,

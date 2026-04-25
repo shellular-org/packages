@@ -96,7 +96,7 @@ function createTerminal({
 	cols,
 	cwd,
 }: CreateTerminalOptions): TerminalEntry {
-	const {npm_config_prefix, ...cleanEnv} = process.env;
+	const { npm_config_prefix, ...cleanEnv } = process.env;
 	const pty = nodePty.spawn(shellPath, [], {
 		name: "xterm-256color",
 		cols,
