@@ -28,6 +28,7 @@ import {
 } from "@/boot-lock";
 import { startCaffeinate, stopCaffeinate } from "@/caffeinate";
 import {
+	deleteKnownClient,
 	getClientApproval,
 	readKnownClients,
 	upsertClient,
@@ -91,6 +92,10 @@ type CliOptions = {
 };
 
 type DaemonOptions = Pick<CliOptions, "server" | "dir" | "unknownClients">;
+
+type ClientsCommandOptions = {
+	delete?: string;
+};
 
 /**
  * `isDaemon` is an internal flag to indicate whether the CLI is running in daemon mode (started with __daemon command).
@@ -174,8 +179,23 @@ function createProgram(): Command {
 	program
 		.command("clients")
 		.description("Manage client device approvals")
-		.action(async () => {
+		.option("--delete <clientId>", "Delete a known client from the store")
+		.action(async (options: ClientsCommandOptions) => {
 			try {
+				if (options.delete) {
+					const deleted = deleteKnownClient(options.delete);
+					if (!deleted) {
+						logger.error(chalk.red(`Client ${options.delete} was not found.`));
+						process.exitCode = 1;
+						return;
+					}
+
+					logger.log(
+						chalk.green(`Deleted client ${options.delete} from known clients.`),
+					);
+					return;
+				}
+
 				const store = readKnownClients();
 				const all = Object.values(store);
 				if (all.length === 0) {
@@ -183,18 +203,22 @@ function createProgram(): Command {
 					return;
 				}
 
+				const clientInfoFormatted = (c: (typeof all)[0]) => `
+    ${formatClientDeviceInfo(c)}
+    ${chalk.gray(`App v${c.appVersion}`)}. ${chalk.gray(`first seen: ${new Date(c.firstSeen).toLocaleString()}`)}`;
+
 				const choices = all.map((c) => ({
-					name: `${chalk.blueBright(c.clientId)}
-    - ${formatClientDeviceInfo(c)}
-    - ${chalk.gray(`App v${c.appVersion}`)}. ${chalk.gray(`first seen: ${new Date(c.firstSeen).toLocaleString()}`)}`,
+					name: `${chalk.blueBright(c.clientId)} ${chalk.gray("(not allowed)")}${clientInfoFormatted(c)}`,
+					checkedName: `${chalk.blueBright(c.clientId)} ${chalk.gray("(allowed)")}${clientInfoFormatted(c)}`,
 					value: c.clientId,
 					checked: c.approved,
 				}));
 
 				const approvedIds = await checkbox({
-					message:
-						"Select clients to approve (space to toggle, enter to save):",
+					message: `Choose which clients can connect (${all.length} total) — Space to toggle, Enter to save`,
 					choices,
+					loop: false,
+					pageSize: 5,
 				});
 
 				const updated = Object.fromEntries(

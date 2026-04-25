@@ -46,6 +46,17 @@ export function writeKnownClients(clients: KnownClientsStore): void {
 	fs.writeFileSync(config.CLIENTS_FILE, JSON.stringify(clients, null, 2));
 }
 
+export function deleteKnownClient(clientId: string): boolean {
+	const clients = readKnownClients();
+	if (!(clientId in clients)) {
+		return false;
+	}
+
+	delete clients[clientId];
+	writeKnownClients(clients);
+	return true;
+}
+
 /**
  * Returns `true` if the client is approved, `false` if explicitly rejected,
  * or `null` if the client is not yet known.
