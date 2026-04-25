@@ -7,6 +7,7 @@ import { MsgType } from "./base";
 export const HostInfoSchema = z.object({
 	id: z.string(),
 	hostname: z.string(),
+	username: z.string(),
 	platform: z.string(),
 	dir: z.string(),
 	machineId: z.string(),
@@ -36,6 +37,7 @@ export const SessionJoinedMsgSchema = z.object({
 	type: z.literal(MsgType.SESSION_JOINED),
 	respTo: z.string().optional(),
 	data: z.object({
+		username: z.string(),
 		hostname: z.string(),
 		platform: z.string(),
 		dir: z.string(),

@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
+    "dev:cli": "pnpm --filter protocol run build && cd cli && pnpm run dev",
     "build": "pnpm -r run build",
     "ci:publish": "pnpm -r run ci:publish",
     "format": "pnpx @biomejs/biome check --write"
