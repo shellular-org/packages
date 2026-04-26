@@ -29,17 +29,22 @@ export const SysmonResultMsgSchema = z.object({
 			memory: z.object({
 				total: z.number(),
 				used: z.number(),
+				available: z.number(),
 				free: z.number(),
+				usage: z.number(),
 			}),
 			storage: z.array(
 				z.object({
+					label: z.string(),
 					mount: z.string(),
 					total: z.number(),
 					used: z.number(),
 					free: z.number(),
+					usage: z.number(),
 				}),
 			),
 			uptime: z.number(),
+			recordedAt: z.number(),
 		})
 		.optional(),
 });

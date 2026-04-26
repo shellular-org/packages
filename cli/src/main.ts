@@ -4,9 +4,9 @@ import os from "node:os";
 import path from "node:path";
 
 import { checkbox, confirm } from "@inquirer/prompts";
-import type { HostInfo } from "@shellular/protocol";
 import {
 	type AiAvailabilityResultMsg,
+	type HostInfo,
 	MsgType,
 	type SessionClientJoinMsg,
 	type SessionClientLeftMsg,
@@ -14,6 +14,7 @@ import {
 import chalk from "chalk";
 import { Command } from "commander";
 import qrcode from "qrcode-terminal";
+
 import { initAiHandler } from "@/ai";
 import {
 	notifyExtensionClientPresence,
