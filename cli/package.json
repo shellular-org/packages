@@ -1,6 +1,6 @@
 {
 	"name": "shellular",
-	"version": "0.0.10",
+	"version": "0.0.11",
 	"description": "Shellular CLI — host your dev environment for remote access from your phone.",
 	"main": "dist/main.js",
 	"scripts": {
@@ -11,7 +11,7 @@
 		"ci:publish": "pnpm publish --access public"
 	},
 	"publishConfig": {
-    	"access": "public"
+		"access": "public"
 	},
 	"bin": {
 		"shellular": "dist/main.js"

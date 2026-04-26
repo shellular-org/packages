@@ -1,5 +1,11 @@
 # @shellular/protocol
 
+## 0.0.5
+
+### Patch Changes
+
+- 68e650e: fix(sysmon): fix sysmon stats
+
 ## 0.0.4
 
 ### Patch Changes
