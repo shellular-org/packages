@@ -107,3 +107,5 @@ export async function getOrRegisterHostId(
 export const config = {
 	..._config,
 };
+
+export const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";

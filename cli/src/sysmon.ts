@@ -120,7 +120,10 @@ async function getMemory(): Promise<MemoryStats> {
 				]);
 			const vmStats = parseVmStatBytes(vmStatStdout);
 			const platformTotal = Number(memSizeStdout.trim()) || total;
-			const free = clampBytes(vmStats["Pages free"] ?? fallbackFree, platformTotal);
+			const free = clampBytes(
+				vmStats["Pages free"] ?? fallbackFree,
+				platformTotal,
+			);
 			const available = clampBytes(
 				(vmStats["Pages free"] ?? 0) +
 					(vmStats["Pages inactive"] ?? 0) +
@@ -239,7 +242,9 @@ async function getStorage(): Promise<StorageEntry[]> {
 					entry.total > 0,
 			);
 
-		const relevant = parsed.filter((entry) => isRelevantStorageMount(entry.mount));
+		const relevant = parsed.filter((entry) =>
+			isRelevantStorageMount(entry.mount),
+		);
 		const preferred = relevant.length > 0 ? relevant : parsed;
 		const deduped =
 			process.platform === "darwin" &&
@@ -345,8 +350,7 @@ export function initSysmonHandler(conn: Connection) {
 				respTo: msg.id,
 				data: {
 					cpu: {
-						model:
-							cpus[0]?.model.replace(/\s+/g, " ").trim() || "Unknown CPU",
+						model: cpus[0]?.model.replace(/\s+/g, " ").trim() || "Unknown CPU",
 						cores: cpus.length,
 						usage: cpuUsage,
 					},
