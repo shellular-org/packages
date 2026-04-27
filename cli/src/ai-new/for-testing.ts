@@ -3,6 +3,7 @@ import readline from "node:readline/promises";
 
 import type * as acp from "@agentclientprotocol/sdk";
 import type { ACP } from "./base";
+import { ClaudeCode } from "./claude-code";
 import { Codex } from "./codex";
 import { OpenCode } from "./opencode";
 
@@ -68,7 +69,9 @@ function renderUpdate(notification: acp.SessionNotification) {
 
 async function pickAgent(): Promise<ACP> {
 	while (true) {
-		const choice = await ask("Choose agent (1=Codex, 2=OpenCode): ");
+		const choice = await ask(
+			"Choose agent (1=Codex, 2=OpenCode, 3=ClaudeCode): ",
+		);
 		if (choice === "1") {
 			const agent = Codex.create();
 			if (!agent) throw new Error("Codex not found. Is it installed?");
@@ -77,6 +80,11 @@ async function pickAgent(): Promise<ACP> {
 		if (choice === "2") {
 			const agent = OpenCode.create();
 			if (!agent) throw new Error("OpenCode not found. Is it installed?");
+			return agent;
+		}
+		if (choice === "3") {
+			const agent = ClaudeCode.create();
+			if (!agent) throw new Error("ClaudeCode not found. Is it installed?");
 			return agent;
 		}
 		console.log("Invalid choice, try again.");

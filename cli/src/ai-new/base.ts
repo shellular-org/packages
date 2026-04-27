@@ -13,7 +13,7 @@ export interface AgentProcessConfig {
 	/** The executable of agent on the system to check if it's available or not.
 	 * eg. `codex`, `opencode`, `claude` etc.
 	 */
-	agentExec: "opencode" | "codex";
+	agentExec: "opencode" | "codex" | "claude";
 	/** The executable to invoke (e.g. `"opencode"`, `"npx"`). */
 	command: string;
 	/** Command-line arguments passed to the executable. */
@@ -81,7 +81,7 @@ export class ACP {
 	 * Returns `null` if the executable is not found on `PATH`.
 	 */
 	static spawnAgentProcess(config: AgentProcessConfig): SpawnedAgent | null {
-		if (!commandExists(config.command)) {
+		if (!commandExists(config.agentExec)) {
 			return null;
 		}
 

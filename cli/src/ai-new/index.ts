@@ -2,19 +2,21 @@ import { type AiBackend, MsgType } from "@shellular/protocol";
 
 import type { Connection } from "@/connection";
 import { logger } from "@/logger";
+import { ClaudeCode } from "./claude-code";
 import { Codex } from "./codex";
 import { OpenCode } from "./opencode";
 
-type AgentClass = typeof Codex | typeof OpenCode;
+type AgentClass = typeof Codex | typeof OpenCode | typeof ClaudeCode;
 type Agent = InstanceType<AgentClass>;
 
 export class AgentsManager {
 	static agentClassMapping: Record<
-		Extract<AiBackend, "codex" | "opencode">,
+		Extract<AiBackend, "codex" | "opencode" | "claude-code">,
 		AgentClass
 	> = {
 		codex: Codex,
 		opencode: OpenCode,
+		"claude-code": ClaudeCode,
 	};
 
 	agents: Map<AiBackend, Agent>;
