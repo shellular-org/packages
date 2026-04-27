@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+
 export function mapGetOrInsert<K, V>(
 	map: Map<K, V>,
 	key: K,
@@ -10,4 +12,17 @@ export function mapGetOrInsert<K, V>(
 	}
 
 	return value;
+}
+
+export function commandExists(command: string): boolean {
+	try {
+		const checker = process.platform === "win32" ? "where" : "which";
+		const result = spawnSync(checker, [command], {
+			stdio: "ignore",
+			shell: false,
+		});
+		return result.status === 0;
+	} catch {
+		return false;
+	}
 }
