@@ -31,8 +31,12 @@ export class AgentUnavailableError extends AiNewError {
 
 export class PermissionNotFoundError extends AiNewError {
 	constructor(permissionId: string) {
-		super(`Permission request "${permissionId}" was not found`, "EPERM_NOT_FOUND", {
-			permissionId,
-		});
+		super(
+			`Permission request "${permissionId}" was not found`,
+			"EPERM_NOT_FOUND",
+			{
+				permissionId,
+			},
+		);
 	}
 }

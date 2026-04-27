@@ -54,7 +54,6 @@ import { ServerUrl } from "@/server-url";
 import { initBatteryStream, initSysmonHandler } from "@/sysmon";
 import { initTerminalHandler } from "@/terminal";
 import { checkForUpdate } from "@/update-check";
-import packageJson from "../package.json";
 
 const DEFAULT_SERVER_URL = "wss://api.shellular.dev";
 const APP_URL = "https://shellular.dev";

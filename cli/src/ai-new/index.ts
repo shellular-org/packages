@@ -64,7 +64,8 @@ export class AgentsManager {
 		let agent = this.agents.get(agentId);
 		if (!agent) {
 			const descriptor = this.descriptors.get(agentId);
-			if (!descriptor) throw new AgentUnavailableError(agentId, "unknown agent");
+			if (!descriptor)
+				throw new AgentUnavailableError(agentId, "unknown agent");
 			agent = new ACP(descriptor);
 			this.agents.set(agentId, agent);
 			// ACP permission requests are client-side JSON-RPC calls. Convert them
@@ -72,8 +73,9 @@ export class AgentsManager {
 			agent.onPermission((permission) => {
 				const backend = descriptor.backend ?? (descriptor.id as AiBackend);
 				const clientId =
-					this.sessionClientIds.get(this.sessionKey(agentId, permission.sessionId)) ??
-					"";
+					this.sessionClientIds.get(
+						this.sessionKey(agentId, permission.sessionId),
+					) ?? "";
 				this.emit(clientId, backend, {
 					type: "permission.updated",
 					properties: {
@@ -104,7 +106,10 @@ export class AgentsManager {
 	) {
 		const agent = await this.connectAgent(agentId);
 		const result = await agent.createSession(cwd, options);
-		this.sessionAgents.set(result.session.id ?? result.response.sessionId, agentId);
+		this.sessionAgents.set(
+			result.session.id ?? result.response.sessionId,
+			agentId,
+		);
 		return result;
 	}
 
@@ -112,7 +117,9 @@ export class AgentsManager {
 		agentId: string,
 		sessionId: string,
 		cwd: string,
-		options: Partial<Omit<Parameters<ACP["loadSession"]>[0], "sessionId" | "cwd">> = {},
+		options: Partial<
+			Omit<Parameters<ACP["loadSession"]>[0], "sessionId" | "cwd">
+		> = {},
 	) {
 		const agent = await this.connectAgent(agentId);
 		this.sessionAgents.set(sessionId, agentId);
@@ -146,7 +153,9 @@ export class AgentsManager {
 		agentId: string,
 		sessionId: string,
 		cwd: string,
-		options: Partial<Omit<Parameters<ACP["forkSession"]>[0], "sessionId" | "cwd">> = {},
+		options: Partial<
+			Omit<Parameters<ACP["forkSession"]>[0], "sessionId" | "cwd">
+		> = {},
 	) {
 		const agent = await this.connectAgent(agentId);
 		const result = await agent.forkSession({
@@ -333,7 +342,11 @@ export class AgentsManager {
 					},
 				);
 				if (session.id) {
-					this.rememberSessionClient(msg.data.backend, session.id, msg.clientId);
+					this.rememberSessionClient(
+						msg.data.backend,
+						session.id,
+						msg.clientId,
+					);
 				}
 				conn.send({
 					type: MsgType.AI_SESSION_CREATE_RESULT,
@@ -386,14 +399,13 @@ export class AgentsManager {
 					},
 				);
 				const agent = await this.connectAgent(msg.data.backend);
-				const session =
-					agent.getSession(msg.data.sessionId) ?? {
-						id: msg.data.sessionId,
-						createdAt: Date.now(),
-						updatedAt: Date.now(),
-						workspacePath: msg.data.cwd,
-						configOptions: result.response.configOptions ?? undefined,
-					};
+				const session = agent.getSession(msg.data.sessionId) ?? {
+					id: msg.data.sessionId,
+					createdAt: Date.now(),
+					updatedAt: Date.now(),
+					workspacePath: msg.data.cwd,
+					configOptions: result.response.configOptions ?? undefined,
+				};
 				this.rememberSessionClient(
 					msg.data.backend,
 					msg.data.sessionId,
@@ -746,10 +758,14 @@ export class AgentsManager {
 		conn.on("close" as never, unsubscribe as never);
 	}
 
-	private async listAllBuiltinSessions(workspace?: string): Promise<AiSession[]> {
+	private async listAllBuiltinSessions(
+		workspace?: string,
+	): Promise<AiSession[]> {
 		const results = await Promise.allSettled(
 			BUILTIN_AGENT_DESCRIPTORS.flatMap((descriptor) =>
-				descriptor.backend ? [this.listSessions(descriptor.backend, workspace)] : [],
+				descriptor.backend
+					? [this.listSessions(descriptor.backend, workspace)]
+					: [],
 			),
 		);
 		return results

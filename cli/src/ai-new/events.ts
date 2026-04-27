@@ -239,7 +239,9 @@ export class AcpTranscript {
 }
 
 export function acpSessionToAiSession(session: acp.SessionInfo): AiSession {
-	const updated = session.updatedAt ? Date.parse(session.updatedAt) : Date.now();
+	const updated = session.updatedAt
+		? Date.parse(session.updatedAt)
+		: Date.now();
 	return {
 		id: session.sessionId,
 		title: session.title ?? "Untitled Chat",

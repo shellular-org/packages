@@ -69,9 +69,7 @@ export const AiSessionConfigOptionSchema = z
 			.optional(),
 	})
 	.catchall(z.unknown());
-export type AiSessionConfigOption = z.infer<
-	typeof AiSessionConfigOptionSchema
->;
+export type AiSessionConfigOption = z.infer<typeof AiSessionConfigOptionSchema>;
 
 export const AiMcpServerSchema = z.record(z.string(), z.unknown());
 export type AiMcpServer = z.infer<typeof AiMcpServerSchema>;
@@ -367,9 +365,7 @@ export const AiSessionConfigSetMsgSchema = z.object({
 		value: z.union([z.string(), z.boolean()]),
 	}),
 });
-export type AiSessionConfigSetMsg = z.infer<
-	typeof AiSessionConfigSetMsgSchema
->;
+export type AiSessionConfigSetMsg = z.infer<typeof AiSessionConfigSetMsgSchema>;
 
 export const AiSessionModeSetMsgSchema = z.object({
 	id: z.string().optional(),
