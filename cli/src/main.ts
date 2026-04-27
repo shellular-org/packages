@@ -14,14 +14,14 @@ import {
 import chalk from "chalk";
 import { Command } from "commander";
 import qrcode from "qrcode-terminal";
-
-import { initAiHandler } from "@/ai";
+// import { initAiHandler } from "@/ai";
 import {
 	notifyExtensionClientPresence,
 	notifyExtensionClientsSnapshot,
 	notifyExtensionCliInfo,
 } from "@/ai/copilot";
-import { AiManager } from "@/ai/index";
+// import { AiManager } from "@/ai/index";
+import { AgentsManager } from "@/ai-new";
 import {
 	ensureSingleInstance,
 	releaseBootLock,
@@ -347,14 +347,13 @@ async function runCli({
 		machineId: config.MACHINE_ID,
 	};
 
-	const aiManager = new AiManager();
-	const availableBackends = await aiManager.init();
+	const agentsManager = new AgentsManager();
 
 	const cleanup = () => {
 		logger.log("Cleaning up resources...");
 		stopCaffeinate();
 		releaseBootLock();
-		aiManager.destroy();
+		agentsManager.destroy();
 	};
 
 	process.on("SIGINT", cleanup); // Ctrl+C
@@ -419,7 +418,7 @@ async function runCli({
 				initBatteryStream(conn);
 				initProxyHandler(conn);
 				initPortsHandler(conn);
-				initAiHandler(conn, aiManager);
+				agentsManager.handleConnection(conn);
 
 				const pushStateToExtension = () => {
 					notifyExtensionCliInfo({
@@ -572,7 +571,7 @@ async function runCli({
 					const availableAIBackendsMsg: AiAvailabilityResultMsg = {
 						type: MsgType.AI_AVAILABILITY_RESULT,
 						clientId: msg.data.clientId,
-						data: { backends: availableBackends },
+						data: { backends: agentsManager.getAvailableAgents() },
 					};
 					conn.send(availableAIBackendsMsg);
 				});

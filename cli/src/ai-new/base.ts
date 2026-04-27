@@ -3,6 +3,7 @@ import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk";
 import type { AiBackend } from "@shellular/protocol";
+
 import { commandExists } from "@/utils";
 import { AcpClient } from "./client";
 
@@ -44,7 +45,6 @@ export class ACP {
 	private client: AcpClient;
 	private spawnedAgent: SpawnedAgent;
 	private connection: acp.ClientSideConnection;
-
 	private agentCapabilities: acp.AgentCapabilities | undefined;
 
 	constructor(spawnedAgent: SpawnedAgent) {
