@@ -39,6 +39,19 @@ export const BUILTIN_AGENT_DESCRIPTORS: AgentDescriptor[] = [
 			checkCommand: npxCommand,
 		},
 	},
+	{
+		id: "cursor",
+		backend: "cursor",
+		name: "Cursor",
+		title: "Cursor",
+		description: "Cursor CLI ACP agent",
+		source: "builtin",
+		spawn: {
+			command: "cursor",
+			args: ["agent", "acp"],
+			checkCommand: "cursor",
+		},
+	},
 ];
 
 export function isSpawnAvailable(spawn: AgentSpawnCommand): boolean {

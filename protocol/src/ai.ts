@@ -8,6 +8,7 @@ export const AiBackendSchema = z.enum([
 	"codex",
 	"copilot",
 	"claude-code",
+	"cursor",
 ]);
 export type AiBackend = z.infer<typeof AiBackendSchema>;
 export const AI_BACKENDS: AiBackend[] = [
@@ -15,6 +16,7 @@ export const AI_BACKENDS: AiBackend[] = [
 	"codex",
 	"copilot",
 	"claude-code",
+	"cursor",
 ];
 
 // ─── Session ──────────────────────────────────────────────────────────────────
