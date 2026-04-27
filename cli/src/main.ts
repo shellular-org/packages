@@ -108,8 +108,8 @@ type RunCliOptions = CliOptions & { isDaemon?: boolean };
 function createProgram(): Command {
 	const program = new Command()
 		.name(config.NAME)
-		.description(packageJson.description)
-		.version(packageJson.version)
+		.description(config.DESCRIPTION)
+		.version(config.VERSION)
 		.showHelpAfterError()
 		.allowExcessArguments(false)
 		.option("--server <url>", "Shellular server URL", DEFAULT_SERVER_URL)
@@ -316,7 +316,7 @@ async function runCli({
 		`${chalk.gray(key.padEnd(17))} ${chalk.white(value)}`;
 
 	logger.log();
-	logger.log(chalk.bold.cyan(`Shellular CLI v${packageJson.version}`));
+	logger.log(chalk.bold.cyan(`Shellular CLI v${config.VERSION}`));
 	logger.log(line);
 	logger.log(label("Server:", chalk.underline(serverUrl.toWebSocketUrl())));
 	logger.log(
@@ -422,7 +422,7 @@ async function runCli({
 
 				const pushStateToExtension = () => {
 					notifyExtensionCliInfo({
-						version: packageJson.version,
+						version: config.VERSION,
 						hostname: os.hostname(),
 						platform: os.platform(),
 						workDir,
@@ -595,7 +595,7 @@ async function runCli({
 
 async function main(): Promise<void> {
 	try {
-		checkForUpdate(packageJson.version).catch(() => {});
+		checkForUpdate(config.VERSION).catch(() => {});
 		const program = createProgram();
 		await program.parseAsync(process.argv);
 	} catch (err) {

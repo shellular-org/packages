@@ -3,7 +3,7 @@ import path from "node:path";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk";
-
+import { config } from "@/config";
 import { logger } from "@/logger";
 import { commandExists } from "@/utils";
 import { AcpClient } from "./client";
@@ -143,9 +143,8 @@ export class ACP {
 					},
 				},
 				clientInfo: {
-					name: "shellular",
-					title: "Shellular",
-					version: "0.0.0",
+					name: config.NAME,
+					version: config.VERSION,
 				},
 			});
 
@@ -161,7 +160,10 @@ export class ACP {
 
 	static spawnAgentProcess(config: AgentProcessConfig): SpawnedAgent {
 		if (config.agentExecutable && !commandExists(config.agentExecutable)) {
-			throw new AgentUnavailableError(config.name, "agent executable was not found");
+			throw new AgentUnavailableError(
+				config.name,
+				"agent executable was not found",
+			);
 		}
 
 		const agentProcess = spawn(config.command, config.args ?? [], {
@@ -213,7 +215,9 @@ export class ACP {
 	}
 
 	async listAiSessions(cwd?: string) {
-		const sessions = await this.listSessions(cwd ? { cwd: path.resolve(cwd) } : {});
+		const sessions = await this.listSessions(
+			cwd ? { cwd: path.resolve(cwd) } : {},
+		);
 		return sessions.map(acpSessionToAiSession);
 	}
 
@@ -233,7 +237,10 @@ export class ACP {
 			session,
 			messages: [],
 		});
-		this.transcripts.set(response.sessionId, new AcpTranscript(response.sessionId));
+		this.transcripts.set(
+			response.sessionId,
+			new AcpTranscript(response.sessionId),
+		);
 		return { response, session };
 	}
 
@@ -272,7 +279,10 @@ export class ACP {
 			cwd: path.resolve(params.cwd),
 			mcpServers: params.mcpServers ?? [],
 		});
-		const session = newAiSessionFromResponse(response, path.resolve(params.cwd));
+		const session = newAiSessionFromResponse(
+			response,
+			path.resolve(params.cwd),
+		);
 		if (session.id) {
 			this.sessions.set(session.id, { session, messages: [] });
 			this.transcripts.set(session.id, new AcpTranscript(session.id));
@@ -293,7 +303,9 @@ export class ACP {
 		return response;
 	}
 
-	async loadSession(params: acp.LoadSessionRequest): Promise<LoadSessionResult> {
+	async loadSession(
+		params: acp.LoadSessionRequest,
+	): Promise<LoadSessionResult> {
 		await this.ensureReady();
 		if (!this.capabilities?.loadSession) {
 			throw new UnsupportedCapabilityError(this.id, "session/load");
@@ -320,17 +332,17 @@ export class ACP {
 			const messages = transcript.getMessages();
 			const existing = this.sessions.get(sessionId);
 			this.sessions.set(sessionId, {
-				session:
-					existing?.session
-						? {
-								...existing.session,
-								configOptions: response.configOptions ?? existing.session.configOptions,
-								model: response.models?.currentModelId ?? existing.session.model,
-							}
-						: newAiSessionFromResponse(
-								{ sessionId, configOptions: response.configOptions },
-								path.resolve(params.cwd),
-							),
+				session: existing?.session
+					? {
+							...existing.session,
+							configOptions:
+								response.configOptions ?? existing.session.configOptions,
+							model: response.models?.currentModelId ?? existing.session.model,
+						}
+					: newAiSessionFromResponse(
+							{ sessionId, configOptions: response.configOptions },
+							path.resolve(params.cwd),
+						),
 				messages,
 			});
 			return { response, updates, messages };
@@ -389,7 +401,8 @@ export class ACP {
 
 	async setSessionConfigOption(params: acp.SetSessionConfigOptionRequest) {
 		await this.ensureReady();
-		const response = await this.requireConnection().setSessionConfigOption(params);
+		const response =
+			await this.requireConnection().setSessionConfigOption(params);
 		const existing = this.sessions.get(params.sessionId);
 		if (existing) {
 			this.sessions.set(params.sessionId, {
