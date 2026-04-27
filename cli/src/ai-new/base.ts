@@ -1,20 +1,34 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import path from "node:path";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk";
-import type { AiBackend } from "@shellular/protocol";
 
+import { logger } from "@/logger";
 import { commandExists } from "@/utils";
 import { AcpClient } from "./client";
+import { AgentUnavailableError, UnsupportedCapabilityError } from "./errors";
+import {
+	AcpTranscript,
+	acpSessionToAiSession,
+	newAiSessionFromResponse,
+	promptEndEvent,
+} from "./events";
+import type {
+	AgentConnectionState,
+	AgentDescriptor,
+	AgentInfo,
+	LoadSessionResult,
+	PermissionReply,
+	PromptCallbacks,
+	PromptResult,
+	StoredSession,
+} from "./types";
 
 /** Configuration for spawning an ACP agent subprocess. */
 export interface AgentProcessConfig {
-	name: AiBackend;
-	/** The executable of agent on the system to check if it's available or not.
-	 * eg. `codex`, `opencode`, `claude` etc.
-	 */
-	agentExecutable: "opencode" | "codex" | "claude";
-	/** The executable to invoke (e.g. `"opencode"`, `"npx"`). */
+	name: string;
+	agentExecutable?: string;
 	command: string;
 	/** Command-line arguments passed to the executable. */
 	args?: string[];
@@ -35,160 +49,459 @@ export interface SpawnedAgent {
 }
 
 /**
- * Base class for ACP agent connections.
+ * Runtime wrapper for one ACP agent process.
  *
- * Manages the lifecycle of a spawned agent subprocess, the JSON-RPC
- * connection over its stdio streams, and the `AcpClient` that handles
- * incoming requests and notifications from the agent.
+ * This is the protocol boundary: callers deal with stable Shellular-facing
+ * methods, while this class owns JSON-RPC, ACP capability checks, subprocess
+ * state, and in-memory transcript reconstruction.
  */
 export class ACP {
-	private client: AcpClient;
-	private spawnedAgent: SpawnedAgent;
-	private connection: acp.ClientSideConnection;
-	private agentCapabilities: acp.AgentCapabilities | undefined;
+	readonly descriptor: AgentDescriptor;
+	private readonly client: AcpClient;
+	private spawnedAgent: SpawnedAgent | null = null;
+	private connection: acp.ClientSideConnection | null = null;
+	private initResult: acp.InitializeResponse | null = null;
+	private transcripts = new Map<string, AcpTranscript>();
+	private sessions = new Map<string, StoredSession>();
+	private stderrBuffer = "";
+	private state: AgentConnectionState = "unavailable";
+	private stateError: string | undefined;
 
-	constructor(spawnedAgent: SpawnedAgent) {
-		this.spawnedAgent = spawnedAgent;
+	constructor(descriptor: AgentDescriptor) {
+		this.descriptor = descriptor;
 		this.client = new AcpClient();
-		this.connection = new acp.ClientSideConnection(
-			(_agent) => this.client,
-			this.spawnedAgent.stream,
-		);
 	}
 
-	/**
-	 * Performs the ACP initialization handshake with the agent.
-	 * Must be called once before any other method.
-	 */
-	async init() {
-		const initResult = await this.connection.initialize({
-			protocolVersion: acp.PROTOCOL_VERSION,
-			clientCapabilities: {
-				fs: {
-					readTextFile: true,
-					writeTextFile: true,
-				},
-			},
-		});
-
-		this.agentCapabilities = initResult.agentCapabilities;
-
-		return initResult;
+	get id() {
+		return this.descriptor.id;
 	}
 
-	/**
-	 * Spawns the agent subprocess and wires up its stdio as an ACP stream.
-	 * Returns `null` if the executable is not found on `PATH`.
-	 */
-	static spawnAgentProcess(config: AgentProcessConfig): SpawnedAgent | null {
-		if (!commandExists(config.agentExecutable)) {
-			return null;
+	get capabilities() {
+		return this.initResult?.agentCapabilities;
+	}
+
+	getState(): AgentConnectionState {
+		return this.state;
+	}
+
+	getInfo(): AgentInfo {
+		return {
+			id: this.descriptor.id,
+			backend: this.descriptor.backend,
+			name: this.descriptor.name,
+			title: this.descriptor.title,
+			version: this.descriptor.version ?? this.initResult?.agentInfo?.version,
+			description: this.descriptor.description,
+			icon: this.descriptor.icon,
+			source: this.descriptor.source,
+			state: this.state,
+			available: this.isCommandAvailable(),
+			error: this.stateError,
+			capabilities: this.capabilities,
+		};
+	}
+
+	onPermission(listener: Parameters<AcpClient["onPermission"]>[0]) {
+		return this.client.onPermission(listener);
+	}
+
+	async init(): Promise<acp.InitializeResponse> {
+		if (this.state === "ready" && this.initResult) return this.initResult;
+		if (!this.isCommandAvailable()) {
+			this.state = "unavailable";
+			throw new AgentUnavailableError(this.id, "spawn command was not found");
 		}
 
-		// Spawn the agent as a subprocess
-		const agentProcess = spawn(config.command, config.args);
+		this.state = "starting";
+		this.stateError = undefined;
 
-		// Create streams to communicate with the agent
+		try {
+			this.spawnedAgent = ACP.spawnAgentProcess({
+				name: this.id,
+				agentExecutable: this.descriptor.spawn.checkCommand,
+				command: this.descriptor.spawn.command,
+				args: this.descriptor.spawn.args,
+				env: this.descriptor.spawn.env,
+				cwd: this.descriptor.spawn.cwd,
+			});
+			this.attachProcessListeners();
+
+			this.connection = new acp.ClientSideConnection(
+				() => this.client,
+				this.spawnedAgent.stream,
+			);
+
+			this.initResult = await this.connection.initialize({
+				protocolVersion: acp.PROTOCOL_VERSION,
+				clientCapabilities: {
+					// File/terminal RPCs are intentionally off for the first ACP pass.
+					// Agents can still use their own tools; Shellular just does not yet
+					// expose host filesystem methods over ACP.
+					fs: {
+						readTextFile: false,
+						writeTextFile: false,
+					},
+				},
+				clientInfo: {
+					name: "shellular",
+					title: "Shellular",
+					version: "0.0.0",
+				},
+			});
+
+			this.state = "ready";
+			return this.initResult;
+		} catch (err) {
+			this.state = "failed";
+			this.stateError = this.errorMessage(err);
+			this.destroy();
+			throw err;
+		}
+	}
+
+	static spawnAgentProcess(config: AgentProcessConfig): SpawnedAgent {
+		if (config.agentExecutable && !commandExists(config.agentExecutable)) {
+			throw new AgentUnavailableError(config.name, "agent executable was not found");
+		}
+
+		const agentProcess = spawn(config.command, config.args ?? [], {
+			cwd: config.cwd,
+			env: { ...process.env, ...(config.env ?? {}) },
+			stdio: ["pipe", "pipe", "pipe"],
+		});
+
 		const input = Writable.toWeb(agentProcess.stdin);
 		const output = Readable.toWeb(
 			agentProcess.stdout,
 		) as ReadableStream<Uint8Array>;
 
-		const stream = acp.ndJsonStream(input, output);
-
 		return {
 			processConfig: config,
 			process: agentProcess,
-			stream,
+			stream: acp.ndJsonStream(input, output),
 		};
 	}
 
-	/**
-	 * Lists all sessions, automatically paginating through all pages.
-	 */
-	async listSessions(
-		params: acp.ListSessionsRequest,
-	): Promise<acp.SessionInfo[]> {
-		// get first page
-		const result = await this.connection.listSessions(params);
+	async listSessions(params: acp.ListSessionsRequest = {}) {
+		await this.ensureReady();
+		if (!this.capabilities?.sessionCapabilities?.list) {
+			throw new UnsupportedCapabilityError(this.id, "session/list");
+		}
 
-		// if there are more pages, get them all
-		const all: acp.SessionInfo[] = [...result.sessions];
-		if (result.nextCursor) {
-			const more = await this.listSessions({
+		const all: acp.SessionInfo[] = [];
+		let cursor = params.cursor;
+		do {
+			// ACP session/list is cursor-paginated; hide that detail from callers.
+			const response = await this.requireConnection().listSessions({
 				...params,
-				cursor: result.nextCursor,
+				cursor,
 			});
-			all.push(...more);
+			all.push(...response.sessions);
+			cursor = response.nextCursor ?? undefined;
+		} while (cursor);
+
+		for (const session of all) {
+			const normalized = acpSessionToAiSession(session);
+			const existing = this.sessions.get(session.sessionId);
+			this.sessions.set(session.sessionId, {
+				session: normalized,
+				messages: existing?.messages ?? [],
+			});
 		}
 
 		return all;
 	}
 
-	/**
-	 * https://agentclientprotocol.com/protocol/session-setup#loading-a-session
-	 *
-	 * The agent streams all session/update notifications before resolving the
-	 * session/load response, so awaiting this method guarantees all updates
-	 * have been collected.
-	 */
-	async loadSession(params: acp.LoadSessionRequest): Promise<{
-		response: acp.LoadSessionResponse;
-		updates: acp.SessionNotification[];
-	}> {
-		if (!this.agentCapabilities?.loadSession) {
-			throw new Error(
-				`Agent ${this.spawnedAgent.processConfig.agentExecutable} does not support loading sessions`,
-			);
+	async listAiSessions(cwd?: string) {
+		const sessions = await this.listSessions(cwd ? { cwd: path.resolve(cwd) } : {});
+		return sessions.map(acpSessionToAiSession);
+	}
+
+	async createSession(
+		cwd: string,
+		options: Partial<Omit<acp.NewSessionRequest, "cwd">> = {},
+	) {
+		await this.ensureReady();
+		const absoluteCwd = path.resolve(cwd);
+		const response = await this.requireConnection().newSession({
+			...options,
+			cwd: absoluteCwd,
+			mcpServers: options.mcpServers ?? [],
+		});
+		const session = newAiSessionFromResponse(response, absoluteCwd);
+		this.sessions.set(response.sessionId, {
+			session,
+			messages: [],
+		});
+		this.transcripts.set(response.sessionId, new AcpTranscript(response.sessionId));
+		return { response, session };
+	}
+
+	async resumeSession(params: acp.ResumeSessionRequest) {
+		await this.ensureReady();
+		if (!this.capabilities?.sessionCapabilities?.resume) {
+			throw new UnsupportedCapabilityError(this.id, "session/resume");
 		}
 
+		const response = await this.requireConnection().resumeSession({
+			...params,
+			cwd: path.resolve(params.cwd),
+			mcpServers: params.mcpServers ?? [],
+		});
+		const session = newAiSessionFromResponse(
+			response,
+			path.resolve(params.cwd),
+			params.sessionId,
+		);
+		this.sessions.set(params.sessionId, {
+			session,
+			messages: this.getMessages(params.sessionId),
+		});
+		this.getTranscript(params.sessionId);
+		return { response, session };
+	}
+
+	async forkSession(params: acp.ForkSessionRequest) {
+		await this.ensureReady();
+		if (!this.capabilities?.sessionCapabilities?.fork) {
+			throw new UnsupportedCapabilityError(this.id, "session/fork");
+		}
+
+		const response = await this.requireConnection().unstable_forkSession({
+			...params,
+			cwd: path.resolve(params.cwd),
+			mcpServers: params.mcpServers ?? [],
+		});
+		const session = newAiSessionFromResponse(response, path.resolve(params.cwd));
+		if (session.id) {
+			this.sessions.set(session.id, { session, messages: [] });
+			this.transcripts.set(session.id, new AcpTranscript(session.id));
+		}
+		return { response, session };
+	}
+
+	async closeSession(params: acp.CloseSessionRequest) {
+		await this.ensureReady();
+		if (!this.capabilities?.sessionCapabilities?.close) {
+			throw new UnsupportedCapabilityError(this.id, "session/close");
+		}
+
+		const response = await this.requireConnection().closeSession(params);
+		this.sessions.delete(params.sessionId);
+		this.transcripts.delete(params.sessionId);
+		this.client.cancelSessionPermissions(params.sessionId);
+		return response;
+	}
+
+	async loadSession(params: acp.LoadSessionRequest): Promise<LoadSessionResult> {
+		await this.ensureReady();
+		if (!this.capabilities?.loadSession) {
+			throw new UnsupportedCapabilityError(this.id, "session/load");
+		}
+
+		const sessionId = params.sessionId;
+		const transcript = new AcpTranscript(sessionId);
 		const updates: acp.SessionNotification[] = [];
-		const listener = (n: acp.SessionNotification) => updates.push(n);
+		const listener = (notification: acp.SessionNotification) => {
+			// session/load replays history as session/update notifications before
+			// resolving, so collecting here gives callers a usable transcript.
+			updates.push(notification);
+			transcript.apply(notification);
+		};
+		this.client.addSessionUpdateListener(sessionId, listener);
+
+		try {
+			const response = await this.requireConnection().loadSession({
+				...params,
+				cwd: path.resolve(params.cwd),
+				mcpServers: params.mcpServers ?? [],
+			});
+			this.transcripts.set(sessionId, transcript);
+			const messages = transcript.getMessages();
+			const existing = this.sessions.get(sessionId);
+			this.sessions.set(sessionId, {
+				session:
+					existing?.session
+						? {
+								...existing.session,
+								configOptions: response.configOptions ?? existing.session.configOptions,
+								model: response.models?.currentModelId ?? existing.session.model,
+							}
+						: newAiSessionFromResponse(
+								{ sessionId, configOptions: response.configOptions },
+								path.resolve(params.cwd),
+							),
+				messages,
+			});
+			return { response, updates, messages };
+		} finally {
+			this.client.removeSessionUpdateListener(sessionId, listener);
+		}
+	}
+
+	async prompt(
+		params: acp.PromptRequest,
+		callbacks: PromptCallbacks = {},
+	): Promise<PromptResult> {
+		await this.ensureReady();
+		const transcript = this.getTranscript(params.sessionId);
+		const listener = (notification: acp.SessionNotification) => {
+			callbacks.onUpdate?.(notification);
+			// Normalize every ACP update immediately so UI consumers can render
+			// tokens, tool calls, thoughts, and plans without knowing ACP internals.
+			for (const event of transcript.apply(notification)) {
+				callbacks.onEvent?.(event);
+			}
+		};
 		this.client.addSessionUpdateListener(params.sessionId, listener);
 
 		try {
-			const response = await this.connection.loadSession(params);
-			return { response, updates };
+			const response = await this.requireConnection().prompt(params);
+			callbacks.onEvent?.(promptEndEvent(params.sessionId, response));
+			const messages = transcript.getMessages();
+			const existing = this.sessions.get(params.sessionId);
+			if (existing) {
+				this.sessions.set(params.sessionId, {
+					session: { ...existing.session, updatedAt: Date.now() },
+					messages,
+				});
+			}
+			return { response, messages };
+		} catch (err) {
+			callbacks.onEvent?.({
+				type: "error",
+				properties: {
+					sessionId: params.sessionId,
+					error: this.errorMessage(err),
+				},
+			});
+			throw err;
 		} finally {
 			this.client.removeSessionUpdateListener(params.sessionId, listener);
 		}
 	}
 
-	/**
-	 * Sends a prompt to the agent and streams updates to the UI in real-time.
-	 *
-	 * The `onUpdate` callback is invoked immediately for every `session/update`
-	 * notification the agent sends during the turn (message chunks, tool calls,
-	 * plan updates, etc.), enabling live rendering in the app UI.
-	 *
-	 * The returned promise resolves with the final {@link acp.PromptResponse}
-	 * (including `stopReason` and `usage`) once the turn is complete.
-	 *
-	 * @param params   - The prompt request (sessionId + content blocks).
-	 * @param onUpdate - Called in real-time for each session update notification.
-	 *
-	 * @see https://agentclientprotocol.com/protocol/prompt-turn
-	 */
-	async prompt(
-		params: acp.PromptRequest,
-		onUpdate: (notification: acp.SessionNotification) => void,
-	): Promise<acp.PromptResponse> {
-		this.client.addSessionUpdateListener(params.sessionId, onUpdate);
+	async interrupt(params: acp.CancelNotification) {
+		await this.ensureReady();
+		this.client.cancelSessionPermissions(params.sessionId);
+		return this.requireConnection().cancel(params);
+	}
 
-		try {
-			return await this.connection.prompt(params);
-		} finally {
-			this.client.removeSessionUpdateListener(params.sessionId, onUpdate);
+	async setSessionConfigOption(params: acp.SetSessionConfigOptionRequest) {
+		await this.ensureReady();
+		const response = await this.requireConnection().setSessionConfigOption(params);
+		const existing = this.sessions.get(params.sessionId);
+		if (existing) {
+			this.sessions.set(params.sessionId, {
+				...existing,
+				session: {
+					...existing.session,
+					configOptions: response.configOptions,
+					updatedAt: Date.now(),
+				},
+			});
+		}
+		return response;
+	}
+
+	async setSessionMode(params: acp.SetSessionModeRequest) {
+		await this.ensureReady();
+		return this.requireConnection().setSessionMode(params);
+	}
+
+	async setSessionModel(params: acp.SetSessionModelRequest) {
+		await this.ensureReady();
+		return this.requireConnection().unstable_setSessionModel(params);
+	}
+
+	replyPermission(permissionId: string, response: PermissionReply) {
+		return this.client.replyPermission(permissionId, response);
+	}
+
+	getMessages(sessionId: string) {
+		return (
+			this.sessions.get(sessionId)?.messages ??
+			this.transcripts.get(sessionId)?.getMessages() ??
+			[]
+		);
+	}
+
+	getSession(sessionId: string) {
+		return this.sessions.get(sessionId)?.session ?? null;
+	}
+
+	destroy() {
+		if (this.spawnedAgent) {
+			this.spawnedAgent.process.kill();
+			this.spawnedAgent = null;
+		}
+		this.connection = null;
+		this.initResult = null;
+		if (this.state !== "failed") {
+			this.state = "exited";
 		}
 	}
 
-	/** Cancels any ongoing work for the given session. */
-	interrupt(params: acp.CancelNotification) {
-		return this.connection.cancel(params);
+	protected getTranscript(sessionId: string): AcpTranscript {
+		let transcript = this.transcripts.get(sessionId);
+		if (!transcript) {
+			transcript = new AcpTranscript(sessionId);
+			this.transcripts.set(sessionId, transcript);
+		}
+		return transcript;
 	}
 
-	/** Kills the agent subprocess and releases all resources. */
-	destroy() {
-		this.spawnedAgent.process.kill();
+	protected setSessionStore(sessionId: string, stored: StoredSession) {
+		this.sessions.set(sessionId, stored);
+	}
+
+	private isCommandAvailable() {
+		return commandExists(
+			this.descriptor.spawn.checkCommand ?? this.descriptor.spawn.command,
+		);
+	}
+
+	private async ensureReady() {
+		if (this.state !== "ready") {
+			await this.init();
+		}
+	}
+
+	private requireConnection() {
+		if (!this.connection) {
+			throw new AgentUnavailableError(this.id, "connection is not initialized");
+		}
+		return this.connection;
+	}
+
+	private errorMessage(err: unknown) {
+		if (err instanceof Error) return err.message;
+		if (typeof err === "string") return err;
+		return String(err);
+	}
+
+	protected attachProcessListeners() {
+		if (!this.spawnedAgent) return;
+		const child = this.spawnedAgent.process;
+		child.stderr.on("data", (chunk: Buffer) => {
+			this.stderrBuffer += chunk.toString("utf8");
+			if (this.stderrBuffer.length > 20_000) {
+				this.stderrBuffer = this.stderrBuffer.slice(-20_000);
+			}
+		});
+		child.on("error", (err) => {
+			this.state = "failed";
+			this.stateError = err.message;
+			logger.warn(`ACP agent ${this.id} process error`, err);
+		});
+		child.on("exit", (code, signal) => {
+			if (this.state !== "failed") {
+				this.state = "exited";
+				this.stateError =
+					code === 0
+						? undefined
+						: `Agent exited with code ${code ?? "null"} signal ${signal ?? "null"}`;
+			}
+		});
 	}
 }

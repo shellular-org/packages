@@ -156,7 +156,7 @@ async function main() {
 				sessionId: sessionInfo.sessionId,
 				prompt: [{ type: "text", text: userInput }],
 			},
-			renderUpdate,
+			{ onUpdate: renderUpdate },
 		);
 
 		process.stdout.write("\n");

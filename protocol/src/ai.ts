@@ -26,8 +26,68 @@ export const AiSessionSchema = z.object({
 	model: z.string().optional(),
 	title: z.string().optional(),
 	workspacePath: z.string().optional(),
+	configOptions: z.array(z.any()).optional(),
 });
 export type AiSession = z.infer<typeof AiSessionSchema>;
+
+// ACP session configuration options are intentionally loose here because the
+// upstream protocol can add option types. The app only needs stable fields for
+// basic controls and should pass unknown metadata through untouched.
+export const AiSessionConfigSelectOptionSchema = z
+	.object({
+		value: z.string(),
+		name: z.string(),
+		description: z.string().nullable().optional(),
+	})
+	.catchall(z.unknown());
+
+export const AiSessionConfigSelectGroupSchema = z
+	.object({
+		group: z.string(),
+		name: z.string(),
+		options: z.array(AiSessionConfigSelectOptionSchema),
+	})
+	.catchall(z.unknown());
+
+export const AiSessionConfigOptionSchema = z
+	.object({
+		id: z.string(),
+		name: z.string(),
+		description: z.string().nullable().optional(),
+		category: z.string().nullable().optional(),
+		type: z.string(),
+		currentValue: z.union([z.string(), z.boolean()]),
+		options: z
+			.array(
+				z.union([
+					AiSessionConfigSelectOptionSchema,
+					AiSessionConfigSelectGroupSchema,
+				]),
+			)
+			.optional(),
+	})
+	.catchall(z.unknown());
+export type AiSessionConfigOption = z.infer<
+	typeof AiSessionConfigOptionSchema
+>;
+
+export const AiMcpServerSchema = z.record(z.string(), z.unknown());
+export type AiMcpServer = z.infer<typeof AiMcpServerSchema>;
+
+export const AiSessionStateSchema = z.object({
+	configOptions: z.array(AiSessionConfigOptionSchema).optional(),
+	models: z.unknown().optional(),
+	modes: z.unknown().optional(),
+});
+export type AiSessionState = z.infer<typeof AiSessionStateSchema>;
+
+export const AiSessionSetupSchema = z.object({
+	backend: AiBackendSchema,
+	sessionId: z.string().optional(),
+	cwd: z.string(),
+	additionalDirectories: z.array(z.string()).optional(),
+	mcpServers: z.array(AiMcpServerSchema).optional(),
+});
 
 // ─── Message parts ────────────────────────────────────────────────────────────
 
@@ -196,10 +256,54 @@ export const AiSessionCreateMsgSchema = z.object({
 		backend: AiBackendSchema,
 		prompt: z.string(),
 		workspacePath: z.string(),
+		cwd: z.string().optional(),
+		additionalDirectories: z.array(z.string()).optional(),
+		mcpServers: z.array(AiMcpServerSchema).optional(),
 		model: z.any().optional(),
 	}),
 });
 export type AiSessionCreateMsg = z.infer<typeof AiSessionCreateMsgSchema>;
+
+export const AiSessionLoadMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_LOAD),
+	clientId: z.string(),
+	data: AiSessionSetupSchema.extend({
+		sessionId: z.string(),
+	}),
+});
+export type AiSessionLoadMsg = z.infer<typeof AiSessionLoadMsgSchema>;
+
+export const AiSessionResumeMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_RESUME),
+	clientId: z.string(),
+	data: AiSessionSetupSchema.extend({
+		sessionId: z.string(),
+	}),
+});
+export type AiSessionResumeMsg = z.infer<typeof AiSessionResumeMsgSchema>;
+
+export const AiSessionForkMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_FORK),
+	clientId: z.string(),
+	data: AiSessionSetupSchema.extend({
+		sessionId: z.string(),
+	}),
+});
+export type AiSessionForkMsg = z.infer<typeof AiSessionForkMsgSchema>;
+
+export const AiSessionCloseMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_CLOSE),
+	clientId: z.string(),
+	data: z.object({
+		backend: AiBackendSchema,
+		sessionId: z.string(),
+	}),
+});
+export type AiSessionCloseMsg = z.infer<typeof AiSessionCloseMsgSchema>;
 
 export const AiSessionGetMsgSchema = z.object({
 	id: z.string().optional(),
@@ -249,6 +353,45 @@ export const AiPromptMsgSchema = z.object({
 	}),
 });
 export type AiPromptMsg = z.infer<typeof AiPromptMsgSchema>;
+
+export const AiSessionConfigSetMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_CONFIG_SET),
+	clientId: z.string(),
+	data: z.object({
+		backend: AiBackendSchema,
+		sessionId: z.string(),
+		configId: z.string(),
+		value: z.union([z.string(), z.boolean()]),
+	}),
+});
+export type AiSessionConfigSetMsg = z.infer<
+	typeof AiSessionConfigSetMsgSchema
+>;
+
+export const AiSessionModeSetMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_MODE_SET),
+	clientId: z.string(),
+	data: z.object({
+		backend: AiBackendSchema,
+		sessionId: z.string(),
+		modeId: z.string(),
+	}),
+});
+export type AiSessionModeSetMsg = z.infer<typeof AiSessionModeSetMsgSchema>;
+
+export const AiSessionModelSetMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_MODEL_SET),
+	clientId: z.string(),
+	data: z.object({
+		backend: AiBackendSchema,
+		sessionId: z.string(),
+		modelId: z.string(),
+	}),
+});
+export type AiSessionModelSetMsg = z.infer<typeof AiSessionModelSetMsgSchema>;
 
 export const AiAbortMsgSchema = z.object({
 	id: z.string().optional(),
@@ -419,11 +562,86 @@ export const AiSessionCreateResultMsgSchema = z.object({
 	data: z
 		.object({
 			session: AiSessionSchema,
+			state: AiSessionStateSchema.optional(),
 		})
 		.optional(),
 });
 export type AiSessionCreateResultMsg = z.infer<
 	typeof AiSessionCreateResultMsgSchema
+>;
+
+export const AiSessionLoadResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_LOAD_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			backend: AiBackendSchema,
+			session: AiSessionSchema,
+			state: AiSessionStateSchema.optional(),
+			messages: z.array(AiMessageSchema),
+			updates: z.array(z.unknown()).optional(),
+		})
+		.optional(),
+});
+export type AiSessionLoadResultMsg = z.infer<
+	typeof AiSessionLoadResultMsgSchema
+>;
+
+export const AiSessionResumeResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_RESUME_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			backend: AiBackendSchema,
+			session: AiSessionSchema,
+			state: AiSessionStateSchema.optional(),
+		})
+		.optional(),
+});
+export type AiSessionResumeResultMsg = z.infer<
+	typeof AiSessionResumeResultMsgSchema
+>;
+
+export const AiSessionForkResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_FORK_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			backend: AiBackendSchema,
+			session: AiSessionSchema,
+			state: AiSessionStateSchema.optional(),
+		})
+		.optional(),
+});
+export type AiSessionForkResultMsg = z.infer<
+	typeof AiSessionForkResultMsgSchema
+>;
+
+export const AiSessionCloseResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_CLOSE_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			backend: AiBackendSchema,
+			sessionId: z.string(),
+			ok: z.literal(true),
+		})
+		.optional(),
+});
+export type AiSessionCloseResultMsg = z.infer<
+	typeof AiSessionCloseResultMsgSchema
 >;
 
 export const AiSessionGetResultMsgSchema = z.object({
@@ -506,6 +724,62 @@ export const AiPromptAckMsgSchema = z.object({
 		.optional(),
 });
 export type AiPromptAckMsg = z.infer<typeof AiPromptAckMsgSchema>;
+
+export const AiSessionConfigSetResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_CONFIG_SET_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			backend: AiBackendSchema,
+			sessionId: z.string(),
+			configOptions: z.array(AiSessionConfigOptionSchema),
+		})
+		.optional(),
+});
+export type AiSessionConfigSetResultMsg = z.infer<
+	typeof AiSessionConfigSetResultMsgSchema
+>;
+
+export const AiSessionModeSetResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_MODE_SET_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			backend: AiBackendSchema,
+			sessionId: z.string(),
+			modeId: z.string(),
+			ok: z.literal(true),
+		})
+		.optional(),
+});
+export type AiSessionModeSetResultMsg = z.infer<
+	typeof AiSessionModeSetResultMsgSchema
+>;
+
+export const AiSessionModelSetResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_MODEL_SET_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			backend: AiBackendSchema,
+			sessionId: z.string(),
+			modelId: z.string(),
+			ok: z.literal(true),
+		})
+		.optional(),
+});
+export type AiSessionModelSetResultMsg = z.infer<
+	typeof AiSessionModelSetResultMsgSchema
+>;
 
 export const AiAbortAckMsgSchema = z.object({
 	id: z.string().optional(),
