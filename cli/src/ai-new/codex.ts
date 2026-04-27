@@ -3,7 +3,7 @@ import { ACP, type AgentProcessConfig } from "./base";
 
 const ACP_CODEX: AgentProcessConfig = {
 	name: "codex",
-	agentExec: "codex",
+	agentExecutable: "codex",
 	command: npxCommand,
 	args: ["-yes", "@zed-industries/codex-acp"],
 };

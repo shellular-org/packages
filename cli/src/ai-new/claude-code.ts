@@ -3,7 +3,7 @@ import { ACP, type AgentProcessConfig } from "./base";
 
 const ACP_CLAUDE_CODE: AgentProcessConfig = {
 	name: "claude-code",
-	agentExec: "claude",
+	agentExecutable: "claude",
 	command: npxCommand,
 	args: ["-yes", "@agentclientprotocol/claude-agent-acp"],
 };
