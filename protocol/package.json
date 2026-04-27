@@ -29,6 +29,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@agentclientprotocol/sdk": "^0.20.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

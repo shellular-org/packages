@@ -3,6 +3,15 @@ import path from "node:path";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk";
+import {
+	zForkSessionResponse,
+	zInitializeResponse,
+	zListSessionsResponse,
+	zLoadSessionResponse,
+	zNewSessionResponse,
+	zResumeSessionResponse,
+	zSetSessionConfigOptionResponse,
+} from "@agentclientprotocol/sdk/dist/schema/zod.gen";
 import { config } from "@/config";
 import { logger } from "@/logger";
 import { commandExists } from "@/utils";
@@ -131,7 +140,7 @@ export class ACP {
 				this.spawnedAgent.stream,
 			);
 
-			this.initResult = await this.connection.initialize({
+			const rawInit = await this.connection.initialize({
 				protocolVersion: acp.PROTOCOL_VERSION,
 				clientCapabilities: {
 					// File/terminal RPCs are intentionally off for the first ACP pass.
@@ -147,6 +156,11 @@ export class ACP {
 					version: config.VERSION,
 				},
 			});
+			this.initResult = this.safeParse(
+				"initialize",
+				zInitializeResponse,
+				rawInit,
+			);
 
 			this.state = "ready";
 			return this.initResult;
@@ -193,11 +207,15 @@ export class ACP {
 		const all: acp.SessionInfo[] = [];
 		let cursor = params.cursor;
 		do {
-			// ACP session/list is cursor-paginated; hide that detail from callers.
-			const response = await this.requireConnection().listSessions({
+			const raw = await this.requireConnection().listSessions({
 				...params,
 				cursor,
 			});
+			const response = this.safeParse(
+				"session/list",
+				zListSessionsResponse,
+				raw,
+			);
 			all.push(...response.sessions);
 			cursor = response.nextCursor ?? undefined;
 		} while (cursor);
@@ -227,11 +245,12 @@ export class ACP {
 	) {
 		await this.ensureReady();
 		const absoluteCwd = path.resolve(cwd);
-		const response = await this.requireConnection().newSession({
+		const raw = await this.requireConnection().newSession({
 			...options,
 			cwd: absoluteCwd,
 			mcpServers: options.mcpServers ?? [],
 		});
+		const response = this.safeParse("session/new", zNewSessionResponse, raw);
 		const session = newAiSessionFromResponse(response, absoluteCwd);
 		this.sessions.set(response.sessionId, {
 			session,
@@ -250,11 +269,16 @@ export class ACP {
 			throw new UnsupportedCapabilityError(this.id, "session/resume");
 		}
 
-		const response = await this.requireConnection().resumeSession({
+		const raw = await this.requireConnection().resumeSession({
 			...params,
 			cwd: path.resolve(params.cwd),
 			mcpServers: params.mcpServers ?? [],
 		});
+		const response = this.safeParse(
+			"session/resume",
+			zResumeSessionResponse,
+			raw,
+		);
 		const session = newAiSessionFromResponse(
 			response,
 			path.resolve(params.cwd),
@@ -274,11 +298,12 @@ export class ACP {
 			throw new UnsupportedCapabilityError(this.id, "session/fork");
 		}
 
-		const response = await this.requireConnection().unstable_forkSession({
+		const raw = await this.requireConnection().unstable_forkSession({
 			...params,
 			cwd: path.resolve(params.cwd),
 			mcpServers: params.mcpServers ?? [],
 		});
+		const response = this.safeParse("session/fork", zForkSessionResponse, raw);
 		const session = newAiSessionFromResponse(
 			response,
 			path.resolve(params.cwd),
@@ -323,11 +348,16 @@ export class ACP {
 		this.client.addSessionUpdateListener(sessionId, listener);
 
 		try {
-			const response = await this.requireConnection().loadSession({
+			const raw = await this.requireConnection().loadSession({
 				...params,
 				cwd: path.resolve(params.cwd),
 				mcpServers: params.mcpServers ?? [],
 			});
+			const response = this.safeParse(
+				"session/load",
+				zLoadSessionResponse,
+				raw,
+			);
 			this.transcripts.set(sessionId, transcript);
 			const messages = transcript.getMessages();
 			const existing = this.sessions.get(sessionId);
@@ -401,8 +431,12 @@ export class ACP {
 
 	async setSessionConfigOption(params: acp.SetSessionConfigOptionRequest) {
 		await this.ensureReady();
-		const response =
-			await this.requireConnection().setSessionConfigOption(params);
+		const raw = await this.requireConnection().setSessionConfigOption(params);
+		const response = this.safeParse(
+			"session/set_config_option",
+			zSetSessionConfigOptionResponse,
+			raw,
+		);
 		const existing = this.sessions.get(params.sessionId);
 		if (existing) {
 			this.sessions.set(params.sessionId, {
@@ -491,6 +525,26 @@ export class ACP {
 		if (err instanceof Error) return err.message;
 		if (typeof err === "string") return err;
 		return String(err);
+	}
+
+	/**
+	 * Validate an ACP response against its Zod schema. Falls back to the raw
+	 * value on parse failure (with a warning) so agents with minor schema
+	 * deviations don't completely break the flow.
+	 */
+	private safeParse<T>(
+		method: string,
+		schema: { safeParse: (data: unknown) => { success: boolean; data?: T } },
+		data: unknown,
+	): T {
+		const result = schema.safeParse(data);
+		if (!result.success) {
+			logger.warn(
+				`ACP ${this.id}: ${method} response failed schema validation, using raw`,
+			);
+			return data as T;
+		}
+		return result.data as T;
 	}
 
 	protected attachProcessListeners() {

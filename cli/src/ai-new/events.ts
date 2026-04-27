@@ -1,9 +1,9 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import type {
+	AcpAiSession,
 	AiEvent,
 	AiMessage,
 	AiMessagePart,
-	AiSession,
 } from "@shellular/protocol";
 import { nanoid } from "nanoid";
 
@@ -238,7 +238,7 @@ export class AcpTranscript {
 	}
 }
 
-export function acpSessionToAiSession(session: acp.SessionInfo): AiSession {
+export function acpSessionToAiSession(session: acp.SessionInfo): AcpAiSession {
 	const updated = session.updatedAt
 		? Date.parse(session.updatedAt)
 		: Date.now();
@@ -262,7 +262,7 @@ export function newAiSessionFromResponse(
 		| acp.ForkSessionResponse,
 	cwd: string,
 	sessionId = "sessionId" in response ? response.sessionId : undefined,
-): AiSession {
+): AcpAiSession {
 	const ts = Date.now();
 	return {
 		id: sessionId,

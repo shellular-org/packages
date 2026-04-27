@@ -353,12 +353,10 @@ export class AgentsManager {
 					clientId: msg.clientId,
 					respTo: msg.id,
 					data: {
-						session,
-						state: {
+						session: {
+							...session,
 							configOptions: response.configOptions ?? undefined,
-							models: response.models,
-							modes: response.modes,
-						},
+						} as typeof session,
 					},
 				});
 				if (session.id && msg.data.prompt.trim()) {
@@ -755,7 +753,7 @@ export class AgentsManager {
 			}
 		});
 
-		conn.on("close" as never, unsubscribe as never);
+		conn.on("disconnected", () => unsubscribe());
 	}
 
 	private async listAllBuiltinSessions(

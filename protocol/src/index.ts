@@ -1,4 +1,5 @@
 export * from "./ai";
+export * from "./ai-new";
 export * from "./base";
 export * from "./client";
 export * from "./filesystem";

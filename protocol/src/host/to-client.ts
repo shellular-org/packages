@@ -14,20 +14,22 @@ import {
 	AiQuestionRejectAckMsgSchema,
 	AiQuestionReplyAckMsgSchema,
 	AiRevertAckMsgSchema,
-	AiSessionCloseResultMsgSchema,
-	AiSessionConfigSetResultMsgSchema,
 	AiSessionCreateResultMsgSchema,
 	AiSessionDeletedMsgSchema,
-	AiSessionForkResultMsgSchema,
 	AiSessionGetResultMsgSchema,
 	AiSessionListResultMsgSchema,
+	AiShareResultMsgSchema,
+	AiUnrevertAckMsgSchema,
+} from "@/ai";
+import {
+	AiSessionCloseResultMsgSchema,
+	AiSessionConfigSetResultMsgSchema,
+	AiSessionForkResultMsgSchema,
 	AiSessionLoadResultMsgSchema,
 	AiSessionModelSetResultMsgSchema,
 	AiSessionModeSetResultMsgSchema,
 	AiSessionResumeResultMsgSchema,
-	AiShareResultMsgSchema,
-	AiUnrevertAckMsgSchema,
-} from "@/ai";
+} from "@/ai-new";
 import {
 	FsListResultMsgSchema,
 	FsReadResultMsgSchema,

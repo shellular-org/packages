@@ -13,20 +13,22 @@ import {
 	AiQuestionRejectMsgSchema,
 	AiQuestionReplyMsgSchema,
 	AiRevertMsgSchema,
-	AiSessionCloseMsgSchema,
-	AiSessionConfigSetMsgSchema,
 	AiSessionCreateMsgSchema,
 	AiSessionDeleteMsgSchema,
-	AiSessionForkMsgSchema,
 	AiSessionGetMsgSchema,
 	AiSessionListMsgSchema,
+	AiShareMsgSchema,
+	AiUnrevertMsgSchema,
+} from "@/ai";
+import {
+	AiSessionCloseMsgSchema,
+	AiSessionConfigSetMsgSchema,
+	AiSessionForkMsgSchema,
 	AiSessionLoadMsgSchema,
 	AiSessionModelSetMsgSchema,
 	AiSessionModeSetMsgSchema,
 	AiSessionResumeMsgSchema,
-	AiShareMsgSchema,
-	AiUnrevertMsgSchema,
-} from "@/ai";
+} from "@/ai-new";
 import { PongMsgSchema } from "@/base";
 import {
 	FsDeleteMsgSchema,

@@ -46,6 +46,22 @@ const OpenCodeSessionListSchema = z.object({
 	data: z.array(OpenCodeSessionSchema),
 });
 
+/**
+ * OpenCode ACP client with custom session listing using opencode sdk.
+ *
+ * OpenCode's ACP `session/list` does not yet return project-level metadata
+ * (project ID, slug, summary stats) or accurate timestamps that the
+ * Shellular UI depends on. Until the ACP endpoint gains parity, this class
+ * overrides `listSessions()` to fetch sessions via the v2 HTTP
+ * API (`@opencode-ai/sdk/v2`) and maps them into the standard
+ * `acp.SessionInfo` shape.
+ *
+ * All other ACP methods (prompt, load, resume, etc.) go through the
+ * standard stdio JSON-RPC connection as defined in the `ACP` base class.
+ *
+ * TODO: Remove the override once OpenCode's ACP `session/list` includes
+ * project metadata and timestamps.
+ */
 export class OpenCode extends ACP {
 	private ocClient: ReturnType<typeof createOpencodeClient> | null = null;
 	private ocServer: Awaited<ReturnType<typeof createOpencodeServer>> | null =
