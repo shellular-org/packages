@@ -153,9 +153,10 @@ async function main() {
 
 		process.stdout.write("\n");
 
-		if (response.stopReason !== "end_turn") {
-			console.log(`\x1b[2m[stop: ${response.stopReason}]\x1b[0m`);
-		}
+		console.log(
+			"\n\x1b[2m[response]\x1b[0m",
+			JSON.stringify(response, null, 2),
+		);
 	}
 
 	console.log("\nGoodbye.");

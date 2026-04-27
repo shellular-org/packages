@@ -11,7 +11,8 @@ import { config } from "@/config";
 import { ACP, type AgentProcessConfig, type SpawnedAgent } from "./base";
 
 export const ACP_OPENCODE: AgentProcessConfig = {
-	agentCmd: "opencode",
+	name: "opencode",
+	agentExec: "opencode",
 	command: "opencode",
 	args: ["acp"],
 };

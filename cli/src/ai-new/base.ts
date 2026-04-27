@@ -2,14 +2,17 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk";
-
+import type { AiBackend } from "@shellular/protocol";
 import { commandExists } from "@/utils";
 import { AcpClient } from "./client";
 
 /** Configuration for spawning an ACP agent subprocess. */
 export interface AgentProcessConfig {
-	/** Identifies which agent this config targets. */
-	agentCmd: "opencode" | "codex";
+	name: AiBackend;
+	/** The executable of agent on the system to check if it's available or not.
+	 * eg. `codex`, `opencode`, `claude` etc.
+	 */
+	agentExec: "opencode" | "codex";
 	/** The executable to invoke (e.g. `"opencode"`, `"npx"`). */
 	command: string;
 	/** Command-line arguments passed to the executable. */
@@ -135,7 +138,7 @@ export class ACP {
 	}> {
 		if (!this.agentCapabilities?.loadSession) {
 			throw new Error(
-				`Agent ${this.spawnedAgent.processConfig.agentCmd} does not support loading sessions`,
+				`Agent ${this.spawnedAgent.processConfig.agentExec} does not support loading sessions`,
 			);
 		}
 
