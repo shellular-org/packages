@@ -47,9 +47,9 @@ export const BUILTIN_AGENT_DESCRIPTORS: AgentDescriptor[] = [
 		description: "Cursor CLI ACP agent",
 		source: "builtin",
 		spawn: {
-			command: "cursor",
-			args: ["agent", "acp"],
-			checkCommand: "cursor",
+			command: "agent",
+			args: ["acp"],
+			checkCommand: "agent",
 		},
 	},
 ];

@@ -13,7 +13,11 @@ import {
 	isSpawnAvailable,
 } from "./agents";
 import { ACP } from "./base";
+import { ClaudeCode } from "./claude-code";
+import { Codex } from "./codex";
+import { Cursor } from "./cursor";
 import { AgentUnavailableError } from "./errors";
+import { OpenCode } from "./opencode";
 import type { AgentDescriptor, AgentInfo, PermissionReply } from "./types";
 
 function getErrorMessage(err: unknown): string {
@@ -66,7 +70,7 @@ export class AgentsManager {
 			const descriptor = this.descriptors.get(agentId);
 			if (!descriptor)
 				throw new AgentUnavailableError(agentId, "unknown agent");
-			agent = new ACP(descriptor);
+			agent = createAgentRuntime(agentId, descriptor);
 			this.agents.set(agentId, agent);
 			// ACP permission requests are client-side JSON-RPC calls. Convert them
 			// into the existing Shellular event stream so the mobile app can decide.
@@ -792,3 +796,18 @@ export class AgentsManager {
 }
 
 export type { AgentDescriptor, AgentInfo };
+
+function createAgentRuntime(agentId: string, descriptor: AgentDescriptor): ACP {
+	const specialized =
+		agentId === "codex"
+			? Codex.create()
+			: agentId === "opencode"
+				? OpenCode.create()
+				: agentId === "claude-code"
+					? ClaudeCode.create()
+					: agentId === "cursor"
+						? Cursor.create()
+						: null;
+
+	return specialized ?? new ACP(descriptor);
+}

@@ -185,6 +185,7 @@ export const AiSessionListMsgSchema = z.object({
 	data: z
 		.object({
 			backend: AiBackendSchema,
+			workspace: z.string().optional(),
 		})
 		.optional(),
 });
