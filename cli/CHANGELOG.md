@@ -1,5 +1,13 @@
 # shellular
 
+## 0.0.12
+
+### Patch Changes
+
+- 0445ef3: fix: remove old shit ai code, and use ACP
+- Updated dependencies [0445ef3]
+  - @shellular/protocol@0.0.6
+
 ## 0.0.11
 
 ### Patch Changes
