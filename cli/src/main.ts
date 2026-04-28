@@ -14,14 +14,7 @@ import {
 import chalk from "chalk";
 import { Command } from "commander";
 import qrcode from "qrcode-terminal";
-// import { AiManager } from "@/ai/index";
 import { AgentsManager } from "@/agents";
-// import { initAiHandler } from "@/ai";
-import {
-	notifyExtensionClientPresence,
-	notifyExtensionClientsSnapshot,
-	notifyExtensionCliInfo,
-} from "@/ai/copilot";
 import {
 	ensureSingleInstance,
 	releaseBootLock,
@@ -45,7 +38,6 @@ import {
 } from "@/daemon";
 import { getKeyBase64, initEncryption } from "@/encryption";
 import { initFilesystemHandler } from "@/filesystem";
-import { installVsCodeExtension } from "@/install-extension";
 import { logger } from "@/logger";
 import { notify } from "@/notify";
 import { initPortsHandler } from "@/ports";
@@ -87,7 +79,6 @@ function parseNewClientApprovalPolicy(
 type CliOptions = {
 	server: string;
 	dir: string;
-	installVsPlugin: boolean;
 	unknownClients: UnknownClientApprovalPolicy;
 };
 
@@ -118,10 +109,6 @@ function createProgram(): Command {
 			`unknown clients approval policy (${NEW_CLIENT_APPROVAL_POLICIES.join(", ")})`,
 			parseNewClientApprovalPolicy,
 			DEFAULT_NEW_CLIENT_APPROVAL_POLICY,
-		)
-		.option(
-			"--install-vs-plugin",
-			"Install the VS Code extension to access GitHub Copilot",
 		);
 
 	const resolveDaemonOptions = (
@@ -171,7 +158,6 @@ function createProgram(): Command {
 		.action(async (options: Partial<DaemonOptions>, command: Command) => {
 			await runCli({
 				...resolveDaemonOptions(options, command),
-				installVsPlugin: false,
 				isDaemon: true,
 			});
 		});
@@ -290,15 +276,9 @@ function formatClientDeviceInfo({
 async function runCli({
 	server,
 	dir,
-	installVsPlugin,
 	unknownClients: unknownClientsApproval,
 	isDaemon = false,
 }: RunCliOptions): Promise<void> {
-	if (installVsPlugin) {
-		await installVsCodeExtension();
-		return;
-	}
-
 	const serverUrl = new ServerUrl(server);
 	const workDir = path.resolve(dir);
 
@@ -419,19 +399,6 @@ async function runCli({
 				initPortsHandler(conn);
 				agentsManager.handleConnection(conn);
 
-				const pushStateToExtension = () => {
-					notifyExtensionCliInfo({
-						version: config.VERSION,
-						hostname: os.hostname(),
-						platform: os.platform(),
-						workDir,
-						sessionId: conn.sessionId,
-					});
-					notifyExtensionClientsSnapshot(conn.getConnectedClients());
-				};
-				pushStateToExtension();
-				const snapshotTimer = setInterval(pushStateToExtension, 5_000);
-
 				conn.on(MsgType.SESSION_ERROR, (data) => {
 					logger.error(
 						chalk.red(`✗ Connection error: ${data.error ?? "Unknown error"}`),
@@ -525,11 +492,6 @@ async function runCli({
 					},
 				);
 
-				conn.on("disconnected", () => {
-					clearInterval(snapshotTimer);
-					notifyExtensionClientsSnapshot([]);
-				});
-
 				conn.on(MsgType.SESSION_CLIENT_JOINED, (msg) => {
 					upsertClient(
 						{
@@ -558,13 +520,6 @@ async function runCli({
 					logger.log(
 						`  - ${chalk.green("App Version:")} v${msg.data.appVersion}\n`,
 					);
-					notifyExtensionClientPresence(
-						msg.data.clientId,
-						true,
-						msg.data.platform,
-						msg.data.appVersion,
-					);
-					pushStateToExtension();
 
 					// let the client know which AI backends are available
 					const availableAIBackendsMsg: AiAvailabilityResultMsg = {
@@ -581,8 +536,6 @@ async function runCli({
 							`✗ Client ${data.data.clientId} disconnected on ${new Date().toLocaleString()}`,
 						),
 					);
-					notifyExtensionClientPresence(data.data.clientId, false);
-					pushStateToExtension();
 				});
 			} catch {
 				logger.log(`Connection ID: ${conn.sessionId}`);
