@@ -12,7 +12,7 @@ export const BUILTIN_AGENT_DESCRIPTORS: AgentDescriptor[] = [
 		spawn: {
 			command: npxCommand,
 			args: ["-yes", "@zed-industries/codex-acp"],
-			checkCommand: npxCommand,
+			checkCommand: "codex",
 		},
 	},
 	{
@@ -36,7 +36,7 @@ export const BUILTIN_AGENT_DESCRIPTORS: AgentDescriptor[] = [
 		spawn: {
 			command: npxCommand,
 			args: ["-yes", "@agentclientprotocol/claude-agent-acp"],
-			checkCommand: npxCommand,
+			checkCommand: "claude",
 		},
 	},
 	{
@@ -49,7 +49,7 @@ export const BUILTIN_AGENT_DESCRIPTORS: AgentDescriptor[] = [
 		spawn: {
 			command: "agent",
 			args: ["acp"],
-			checkCommand: "agent",
+			checkCommand: "cursor",
 		},
 	},
 ];

@@ -20,6 +20,16 @@ export interface AgentSpawnCommand {
 	args: string[];
 	env?: Record<string, string>;
 	cwd?: string;
+	/**
+	 * Command to check if an agent is available.
+	 *
+	 * Example:
+	 * If we wanna check whether the user is using codex or not, we simply check
+	 * if the `codex` command is available. Note that we check for the existence of the
+	 * `codex` command and not `npx`, because
+	 * 1. we wanna check if that specific agent is available, not just npx
+	 * 2. we can assume that it's installed because the user runs our CLI via `npx shellular`, so npx should be available.
+	 */
 	checkCommand?: string;
 }
 
