@@ -206,6 +206,22 @@ function appendText(message: AcpMessage, text: string) {
 	appendPart(message, { type: "text", text });
 }
 
+function promptText(prompt: acp.PromptRequest["prompt"]) {
+	return prompt
+		.map((content) => textFromContent(content))
+		.filter(Boolean)
+		.join("\n")
+		.trim();
+}
+
+function hasText(message: AcpMessage, text: string) {
+	const normalized = text.trim();
+	if (!normalized) return false;
+	return message.parts.some(
+		(part) => part.type === "text" && part.text.trim() === normalized,
+	);
+}
+
 export class AcpTranscript {
 	private messages: AcpMessage[] = [];
 	private currentUser: AcpMessage | null = null;
@@ -221,10 +237,12 @@ export class AcpTranscript {
 		}));
 	}
 
-	beginTurn() {
+	beginTurn(prompt?: acp.PromptRequest["prompt"]) {
 		this.currentUser = null;
 		this.currentAssistant = null;
 		this.toolParts.clear();
+		const text = prompt ? promptText(prompt) : "";
+		if (text) appendText(this.ensureCurrentUser(), text);
 	}
 
 	endTurn(stopReason?: string) {
@@ -247,12 +265,15 @@ export class AcpTranscript {
 				const userPart = contentToPart(update.content);
 				if (userPart) {
 					if (userPart.type === "text") {
-						appendText(message, userPart.text);
+						if (!hasText(message, userPart.text)) {
+							appendText(message, userPart.text);
+						}
 					} else {
 						appendPart(message, userPart);
 					}
 				} else {
-					appendText(message, textFromContent(update.content));
+					const text = textFromContent(update.content);
+					if (!hasText(message, text)) appendText(message, text);
 				}
 				events.push(this.messageEvent(message));
 				break;

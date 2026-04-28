@@ -387,7 +387,7 @@ export class ACP {
 	): Promise<PromptResult> {
 		await this.ensureReady();
 		const transcript = this.getTranscript(params.sessionId);
-		transcript.beginTurn();
+		transcript.beginTurn(params.prompt);
 		const listener = (notification: acp.SessionNotification) => {
 			callbacks.onUpdate?.(notification);
 			// Normalize every ACP update immediately so UI consumers can render
