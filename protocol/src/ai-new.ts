@@ -103,7 +103,7 @@ export {
 	zStopReason as AcpStopReasonSchema,
 	zTextContent as AcpTextContentSchema,
 	zToolCallUpdate as AcpToolCallUpdateSchema,
-} from "@agentclientprotocol/sdk/dist/schema/zod.gen";
+} from "@agentclientprotocol/sdk/dist/schema/zod.gen.js";
 
 // ─── Agent Info (Shellular-specific, not in the ACP spec) ─────────────────────
 
