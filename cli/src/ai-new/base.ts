@@ -11,7 +11,7 @@ import {
 	zNewSessionResponse,
 	zResumeSessionResponse,
 	zSetSessionConfigOptionResponse,
-} from "@agentclientprotocol/sdk/dist/schema/zod.gen";
+} from "@agentclientprotocol/sdk/dist/schema/zod.gen.js";
 import { config } from "@/config";
 import { logger } from "@/logger";
 import { commandExists } from "@/utils";
