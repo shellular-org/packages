@@ -363,6 +363,11 @@ export class AgentsManager {
 							...session,
 							configOptions: response.configOptions ?? undefined,
 						} as typeof session,
+						state: {
+							configOptions: response.configOptions ?? undefined,
+							models: response.models,
+							modes: response.modes,
+						},
 					},
 				});
 				if (session.id && msg.data.prompt.trim()) {

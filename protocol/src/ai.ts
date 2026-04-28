@@ -28,6 +28,7 @@ export const AiSessionSchema = z.object({
 	model: z.string().optional(),
 	title: z.string().optional(),
 	workspacePath: z.string().optional(),
+	configOptions: z.array(z.any()).optional(),
 });
 export type AiSession = z.infer<typeof AiSessionSchema>;
 
@@ -186,6 +187,7 @@ export const AiSessionListMsgSchema = z.object({
 		.object({
 			backend: AiBackendSchema,
 			workspace: z.string().optional(),
+			cursor: z.string().optional(),
 		})
 		.optional(),
 });
@@ -412,6 +414,7 @@ export const AiSessionListResultMsgSchema = z.object({
 	data: z
 		.object({
 			sessions: z.array(AiSessionSchema),
+			nextCursor: z.string().optional(),
 		})
 		.optional(),
 });
@@ -428,6 +431,7 @@ export const AiSessionCreateResultMsgSchema = z.object({
 	data: z
 		.object({
 			session: AiSessionSchema,
+			state: z.record(z.string(), z.unknown()).optional(),
 		})
 		.optional(),
 });
