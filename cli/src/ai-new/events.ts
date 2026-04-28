@@ -1,9 +1,10 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import type {
 	AcpAiSession,
+	AcpContentBlock,
+	AcpMessage,
+	AcpMessagePart,
 	AiEvent,
-	AiMessage,
-	AiMessagePart,
 } from "@shellular/protocol";
 import { nanoid } from "nanoid";
 
@@ -25,11 +26,177 @@ function textFromContent(content: unknown): string {
 	return "";
 }
 
-function appendPart(message: AiMessage, part: AiMessagePart) {
+function annotationTitle(value: unknown): string | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const title = (value as Record<string, unknown>).title;
+	return typeof title === "string" ? title : undefined;
+}
+
+function dataUrl(mimeType: string, data: string) {
+	return `data:${mimeType};base64,${data}`;
+}
+
+function filePathFromUri(uri: string) {
+	return uri.replace(/^file:\/\//, "");
+}
+
+function contentToPart(content: unknown): AcpMessagePart | null {
+	if (!content || typeof content !== "object" || !("type" in content))
+		return null;
+	const c = content as Record<string, unknown>;
+	switch (c.type) {
+		case "text":
+			return typeof c.text === "string"
+				? { type: "text", text: c.text, rawContent: content }
+				: null;
+		case "image":
+			if (typeof c.data === "string" && typeof c.mimeType === "string") {
+				return {
+					type: "image",
+					src: dataUrl(c.mimeType, c.data),
+					alt: annotationTitle(c.annotations) ?? "Image",
+					mime: c.mimeType,
+					uri: typeof c.uri === "string" ? c.uri : undefined,
+					rawContent: content,
+				};
+			}
+			if (typeof c.uri === "string") {
+				return {
+					type: "image",
+					src: c.uri,
+					alt: annotationTitle(c.annotations) ?? "Image",
+					mime: typeof c.mimeType === "string" ? c.mimeType : undefined,
+					uri: c.uri,
+					rawContent: content,
+				};
+			}
+			return null;
+		case "audio":
+			if (typeof c.data === "string" && typeof c.mimeType === "string") {
+				return {
+					type: "audio",
+					src: dataUrl(c.mimeType, c.data),
+					mime: c.mimeType,
+					rawContent: content,
+				};
+			}
+			if (typeof c.uri === "string") {
+				return {
+					type: "audio",
+					src: c.uri,
+					mime: typeof c.mimeType === "string" ? c.mimeType : undefined,
+					uri: c.uri,
+					rawContent: content,
+				};
+			}
+			return null;
+		case "resource": {
+			const res = c.resource as Record<string, unknown> | undefined;
+			if (!res) return null;
+			const uri = typeof res.uri === "string" ? res.uri : undefined;
+			const mimeType =
+				typeof res.mimeType === "string" ? res.mimeType : undefined;
+			if (uri?.startsWith("file://") && typeof res.text !== "string") {
+				return {
+					type: "file_reference",
+					path: filePathFromUri(uri),
+					mimeType,
+					rawContent: content,
+				};
+			}
+			if (typeof res.text === "string") {
+				return {
+					type: "resource",
+					uri: uri ?? "resource:",
+					name: uri?.split("/").pop(),
+					mimeType,
+					text: res.text,
+					rawContent: content,
+				};
+			}
+			if (typeof res.blob === "string") {
+				return {
+					type: "resource",
+					uri: uri ?? "resource:",
+					name: uri?.split("/").pop(),
+					mimeType,
+					blob: res.blob,
+					rawContent: content,
+				};
+			}
+			return uri
+				? {
+						type: "resource",
+						uri,
+						name: uri.split("/").pop(),
+						mimeType,
+						rawContent: content,
+					}
+				: null;
+		}
+		case "resource_link": {
+			const uri = typeof c.uri === "string" ? c.uri : "";
+			const common = {
+				name: typeof c.name === "string" ? c.name : undefined,
+				title: typeof c.title === "string" ? c.title : undefined,
+				description:
+					typeof c.description === "string" ? c.description : undefined,
+				mimeType: typeof c.mimeType === "string" ? c.mimeType : undefined,
+				size: typeof c.size === "number" ? c.size : undefined,
+				rawContent: content,
+			};
+			if (uri.startsWith("file://")) {
+				return {
+					type: "file_reference",
+					path: filePathFromUri(uri),
+					...common,
+				};
+			}
+			if (uri.startsWith("http")) {
+				return {
+					type: "web_reference",
+					url: uri,
+					title: common.title ?? common.name,
+					description: common.description,
+					mimeType: common.mimeType,
+					size: common.size,
+					rawContent: content,
+				};
+			}
+			return uri
+				? {
+						type: "resource",
+						uri,
+						...common,
+					}
+				: null;
+		}
+		default:
+			return null;
+	}
+}
+
+function appendContent(
+	message: AcpMessage,
+	content: AcpContentBlock | unknown,
+) {
+	const part = contentToPart(content);
+	if (!part) {
+		appendText(message, textFromContent(content));
+		return;
+	}
+	if (part.type === "text") {
+		appendText(message, part.text);
+		return;
+	}
+	appendPart(message, part);
+}
+
+function appendPart(message: AcpMessage, part: AcpMessagePart) {
 	message.parts = [...(message.parts ?? []), part];
 }
 
-function appendText(message: AiMessage, text: string) {
+function appendText(message: AcpMessage, text: string) {
 	if (!text) return;
 	const last = message.parts[message.parts.length - 1];
 	if (last?.type === "text") {
@@ -40,14 +207,14 @@ function appendText(message: AiMessage, text: string) {
 }
 
 export class AcpTranscript {
-	private messages: AiMessage[] = [];
-	private currentUser: AiMessage | null = null;
-	private currentAssistant: AiMessage | null = null;
-	private toolParts = new Map<string, AiMessagePart & { type: "tool_call" }>();
+	private messages: AcpMessage[] = [];
+	private currentUser: AcpMessage | null = null;
+	private currentAssistant: AcpMessage | null = null;
+	private toolParts = new Map<string, AcpMessagePart & { type: "tool_call" }>();
 
 	constructor(readonly sessionId: string) {}
 
-	getMessages(): AiMessage[] {
+	getMessages(): AcpMessage[] {
 		return this.messages.map((message) => ({
 			...message,
 			parts: [...message.parts],
@@ -60,7 +227,10 @@ export class AcpTranscript {
 		this.toolParts.clear();
 	}
 
-	endTurn() {
+	endTurn(stopReason?: string) {
+		if (stopReason && stopReason !== "end_turn") {
+			this.appendStopReason(stopReason);
+		}
 		this.currentUser = null;
 		this.currentAssistant = null;
 		this.toolParts.clear();
@@ -74,15 +244,24 @@ export class AcpTranscript {
 			case "user_message_chunk": {
 				this.currentAssistant = null;
 				const message = this.ensureCurrentUser();
-				appendText(message, textFromContent(update.content));
+				const userPart = contentToPart(update.content);
+				if (userPart) {
+					if (userPart.type === "text") {
+						appendText(message, userPart.text);
+					} else {
+						appendPart(message, userPart);
+					}
+				} else {
+					appendText(message, textFromContent(update.content));
+				}
 				events.push(this.messageEvent(message));
 				break;
 			}
 			case "agent_message_chunk": {
 				this.currentUser = null;
-				const text = textFromContent(update.content);
 				const message = this.ensureCurrentAssistant();
-				appendText(message, text);
+				const text = textFromContent(update.content);
+				appendContent(message, update.content);
 				if (text) {
 					events.push({
 						type: "token",
@@ -113,7 +292,7 @@ export class AcpTranscript {
 			case "tool_call": {
 				this.currentUser = null;
 				const message = this.ensureCurrentAssistant();
-				const part: AiMessagePart & { type: "tool_call" } = {
+				const part: AcpMessagePart & { type: "tool_call" } = {
 					id: update.toolCallId,
 					type: "tool_call",
 					name: update.kind ?? "tool",
@@ -157,19 +336,43 @@ export class AcpTranscript {
 				if (update.rawOutput !== undefined) {
 					part.output = JSON.stringify(update.rawOutput, null, 2);
 				}
+				if (update.content?.length) {
+					part.output = update.content
+						.map((item) => toolContentToText(item))
+						.filter(Boolean)
+						.join("\n\n");
+				}
 				events.push(this.messageEvent(message));
 				break;
 			}
 			case "plan": {
 				this.currentUser = null;
 				const message = this.ensureCurrentAssistant();
-				appendPart(message, {
-					type: "plan",
-					content: update.entries
-						.map((entry) => `${entry.status}: ${entry.content}`)
+				const entries = update.entries.map((entry) => ({
+					content: entry.content,
+					status: entry.status,
+					priority: entry.priority,
+				}));
+				const existingPlanIndex = message.parts.findIndex(
+					(part) => part.type === "plan",
+				);
+				const planPart = {
+					type: "plan" as const,
+					content: entries
+						.map((entry) =>
+							entry.status
+								? `${entry.status}: ${entry.content}`
+								: entry.content,
+						)
 						.join("\n"),
+					entries,
 					summary: "Plan",
-				});
+				};
+				if (existingPlanIndex >= 0) {
+					message.parts[existingPlanIndex] = planPart;
+				} else {
+					appendPart(message, planPart);
+				}
 				events.push(this.messageEvent(message));
 				break;
 			}
@@ -181,7 +384,6 @@ export class AcpTranscript {
 				break;
 			}
 			case "usage_update":
-			case "available_commands_update":
 			case "current_mode_update":
 			case "config_option_update": {
 				events.push({
@@ -196,6 +398,17 @@ export class AcpTranscript {
 				});
 				break;
 			}
+			case "available_commands_update": {
+				events.push({
+					type: "session.status",
+					properties: {
+						sessionId: this.sessionId,
+						status: update,
+						availableCommands: update.availableCommands,
+					},
+				});
+				break;
+			}
 			default:
 				events.push({
 					type: "session.status",
@@ -206,7 +419,7 @@ export class AcpTranscript {
 		return events;
 	}
 
-	private ensureCurrentUser(): AiMessage {
+	private ensureCurrentUser(): AcpMessage {
 		if (!this.currentUser) {
 			this.currentUser = {
 				id: nanoid(),
@@ -219,7 +432,7 @@ export class AcpTranscript {
 		return this.currentUser;
 	}
 
-	private ensureCurrentAssistant(): AiMessage {
+	private ensureCurrentAssistant(): AcpMessage {
 		if (!this.currentAssistant) {
 			this.currentAssistant = {
 				id: nanoid(),
@@ -232,7 +445,7 @@ export class AcpTranscript {
 		return this.currentAssistant;
 	}
 
-	private messageEvent(message: AiMessage): AiEvent {
+	private messageEvent(message: AcpMessage): AiEvent {
 		return {
 			type: "message",
 			properties: {
@@ -247,6 +460,73 @@ export class AcpTranscript {
 				message,
 			},
 		};
+	}
+
+	private appendStopReason(stopReason: string) {
+		const message = this.currentAssistant ?? this.ensureCurrentAssistant();
+		const text = formatStopReason(stopReason);
+		if (!text) return;
+		message.parts = [
+			...message.parts.filter(
+				(part) =>
+					!(
+						part.type === "text" &&
+						"metadata" in part &&
+						(part as { metadata?: unknown }).metadata === "stop-reason"
+					),
+			),
+			{
+				type: "text",
+				text,
+				metadata: "stop-reason",
+			},
+		];
+	}
+}
+
+function formatStopReason(stopReason: string) {
+	switch (stopReason) {
+		case "cancelled":
+			return "_Stopped by user._";
+		case "max_tokens":
+			return "_Stopped: maximum token limit reached._";
+		case "max_turn_requests":
+			return "_Stopped: maximum turn requests reached._";
+		case "refusal":
+			return "_Stopped: request refused._";
+		default:
+			return stopReason === "end_turn"
+				? ""
+				: `_Stopped: ${stopReason.replace(/_/g, " ")}._`;
+	}
+}
+
+function toolContentToText(content: acp.ToolCallContent): string {
+	if (content.type === "diff") {
+		return `${content.path}\n${content.oldText ?? ""}\n${content.newText}`;
+	}
+	if (content.type === "terminal") return `terminal:${content.terminalId}`;
+	if (content.type === "content") return contentBlockToText(content.content);
+	return "";
+}
+
+function contentBlockToText(content: acp.ContentBlock): string {
+	const text = textFromContent(content);
+	if (text) return text;
+	const part = contentToPart(content);
+	if (!part) return "";
+	switch (part.type) {
+		case "resource":
+			return part.text ?? part.title ?? part.name ?? part.uri;
+		case "file_reference":
+			return part.title ?? part.name ?? part.path;
+		case "web_reference":
+			return part.title ?? part.url;
+		case "image":
+		case "audio":
+			return part.alt ?? part.uri ?? part.mime ?? part.type;
+		default:
+			return "";
 	}
 }
 

@@ -1,10 +1,11 @@
 import type {
+	AcpPromptRequest,
 	AiBackend,
 	AiEvent,
 	AiSession,
 	AiSessionCreateMsg,
 } from "@shellular/protocol";
-import { MsgType } from "@shellular/protocol";
+import { AcpContentBlockSchema, MsgType } from "@shellular/protocol";
 
 import type { Connection } from "@/connection";
 import {
@@ -183,14 +184,15 @@ export class AgentsManager {
 		agentId: string,
 		clientId: string,
 		sessionId: string,
-		content: string,
+		content: string | unknown[],
 	) {
 		const agent = await this.connectAgent(agentId);
 		this.rememberSessionClient(agentId, sessionId, clientId);
+		const prompt = normalizePromptContent(content);
 		return agent.prompt(
 			{
 				sessionId,
-				prompt: [{ type: "text", text: content }],
+				prompt,
 			},
 			{
 				onEvent: (event) =>
@@ -368,7 +370,7 @@ export class AgentsManager {
 						msg.data.backend,
 						msg.clientId,
 						session.id,
-						msg.data.prompt,
+						msg.data.content ?? msg.data.prompt,
 					).catch((err) => {
 						this.emit(msg.clientId, msg.data.backend, {
 							type: "error",
@@ -597,7 +599,7 @@ export class AgentsManager {
 					msg.data.backend,
 					msg.clientId,
 					msg.data.sessionId,
-					msg.data.text,
+					msg.data.content ?? msg.data.text,
 				);
 				conn.send({
 					type: MsgType.AI_PROMPT_ACK,
@@ -796,6 +798,19 @@ export class AgentsManager {
 }
 
 export type { AgentDescriptor, AgentInfo };
+
+function normalizePromptContent(
+	content: string | unknown[],
+): AcpPromptRequest["prompt"] {
+	if (typeof content === "string") return [{ type: "text", text: content }];
+
+	const parsed = content.flatMap((block) => {
+		const result = AcpContentBlockSchema.safeParse(block);
+		return result.success ? [result.data] : [];
+	});
+
+	return parsed.length ? parsed : [{ type: "text", text: "" }];
+}
 
 function createAgentRuntime(agentId: string, descriptor: AgentDescriptor): ACP {
 	const specialized =

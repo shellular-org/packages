@@ -400,7 +400,7 @@ export class ACP {
 
 		try {
 			const response = await this.requireConnection().prompt(params);
-			transcript.endTurn();
+			transcript.endTurn(response.stopReason);
 			callbacks.onEvent?.(promptEndEvent(params.sessionId, response));
 			const messages = transcript.getMessages();
 			const existing = this.sessions.get(params.sessionId);

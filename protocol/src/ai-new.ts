@@ -1,12 +1,17 @@
 export type {
 	AgentCapabilities as AcpAgentCapabilities,
+	AudioContent as AcpAudioContent,
+	AvailableCommand as AcpAvailableCommand,
+	AvailableCommandInput as AcpAvailableCommandInput,
 	CancelNotification as AcpCancelNotification,
 	ClientCapabilities as AcpClientCapabilities,
 	CloseSessionRequest as AcpCloseSessionRequest,
 	CloseSessionResponse as AcpCloseSessionResponse,
 	ContentBlock as AcpContentBlock,
+	EmbeddedResource as AcpEmbeddedResource,
 	ForkSessionRequest as AcpForkSessionRequest,
 	ForkSessionResponse as AcpForkSessionResponse,
+	ImageContent as AcpImageContent,
 	Implementation as AcpImplementation,
 	InitializeRequest as AcpInitializeRequest,
 	InitializeResponse as AcpInitializeResponse,
@@ -24,6 +29,7 @@ export type {
 	PromptResponse as AcpPromptResponse,
 	RequestPermissionRequest as AcpRequestPermissionRequest,
 	RequestPermissionResponse as AcpRequestPermissionResponse,
+	ResourceLink as AcpResourceLink,
 	ResumeSessionRequest as AcpResumeSessionRequest,
 	ResumeSessionResponse as AcpResumeSessionResponse,
 	SessionCapabilities as AcpSessionCapabilities,
@@ -49,15 +55,19 @@ export type {
 } from "@agentclientprotocol/sdk";
 export {
 	zAgentCapabilities as AcpAgentCapabilitiesSchema,
+	zAudioContent as AcpAudioContentSchema,
+	zAvailableCommandInput as AcpAvailableCommandInputSchema,
+	zAvailableCommandsUpdate as AcpAvailableCommandsUpdateSchema,
 	zCancelNotification as AcpCancelNotificationSchema,
 	zClientCapabilities as AcpClientCapabilitiesSchema,
 	zCloseSessionRequest as AcpCloseSessionRequestSchema,
 	zCloseSessionResponse as AcpCloseSessionResponseSchema,
-	zContentBlock as AcpContentBlockSchema,
+	zEmbeddedResource as AcpEmbeddedResourceSchema,
 	zError as AcpErrorSchema,
 	zErrorCode as AcpErrorCodeSchema,
 	zForkSessionRequest as AcpForkSessionRequestSchema,
 	zForkSessionResponse as AcpForkSessionResponseSchema,
+	zImageContent as AcpImageContentSchema,
 	zImplementation as AcpImplementationSchema,
 	zInitializeRequest as AcpInitializeRequestSchema,
 	zInitializeResponse as AcpInitializeResponseSchema,
@@ -76,6 +86,7 @@ export {
 	zRequestPermissionOutcome as AcpRequestPermissionOutcomeSchema,
 	zRequestPermissionRequest as AcpRequestPermissionRequestSchema,
 	zRequestPermissionResponse as AcpRequestPermissionResponseSchema,
+	zResourceLink as AcpResourceLinkSchema,
 	zResumeSessionRequest as AcpResumeSessionRequestSchema,
 	zResumeSessionResponse as AcpResumeSessionResponseSchema,
 	zSessionCapabilities as AcpSessionCapabilitiesSchema,
@@ -103,6 +114,7 @@ export {
 	zStopReason as AcpStopReasonSchema,
 	zTextContent as AcpTextContentSchema,
 	zToolCallUpdate as AcpToolCallUpdateSchema,
+	zUnstructuredCommandInput as AcpUnstructuredCommandInputSchema,
 } from "@agentclientprotocol/sdk/dist/schema/zod.gen.js";
 
 // ─── Agent Info (Shellular-specific, not in the ACP spec) ─────────────────────
@@ -136,9 +148,20 @@ export interface AcpAgentInfo {
 // into the existing Shellular protocol. They were separated from ai.ts to keep
 // the old AI system's types isolated from the new ACP integration.
 
+import {
+	zAvailableCommand as AcpAvailableCommandSchema,
+	zContentBlock as AcpContentBlockSchema,
+} from "@agentclientprotocol/sdk/dist/schema/zod.gen.js";
 import { z } from "zod";
-import { AiBackendSchema, AiMessageSchema, AiSessionSchema } from "./ai";
+import {
+	AiBackendSchema,
+	AiMessagePartSchema,
+	AiMessageSchema,
+	AiSessionSchema,
+} from "./ai";
 import { MsgType } from "./base";
+
+export { AcpAvailableCommandSchema, AcpContentBlockSchema };
 
 // ── ACP Session Config (loose, passes unknown metadata through) ──────────────
 
@@ -182,11 +205,74 @@ export const AiMcpServerSchema = z.record(z.string(), z.unknown());
 export type AiMcpServer = z.infer<typeof AiMcpServerSchema>;
 
 export const AiSessionStateSchema = z.object({
+	availableCommands: z.array(AcpAvailableCommandSchema).optional(),
 	configOptions: z.array(AiSessionConfigOptionSchema).optional(),
 	models: z.unknown().optional(),
 	modes: z.unknown().optional(),
 });
 export type AiSessionState = z.infer<typeof AiSessionStateSchema>;
+
+// ── ACP Content Rendering (new integration only) ────────────────────────────
+
+const AcpRenderedContentMetadataSchema = z.object({
+	name: z.string().optional(),
+	title: z.string().optional(),
+	description: z.string().optional(),
+	mimeType: z.string().optional(),
+	size: z.number().optional(),
+	uri: z.string().optional(),
+	rawContent: z.unknown().optional(),
+});
+
+export const AcpMessagePartAudioSchema =
+	AcpRenderedContentMetadataSchema.extend({
+		id: z.string().optional(),
+		type: z.literal("audio"),
+		src: z.string(),
+		mime: z.string().optional(),
+	});
+export type AcpMessagePartAudio = z.infer<typeof AcpMessagePartAudioSchema>;
+
+export const AcpMessagePartResourceSchema =
+	AcpRenderedContentMetadataSchema.extend({
+		id: z.string().optional(),
+		type: z.literal("resource"),
+		uri: z.string(),
+		text: z.string().optional(),
+		blob: z.string().optional(),
+	});
+export type AcpMessagePartResource = z.infer<
+	typeof AcpMessagePartResourceSchema
+>;
+
+export const AcpMessagePartSchema = z.union([
+	AiMessagePartSchema,
+	AcpMessagePartAudioSchema,
+	AcpMessagePartResourceSchema,
+]);
+export type AcpMessagePart = z.infer<typeof AcpMessagePartSchema> & {
+	metadata?: unknown;
+	rawContent?: unknown;
+	alt?: string;
+	mime?: string;
+	uri?: string;
+	name?: string;
+	title?: string;
+	description?: string;
+	mimeType?: string;
+	size?: number;
+};
+
+export const AcpMessageSchema = AiMessageSchema.extend({
+	parts: z.array(AcpMessagePartSchema).default([]),
+});
+export type AcpMessage = {
+	id?: string;
+	role: "user" | "assistant";
+	parts: AcpMessagePart[];
+	timestamp?: number;
+	[key: string]: unknown;
+};
 
 export const AiSessionSetupSchema = z.object({
 	backend: AiBackendSchema,
@@ -296,7 +382,7 @@ export const AiSessionLoadResultMsgSchema = z.object({
 			backend: AiBackendSchema,
 			session: AcpAiSessionSchema,
 			state: AiSessionStateSchema.optional(),
-			messages: z.array(AiMessageSchema),
+			messages: z.array(AcpMessageSchema),
 			updates: z.array(z.unknown()).optional(),
 		})
 		.optional(),

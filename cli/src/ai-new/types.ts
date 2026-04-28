@@ -1,9 +1,9 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import type {
 	AcpAiSession,
+	AcpMessage,
 	AiBackend,
 	AiEvent,
-	AiMessage,
 } from "@shellular/protocol";
 
 export type AgentConnectionState =
@@ -62,12 +62,12 @@ export interface PromptCallbacks {
 export interface LoadSessionResult {
 	response: acp.LoadSessionResponse;
 	updates: acp.SessionNotification[];
-	messages: AiMessage[];
+	messages: AcpMessage[];
 }
 
 export interface PromptResult {
 	response: acp.PromptResponse;
-	messages: AiMessage[];
+	messages: AcpMessage[];
 }
 
 export interface PermissionRequestEvent {
@@ -82,5 +82,5 @@ export type PermissionReply = "once" | "always" | "reject";
 
 export interface StoredSession {
 	session: AcpAiSession;
-	messages: AiMessage[];
+	messages: AcpMessage[];
 }

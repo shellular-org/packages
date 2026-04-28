@@ -198,6 +198,7 @@ export const AiSessionCreateMsgSchema = z.object({
 	data: z.object({
 		backend: AiBackendSchema,
 		prompt: z.string(),
+		content: z.array(z.unknown()).optional(),
 		workspacePath: z.string(),
 		cwd: z.string().optional(),
 		additionalDirectories: z.array(z.string()).optional(),
@@ -248,10 +249,12 @@ export const AiPromptMsgSchema = z.object({
 		backend: AiBackendSchema,
 		sessionId: z.string(),
 		text: z.string(),
+		content: z.array(z.unknown()).optional(),
 		model: z.any().optional(),
 		agent: z.string().optional(),
 		files: z.any().optional(),
 		codexOptions: z.any().optional(),
+		requestId: z.string().optional(),
 	}),
 });
 export type AiPromptMsg = z.infer<typeof AiPromptMsgSchema>;
