@@ -1,129 +1,12 @@
 import type {
 	AiEvent,
 	AiMessage,
-	AiMessagePart,
 	AiSession,
 	ProviderInfo,
 	ShareInfo,
 } from "@shellular/protocol";
 
 export type { AiEvent, ProviderInfo, ShareInfo };
-
-// ─── Streaming events ──────────────────────────────────────────────────────
-
-export interface TokenEvent {
-	type: "token";
-	properties: {
-		sessionId: string;
-		text: string;
-		itemId?: string;
-	};
-}
-
-export interface MessageEvent {
-	type: "message";
-	properties: {
-		id: string;
-		role: string;
-		text: string;
-		timestamp: number;
-		sessionId?: string;
-		parts?: AiMessagePart[];
-	};
-}
-
-export interface EndEvent {
-	type: "end";
-	properties: {
-		sessionId: string;
-	};
-}
-
-export interface ErrorEvent {
-	type: "error";
-	properties: {
-		sessionId?: string;
-		error: string;
-	};
-}
-
-export interface PromptErrorEvent {
-	type: "prompt_error";
-	properties: {
-		sessionId?: string;
-		error: string;
-	};
-}
-
-export interface SessionStatusEvent {
-	type: "session.status";
-	properties: {
-		sessionId: string;
-		status: unknown;
-	};
-}
-
-export interface SessionGcEvent {
-	type: "session_gc";
-	properties: {
-		sessionId: string;
-	};
-}
-
-export interface SseDeadEvent {
-	type: "sse_dead";
-	properties: {
-		error: string;
-		attempts: number;
-	};
-}
-
-export interface PermissionUpdatedEvent {
-	type: "permission.updated";
-	properties: {
-		id: string;
-		sessionId: string;
-		messageId?: string;
-		callId?: string;
-		kind: string;
-		title: string;
-		metadata?: unknown;
-	};
-}
-
-export interface PermissionRepliedEvent {
-	type: "permission.replied";
-	properties: {
-		permissionId: string;
-	};
-}
-
-export interface QuestionAskedEvent {
-	type: "question.asked";
-	properties: {
-		id: string;
-		sessionId: string;
-		questions: unknown[];
-		tool?: unknown;
-	};
-}
-
-export interface QuestionRepliedEvent {
-	type: "question.replied";
-	properties: {
-		sessionId: string;
-		requestId: string;
-		answers: string[][];
-	};
-}
-
-export interface QuestionRejectedEvent {
-	type: "question.rejected";
-	properties: {
-		sessionId: string;
-		requestId: string;
-	};
-}
 
 // Callback the provider calls to push events to the mobile app.
 export type AiEventEmitter = (clientId: string, event: AiEvent) => void;

@@ -1,7 +1,6 @@
 import type { AiBackend, AiSession } from "@shellular/protocol";
 import { logger } from "@/logger";
-import { ClaudeCodeProvider } from "./claude-code";
-import { CodexProvider } from "./codex";
+
 import { CopilotProvider } from "./copilot";
 import type {
 	AIProvider,
@@ -10,7 +9,6 @@ import type {
 	FileAttachment,
 	ModelSelector,
 } from "./interface";
-import { OpenCodeProvider } from "./opencode";
 
 export class AiManager {
 	private _providers: Partial<Record<AiBackend, AIProvider>> = {};
@@ -119,22 +117,10 @@ export class AiManager {
 
 	private async tryInit(backend: AiBackend): Promise<void> {
 		try {
-			if (backend === "opencode") {
-				const p = new OpenCodeProvider();
-				await p.init();
-				this._providers.opencode = p;
-			} else if (backend === "codex") {
-				const p = new CodexProvider();
-				await p.init();
-				this._providers.codex = p;
-			} else if (backend === "copilot") {
+			if (backend === "copilot") {
 				const p = new CopilotProvider();
 				await p.init();
 				this._providers.copilot = p;
-			} else if (backend === "claude-code") {
-				const p = new ClaudeCodeProvider();
-				await p.init();
-				this._providers["claude-code"] = p;
 			}
 			this._available.push(backend);
 		} catch (err) {
