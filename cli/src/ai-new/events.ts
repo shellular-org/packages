@@ -8,6 +8,11 @@ import type {
 } from "@shellular/protocol";
 import { nanoid } from "nanoid";
 
+type AcpToolCallPart = AcpMessagePart & {
+	type: "tool_call";
+	parts?: AcpMessagePart[];
+};
+
 function now() {
 	return Date.now();
 }
@@ -34,6 +39,12 @@ function annotationTitle(value: unknown): string | undefined {
 
 function dataUrl(mimeType: string, data: string) {
 	return `data:${mimeType};base64,${data}`;
+}
+
+function diffKind(content: acp.ToolCallContent & { type: "diff" }) {
+	if (content.oldText === null || content.oldText === undefined)
+		return "create";
+	return "edit";
 }
 
 function filePathFromUri(uri: string) {
@@ -227,7 +238,7 @@ export class AcpTranscript {
 	private messages: AcpMessage[] = [];
 	private currentUser: AcpMessage | null = null;
 	private currentAssistant: AcpMessage | null = null;
-	private toolParts = new Map<string, AcpMessagePart & { type: "tool_call" }>();
+	private toolParts = new Map<string, AcpToolCallPart>();
 
 	constructor(readonly sessionId: string) {}
 
@@ -313,7 +324,7 @@ export class AcpTranscript {
 			case "tool_call": {
 				this.currentUser = null;
 				const message = this.ensureCurrentAssistant();
-				const part: AcpMessagePart & { type: "tool_call" } = {
+				const part: AcpToolCallPart = {
 					id: update.toolCallId,
 					type: "tool_call",
 					name: update.kind ?? "tool",
@@ -328,6 +339,9 @@ export class AcpTranscript {
 							: JSON.stringify(update.rawOutput, null, 2),
 					status: update.status,
 				};
+				if (update.content?.length) {
+					part.parts = toolContentToParts(update.content);
+				}
 				this.toolParts.set(update.toolCallId, part);
 				appendPart(message, part);
 				events.push(this.messageEvent(message));
@@ -358,10 +372,7 @@ export class AcpTranscript {
 					part.output = JSON.stringify(update.rawOutput, null, 2);
 				}
 				if (update.content?.length) {
-					part.output = update.content
-						.map((item) => toolContentToText(item))
-						.filter(Boolean)
-						.join("\n\n");
+					part.parts = toolContentToParts(update.content);
 				}
 				events.push(this.messageEvent(message));
 				break;
@@ -522,33 +533,40 @@ function formatStopReason(stopReason: string) {
 	}
 }
 
-function toolContentToText(content: acp.ToolCallContent): string {
-	if (content.type === "diff") {
-		return `${content.path}\n${content.oldText ?? ""}\n${content.newText}`;
-	}
-	if (content.type === "terminal") return `terminal:${content.terminalId}`;
-	if (content.type === "content") return contentBlockToText(content.content);
-	return "";
-}
-
-function contentBlockToText(content: acp.ContentBlock): string {
-	const text = textFromContent(content);
-	if (text) return text;
-	const part = contentToPart(content);
-	if (!part) return "";
-	switch (part.type) {
-		case "resource":
-			return part.text ?? part.title ?? part.name ?? part.uri;
-		case "file_reference":
-			return part.title ?? part.name ?? part.path;
-		case "web_reference":
-			return part.title ?? part.url;
-		case "image":
-		case "audio":
-			return part.alt ?? part.uri ?? part.mime ?? part.type;
-		default:
-			return "";
-	}
+function toolContentToParts(contents: acp.ToolCallContent[]): AcpMessagePart[] {
+	return contents.flatMap((content) => {
+		switch (content.type) {
+			case "content": {
+				const part = contentToPart(content.content);
+				return part ? [part] : [];
+			}
+			case "diff":
+				return [
+					{
+						type: "file_change" as const,
+						path: content.path,
+						kind: diffKind(content),
+						diff: {
+							old: content.oldText ?? "",
+							new: content.newText,
+						},
+						status: "completed",
+						rawContent: content,
+					},
+				];
+			case "terminal":
+				return [
+					{
+						type: "command" as const,
+						command: `terminal:${content.terminalId}`,
+						status: "terminal",
+						rawContent: content,
+					},
+				];
+			default:
+				return [];
+		}
+	});
 }
 
 export function acpSessionToAiSession(session: acp.SessionInfo): AcpAiSession {

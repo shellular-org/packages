@@ -71,6 +71,7 @@ const AiMessagePartToolCallSchema = z.object({
 	arguments: z.string().optional(),
 	status: z.string().optional(),
 	output: z.string().optional(),
+	parts: z.array(z.unknown()).optional(),
 });
 export type AiMessagePartToolCall = z.infer<typeof AiMessagePartToolCallSchema>;
 
