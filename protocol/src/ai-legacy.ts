@@ -6,7 +6,6 @@ import { MsgType } from "./base";
 export const AiBackendSchema = z.enum([
 	"opencode",
 	"codex",
-	"copilot",
 	"claude-code",
 	"cursor",
 ]);
@@ -14,7 +13,6 @@ export type AiBackend = z.infer<typeof AiBackendSchema>;
 export const AI_BACKENDS: AiBackend[] = [
 	"opencode",
 	"codex",
-	"copilot",
 	"claude-code",
 	"cursor",
 ];
