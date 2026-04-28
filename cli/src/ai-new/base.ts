@@ -114,6 +114,11 @@ export class ACP {
 		return this.client.onPermission(listener);
 	}
 
+	onSessionUpdate(listener: (notification: acp.SessionNotification) => void) {
+		this.client.addAnySessionUpdateListener(listener);
+		return () => this.client.removeAnySessionUpdateListener(listener);
+	}
+
 	async init(): Promise<acp.InitializeResponse> {
 		if (this.state === "ready" && this.initResult) return this.initResult;
 		if (!this.isCommandAvailable()) {
@@ -245,22 +250,37 @@ export class ACP {
 	) {
 		await this.ensureReady();
 		const absoluteCwd = path.resolve(cwd);
-		const raw = await this.requireConnection().newSession({
-			...options,
-			cwd: absoluteCwd,
-			mcpServers: options.mcpServers ?? [],
-		});
-		const response = this.safeParse("session/new", zNewSessionResponse, raw);
-		const session = newAiSessionFromResponse(response, absoluteCwd);
-		this.sessions.set(response.sessionId, {
-			session,
-			messages: [],
-		});
-		this.transcripts.set(
-			response.sessionId,
-			new AcpTranscript(response.sessionId),
-		);
-		return { response, session };
+		const updates: acp.SessionNotification[] = [];
+		const listener = (notification: acp.SessionNotification) => {
+			updates.push(notification);
+		};
+		this.client.addAnySessionUpdateListener(listener);
+		try {
+			const raw = await this.requireConnection().newSession({
+				...options,
+				cwd: absoluteCwd,
+				mcpServers: options.mcpServers ?? [],
+			});
+			const response = this.safeParse("session/new", zNewSessionResponse, raw);
+			const session = newAiSessionFromResponse(response, absoluteCwd);
+			this.sessions.set(response.sessionId, {
+				session,
+				messages: [],
+			});
+			this.transcripts.set(
+				response.sessionId,
+				new AcpTranscript(response.sessionId),
+			);
+			return {
+				response,
+				session,
+				updates: updates.filter(
+					(update) => update.sessionId === response.sessionId,
+				),
+			};
+		} finally {
+			this.client.removeAnySessionUpdateListener(listener);
+		}
 	}
 
 	async resumeSession(params: acp.ResumeSessionRequest) {
@@ -326,6 +346,13 @@ export class ACP {
 		this.transcripts.delete(params.sessionId);
 		this.client.cancelSessionPermissions(params.sessionId);
 		return response;
+	}
+
+	async deleteSession(params: { sessionId: string }): Promise<boolean> {
+		this.sessions.delete(params.sessionId);
+		this.transcripts.delete(params.sessionId);
+		this.client.cancelSessionPermissions(params.sessionId);
+		return false;
 	}
 
 	async loadSession(

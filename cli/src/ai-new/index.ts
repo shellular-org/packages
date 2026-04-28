@@ -1,3 +1,4 @@
+import type * as acp from "@agentclientprotocol/sdk";
 import type {
 	AcpPromptRequest,
 	AiBackend,
@@ -94,6 +95,16 @@ export class AgentsManager {
 					},
 				});
 			});
+			agent.onSessionUpdate((notification) => {
+				const backend = descriptor.backend ?? (descriptor.id as AiBackend);
+				const clientId =
+					this.sessionClientIds.get(
+						this.sessionKey(descriptor.id, notification.sessionId),
+					) ?? "";
+				if (!clientId) return;
+				const status = sessionStatusEvent(notification);
+				if (status) this.emit(clientId, backend, status);
+			});
 		}
 		await agent.init();
 		return agent;
@@ -178,6 +189,13 @@ export class AgentsManager {
 		const response = await agent.closeSession({ sessionId });
 		this.sessionAgents.delete(sessionId);
 		return response;
+	}
+
+	async deleteSession(agentId: string, sessionId: string) {
+		const agent = await this.connectAgent(agentId);
+		const deleted = await agent.deleteSession({ sessionId });
+		this.sessionAgents.delete(sessionId);
+		return deleted;
 	}
 
 	async prompt(
@@ -339,7 +357,7 @@ export class AgentsManager {
 
 		conn.on(MsgType.AI_SESSION_CREATE, async (msg: AiSessionCreateMsg) => {
 			try {
-				const { session, response } = await this.createSession(
+				const { session, response, updates } = await this.createSession(
 					msg.data.backend,
 					msg.data.cwd ?? msg.data.workspacePath,
 					{
@@ -364,6 +382,7 @@ export class AgentsManager {
 							configOptions: response.configOptions ?? undefined,
 						} as typeof session,
 						state: {
+							availableCommands: latestAvailableCommands(updates),
 							configOptions: response.configOptions ?? undefined,
 							models: response.models,
 							modes: response.modes,
@@ -544,6 +563,28 @@ export class AgentsManager {
 			} catch (err) {
 				conn.send({
 					type: MsgType.AI_SESSION_CLOSE_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(err),
+				});
+			}
+		});
+
+		conn.on(MsgType.AI_SESSION_DELETE, async (msg) => {
+			try {
+				const deleted = await this.deleteSession(
+					msg.data.backend,
+					msg.data.sessionId,
+				);
+				conn.send({
+					type: MsgType.AI_SESSION_DELETED,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: { deleted },
+				});
+			} catch (err) {
+				conn.send({
+					type: MsgType.AI_SESSION_DELETED,
 					clientId: msg.clientId,
 					respTo: msg.id,
 					error: getErrorMessage(err),
@@ -830,4 +871,57 @@ function createAgentRuntime(agentId: string, descriptor: AgentDescriptor): ACP {
 						: null;
 
 	return specialized ?? new ACP(descriptor);
+}
+
+function latestAvailableCommands(updates: unknown[]) {
+	for (let index = updates.length - 1; index >= 0; index -= 1) {
+		const update = (updates[index] as { update?: unknown }).update as
+			| { sessionUpdate?: unknown; availableCommands?: unknown }
+			| undefined;
+		if (
+			update?.sessionUpdate === "available_commands_update" &&
+			Array.isArray(update.availableCommands)
+		) {
+			return update.availableCommands;
+		}
+	}
+	return undefined;
+}
+
+function sessionStatusEvent(
+	notification: acp.SessionNotification,
+): AiEvent | null {
+	const update = notification.update;
+	switch (update.sessionUpdate) {
+		case "available_commands_update":
+			return {
+				type: "session.status",
+				properties: {
+					sessionId: notification.sessionId,
+					status: update,
+					availableCommands: update.availableCommands,
+				},
+			};
+		case "config_option_update":
+			return {
+				type: "session.status",
+				properties: {
+					sessionId: notification.sessionId,
+					status: update,
+					configOptions: update.configOptions,
+				},
+			};
+		case "current_mode_update":
+		case "session_info_update":
+		case "usage_update":
+			return {
+				type: "session.status",
+				properties: {
+					sessionId: notification.sessionId,
+					status: update,
+				},
+			};
+		default:
+			return null;
+	}
 }

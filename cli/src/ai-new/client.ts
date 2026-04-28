@@ -19,6 +19,7 @@ export class AcpClient implements acp.Client {
 		acp.SessionId,
 		Set<SessionUpdateListener>
 	>();
+	private anySessionUpdateListeners = new Set<SessionUpdateListener>();
 	private permissionListeners = new Set<PermissionListener>();
 
 	addSessionUpdateListener(
@@ -43,6 +44,14 @@ export class AcpClient implements acp.Client {
 		if (listeners.size === 0) {
 			this.sessionUpdateListeners.delete(sessionId);
 		}
+	}
+
+	addAnySessionUpdateListener(listener: SessionUpdateListener) {
+		this.anySessionUpdateListeners.add(listener);
+	}
+
+	removeAnySessionUpdateListener(listener: SessionUpdateListener) {
+		this.anySessionUpdateListeners.delete(listener);
 	}
 
 	onPermission(listener: PermissionListener): () => void {
@@ -104,6 +113,9 @@ export class AcpClient implements acp.Client {
 	}
 
 	async sessionUpdate(params: acp.SessionNotification): Promise<void> {
+		for (const listener of this.anySessionUpdateListeners) {
+			listener(params);
+		}
 		const listeners = this.sessionUpdateListeners.get(params.sessionId);
 		if (listeners) {
 			for (const listener of listeners) {

@@ -135,6 +135,16 @@ export class OpenCode extends ACP {
 		return sessions;
 	}
 
+	override async deleteSession(params: {
+		sessionId: string;
+	}): Promise<boolean> {
+		await this.init();
+		if (!this.ocClient) return super.deleteSession(params);
+		await this.ocClient.session.delete({ sessionID: params.sessionId });
+		await super.deleteSession(params);
+		return true;
+	}
+
 	override destroy() {
 		super.destroy();
 		this.ocAuthHeader = null;
