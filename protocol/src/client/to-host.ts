@@ -1,5 +1,13 @@
 import { z } from "zod";
-
+import {
+	AiSessionCloseMsgSchema,
+	AiSessionConfigSetMsgSchema,
+	AiSessionForkMsgSchema,
+	AiSessionLoadMsgSchema,
+	AiSessionModelSetMsgSchema,
+	AiSessionModeSetMsgSchema,
+	AiSessionResumeMsgSchema,
+} from "@/agents";
 import {
 	AiAbortMsgSchema,
 	AiAgentsListMsgSchema,
@@ -19,7 +27,7 @@ import {
 	AiSessionListMsgSchema,
 	AiShareMsgSchema,
 	AiUnrevertMsgSchema,
-} from "@/ai";
+} from "@/ai-legacy";
 import { PongMsgSchema } from "@/base";
 import {
 	FsDeleteMsgSchema,
@@ -78,10 +86,17 @@ export const ClientToHostMsgSchema = z.discriminatedUnion("type", [
 	AiAvailabilityMsgSchema,
 	AiSessionListMsgSchema,
 	AiSessionCreateMsgSchema,
+	AiSessionLoadMsgSchema,
+	AiSessionResumeMsgSchema,
+	AiSessionForkMsgSchema,
+	AiSessionCloseMsgSchema,
 	AiSessionGetMsgSchema,
 	AiSessionDeleteMsgSchema,
 	AiMessagesListMsgSchema,
 	AiPromptMsgSchema,
+	AiSessionConfigSetMsgSchema,
+	AiSessionModeSetMsgSchema,
+	AiSessionModelSetMsgSchema,
 	AiAbortMsgSchema,
 	AiAgentsListMsgSchema,
 	AiProvidersListMsgSchema,

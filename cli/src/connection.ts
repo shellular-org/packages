@@ -14,10 +14,17 @@ import {
 	type AiQuestionRejectMsg,
 	type AiQuestionReplyMsg,
 	type AiRevertMsg,
+	type AiSessionCloseMsg,
+	type AiSessionConfigSetMsg,
 	type AiSessionCreateMsg,
 	type AiSessionDeleteMsg,
+	type AiSessionForkMsg,
 	type AiSessionGetMsg,
 	type AiSessionListMsg,
+	type AiSessionLoadMsg,
+	type AiSessionModelSetMsg,
+	type AiSessionModeSetMsg,
+	type AiSessionResumeMsg,
 	type AiShareMsg,
 	type AiUnrevertMsg,
 	BaseMsgSchema,
@@ -227,6 +234,22 @@ export class Connection extends EventEmitter {
 		listener: (msg: AiSessionCreateMsg) => void,
 	): this;
 	on(
+		eventName: typeof MsgType.AI_SESSION_LOAD,
+		listener: (msg: AiSessionLoadMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_SESSION_RESUME,
+		listener: (msg: AiSessionResumeMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_SESSION_FORK,
+		listener: (msg: AiSessionForkMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_SESSION_CLOSE,
+		listener: (msg: AiSessionCloseMsg) => void,
+	): this;
+	on(
 		eventName: typeof MsgType.AI_SESSION_GET,
 		listener: (msg: AiSessionGetMsg) => void,
 	): this;
@@ -241,6 +264,18 @@ export class Connection extends EventEmitter {
 	on(
 		eventName: typeof MsgType.AI_PROMPT,
 		listener: (msg: AiPromptMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_SESSION_CONFIG_SET,
+		listener: (msg: AiSessionConfigSetMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_SESSION_MODE_SET,
+		listener: (msg: AiSessionModeSetMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_SESSION_MODEL_SET,
+		listener: (msg: AiSessionModelSetMsg) => void,
 	): this;
 	on(
 		eventName: typeof MsgType.AI_ABORT,

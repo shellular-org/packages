@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import nodeMachineId from "node-machine-id";
 import { z } from "zod";
+import packageJson from "../package.json";
 import { logger } from "./logger";
 import type { ServerUrl } from "./server-url";
 
@@ -21,6 +22,8 @@ const platformName = os.platform();
 
 const _config = {
 	NAME: "shellular",
+	VERSION: packageJson.version,
+	DESCRIPTION: packageJson.description,
 	SHELLULAR_DEV: process.env.SHELLULAR_DEV === "true",
 	SHELLULAR_DIR,
 	CONFIG_FILE,
@@ -107,3 +110,5 @@ export async function getOrRegisterHostId(
 export const config = {
 	..._config,
 };
+
+export const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";

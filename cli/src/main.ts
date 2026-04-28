@@ -14,14 +14,7 @@ import {
 import chalk from "chalk";
 import { Command } from "commander";
 import qrcode from "qrcode-terminal";
-
-import { initAiHandler } from "@/ai";
-import {
-	notifyExtensionClientPresence,
-	notifyExtensionClientsSnapshot,
-	notifyExtensionCliInfo,
-} from "@/ai/copilot";
-import { AiManager } from "@/ai/index";
+import { AgentsManager } from "@/agents";
 import {
 	ensureSingleInstance,
 	releaseBootLock,
@@ -45,7 +38,6 @@ import {
 } from "@/daemon";
 import { getKeyBase64, initEncryption } from "@/encryption";
 import { initFilesystemHandler } from "@/filesystem";
-import { installVsCodeExtension } from "@/install-extension";
 import { logger } from "@/logger";
 import { notify } from "@/notify";
 import { initPortsHandler } from "@/ports";
@@ -54,7 +46,6 @@ import { ServerUrl } from "@/server-url";
 import { initBatteryStream, initSysmonHandler } from "@/sysmon";
 import { initTerminalHandler } from "@/terminal";
 import { checkForUpdate } from "@/update-check";
-import packageJson from "../package.json";
 
 const DEFAULT_SERVER_URL = "wss://api.shellular.dev";
 const APP_URL = "https://shellular.dev";
@@ -88,7 +79,6 @@ function parseNewClientApprovalPolicy(
 type CliOptions = {
 	server: string;
 	dir: string;
-	installVsPlugin: boolean;
 	unknownClients: UnknownClientApprovalPolicy;
 };
 
@@ -108,8 +98,8 @@ type RunCliOptions = CliOptions & { isDaemon?: boolean };
 function createProgram(): Command {
 	const program = new Command()
 		.name(config.NAME)
-		.description(packageJson.description)
-		.version(packageJson.version)
+		.description(config.DESCRIPTION)
+		.version(config.VERSION)
 		.showHelpAfterError()
 		.allowExcessArguments(false)
 		.option("--server <url>", "Shellular server URL", DEFAULT_SERVER_URL)
@@ -119,10 +109,6 @@ function createProgram(): Command {
 			`unknown clients approval policy (${NEW_CLIENT_APPROVAL_POLICIES.join(", ")})`,
 			parseNewClientApprovalPolicy,
 			DEFAULT_NEW_CLIENT_APPROVAL_POLICY,
-		)
-		.option(
-			"--install-vs-plugin",
-			"Install the VS Code extension to access GitHub Copilot",
 		);
 
 	const resolveDaemonOptions = (
@@ -172,7 +158,6 @@ function createProgram(): Command {
 		.action(async (options: Partial<DaemonOptions>, command: Command) => {
 			await runCli({
 				...resolveDaemonOptions(options, command),
-				installVsPlugin: false,
 				isDaemon: true,
 			});
 		});
@@ -291,15 +276,9 @@ function formatClientDeviceInfo({
 async function runCli({
 	server,
 	dir,
-	installVsPlugin,
 	unknownClients: unknownClientsApproval,
 	isDaemon = false,
 }: RunCliOptions): Promise<void> {
-	if (installVsPlugin) {
-		await installVsCodeExtension();
-		return;
-	}
-
 	const serverUrl = new ServerUrl(server);
 	const workDir = path.resolve(dir);
 
@@ -316,7 +295,7 @@ async function runCli({
 		`${chalk.gray(key.padEnd(17))} ${chalk.white(value)}`;
 
 	logger.log();
-	logger.log(chalk.bold.cyan(`Shellular CLI v${packageJson.version}`));
+	logger.log(chalk.bold.cyan(`Shellular CLI v${config.VERSION}`));
 	logger.log(line);
 	logger.log(label("Server:", chalk.underline(serverUrl.toWebSocketUrl())));
 	logger.log(
@@ -347,14 +326,13 @@ async function runCli({
 		machineId: config.MACHINE_ID,
 	};
 
-	const aiManager = new AiManager();
-	const availableBackends = await aiManager.init();
+	const agentsManager = new AgentsManager();
 
 	const cleanup = () => {
 		logger.log("Cleaning up resources...");
 		stopCaffeinate();
 		releaseBootLock();
-		aiManager.destroy();
+		agentsManager.destroy();
 	};
 
 	process.on("SIGINT", cleanup); // Ctrl+C
@@ -419,20 +397,7 @@ async function runCli({
 				initBatteryStream(conn);
 				initProxyHandler(conn);
 				initPortsHandler(conn);
-				initAiHandler(conn, aiManager);
-
-				const pushStateToExtension = () => {
-					notifyExtensionCliInfo({
-						version: packageJson.version,
-						hostname: os.hostname(),
-						platform: os.platform(),
-						workDir,
-						sessionId: conn.sessionId,
-					});
-					notifyExtensionClientsSnapshot(conn.getConnectedClients());
-				};
-				pushStateToExtension();
-				const snapshotTimer = setInterval(pushStateToExtension, 5_000);
+				agentsManager.handleConnection(conn);
 
 				conn.on(MsgType.SESSION_ERROR, (data) => {
 					logger.error(
@@ -527,11 +492,6 @@ async function runCli({
 					},
 				);
 
-				conn.on("disconnected", () => {
-					clearInterval(snapshotTimer);
-					notifyExtensionClientsSnapshot([]);
-				});
-
 				conn.on(MsgType.SESSION_CLIENT_JOINED, (msg) => {
 					upsertClient(
 						{
@@ -560,19 +520,12 @@ async function runCli({
 					logger.log(
 						`  - ${chalk.green("App Version:")} v${msg.data.appVersion}\n`,
 					);
-					notifyExtensionClientPresence(
-						msg.data.clientId,
-						true,
-						msg.data.platform,
-						msg.data.appVersion,
-					);
-					pushStateToExtension();
 
 					// let the client know which AI backends are available
 					const availableAIBackendsMsg: AiAvailabilityResultMsg = {
 						type: MsgType.AI_AVAILABILITY_RESULT,
 						clientId: msg.data.clientId,
-						data: { backends: availableBackends },
+						data: { backends: agentsManager.getAvailableAgents() },
 					};
 					conn.send(availableAIBackendsMsg);
 				});
@@ -583,8 +536,6 @@ async function runCli({
 							`✗ Client ${data.data.clientId} disconnected on ${new Date().toLocaleString()}`,
 						),
 					);
-					notifyExtensionClientPresence(data.data.clientId, false);
-					pushStateToExtension();
 				});
 			} catch {
 				logger.log(`Connection ID: ${conn.sessionId}`);
@@ -596,7 +547,7 @@ async function runCli({
 
 async function main(): Promise<void> {
 	try {
-		checkForUpdate(packageJson.version).catch(() => {});
+		checkForUpdate(config.VERSION).catch(() => {});
 		const program = createProgram();
 		await program.parseAsync(process.argv);
 	} catch (err) {

@@ -1,0 +1,133 @@
+import type * as acp from "@agentclientprotocol/sdk";
+import { nanoid } from "nanoid";
+
+import { PermissionNotFoundError } from "./errors";
+import type { PermissionRequestEvent } from "./types";
+
+interface PendingPermission {
+	resolve: (response: acp.RequestPermissionResponse) => void;
+	sessionId: string;
+	params: acp.RequestPermissionRequest;
+}
+
+type SessionUpdateListener = (notification: acp.SessionNotification) => void;
+type PermissionListener = (event: PermissionRequestEvent) => void;
+
+export class AcpClient implements acp.Client {
+	private pendingPermissions = new Map<string, PendingPermission>();
+	private sessionUpdateListeners = new Map<
+		acp.SessionId,
+		Set<SessionUpdateListener>
+	>();
+	private anySessionUpdateListeners = new Set<SessionUpdateListener>();
+	private permissionListeners = new Set<PermissionListener>();
+
+	addSessionUpdateListener(
+		sessionId: acp.SessionId,
+		listener: SessionUpdateListener,
+	) {
+		let listeners = this.sessionUpdateListeners.get(sessionId);
+		if (!listeners) {
+			listeners = new Set();
+			this.sessionUpdateListeners.set(sessionId, listeners);
+		}
+		listeners.add(listener);
+	}
+
+	removeSessionUpdateListener(
+		sessionId: acp.SessionId,
+		listener: SessionUpdateListener,
+	) {
+		const listeners = this.sessionUpdateListeners.get(sessionId);
+		if (!listeners) return;
+		listeners.delete(listener);
+		if (listeners.size === 0) {
+			this.sessionUpdateListeners.delete(sessionId);
+		}
+	}
+
+	addAnySessionUpdateListener(listener: SessionUpdateListener) {
+		this.anySessionUpdateListeners.add(listener);
+	}
+
+	removeAnySessionUpdateListener(listener: SessionUpdateListener) {
+		this.anySessionUpdateListeners.delete(listener);
+	}
+
+	onPermission(listener: PermissionListener): () => void {
+		this.permissionListeners.add(listener);
+		return () => this.permissionListeners.delete(listener);
+	}
+
+	requestPermission(
+		params: acp.RequestPermissionRequest,
+	): Promise<acp.RequestPermissionResponse> {
+		const permissionId = nanoid();
+
+		return new Promise((resolve) => {
+			this.pendingPermissions.set(permissionId, {
+				resolve,
+				sessionId: params.sessionId,
+				params,
+			});
+
+			const event: PermissionRequestEvent = {
+				id: permissionId,
+				sessionId: params.sessionId,
+				toolCall: params.toolCall,
+				options: params.options,
+				raw: params,
+			};
+
+			for (const listener of this.permissionListeners) {
+				listener(event);
+			}
+		});
+	}
+
+	replyPermission(
+		permissionId: string,
+		optionId: string,
+	): acp.RequestPermissionResponse {
+		const pending = this.pendingPermissions.get(permissionId);
+		if (!pending) throw new PermissionNotFoundError(permissionId);
+
+		const option = pending.params.options.find(
+			(candidate) => candidate.optionId === optionId,
+		);
+		if (!option) {
+			throw new Error(
+				`Permission option "${optionId}" was not found for request "${permissionId}"`,
+			);
+		}
+		const response: acp.RequestPermissionResponse = {
+			outcome: {
+				outcome: "selected",
+				optionId,
+			},
+		};
+		this.pendingPermissions.delete(permissionId);
+		pending.resolve(response);
+		return response;
+	}
+
+	cancelSessionPermissions(sessionId: string) {
+		for (const [permissionId, pending] of this.pendingPermissions) {
+			if (pending.sessionId !== sessionId) continue;
+			this.pendingPermissions.delete(permissionId);
+			pending.resolve({ outcome: { outcome: "cancelled" } });
+		}
+	}
+
+	async sessionUpdate(params: acp.SessionNotification): Promise<void> {
+		for (const listener of this.anySessionUpdateListeners) {
+			listener(params);
+		}
+		const listeners = this.sessionUpdateListeners.get(params.sessionId);
+		if (listeners) {
+			for (const listener of listeners) {
+				listener(params);
+			}
+		}
+	}
+}

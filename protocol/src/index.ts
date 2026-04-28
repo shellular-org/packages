@@ -1,4 +1,5 @@
-export * from "./ai";
+export * from "./agents";
+export * from "./ai-legacy";
 export * from "./base";
 export * from "./client";
 export * from "./filesystem";

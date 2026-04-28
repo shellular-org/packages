@@ -17,6 +17,9 @@ importers:
 
   cli:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: ^0.21.0
+        version: 0.21.0(zod@4.3.6)
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.112
         version: 0.2.119(zod@4.3.6)
@@ -102,6 +105,9 @@ importers:
 
   protocol:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: ^0.21.0
+        version: 0.21.0(zod@4.3.6)
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -114,6 +120,11 @@ importers:
         version: 6.0.3
 
 packages:
+
+  '@agentclientprotocol/sdk@0.21.0':
+    resolution: {integrity: sha512-ONj+Q8qOdNQp5XbH5jnMwzT9IKZJsSN0p0lkceS4GtUtNOPVLpNzSS8gqQdGMKfBvA0ESbkL8BTaSN1Rc9miEw==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
 
   '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.2.119':
     resolution: {integrity: sha512-kxnG37SZqUata2Jcp/YQ0n9Y7o/sinE/8LdG4ltM1gePh+z+0Mfa4vBUUTEBMBFth9PTovKoesIuVuyFpvO/Cw==}
@@ -2220,6 +2231,10 @@ packages:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
 
 snapshots:
+
+  '@agentclientprotocol/sdk@0.21.0(zod@4.3.6)':
+    dependencies:
+      zod: 4.3.6
 
   '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.2.119':
     optional: true

@@ -1,5 +1,13 @@
 import { z } from "zod";
-
+import {
+	AiSessionCloseResultMsgSchema,
+	AiSessionConfigSetResultMsgSchema,
+	AiSessionForkResultMsgSchema,
+	AiSessionLoadResultMsgSchema,
+	AiSessionModelSetResultMsgSchema,
+	AiSessionModeSetResultMsgSchema,
+	AiSessionResumeResultMsgSchema,
+} from "@/agents";
 import {
 	AiAbortAckMsgSchema,
 	AiAgentsListResultMsgSchema,
@@ -20,7 +28,7 @@ import {
 	AiSessionListResultMsgSchema,
 	AiShareResultMsgSchema,
 	AiUnrevertAckMsgSchema,
-} from "@/ai";
+} from "@/ai-legacy";
 import {
 	FsListResultMsgSchema,
 	FsReadResultMsgSchema,
@@ -78,10 +86,17 @@ export const HostToClientSchema = z.discriminatedUnion("type", [
 	AiAvailabilityResultMsgSchema,
 	AiSessionListResultMsgSchema,
 	AiSessionCreateResultMsgSchema,
+	AiSessionLoadResultMsgSchema,
+	AiSessionResumeResultMsgSchema,
+	AiSessionForkResultMsgSchema,
+	AiSessionCloseResultMsgSchema,
 	AiSessionGetResultMsgSchema,
 	AiSessionDeletedMsgSchema,
 	AiMessagesListResultMsgSchema,
 	AiPromptAckMsgSchema,
+	AiSessionConfigSetResultMsgSchema,
+	AiSessionModeSetResultMsgSchema,
+	AiSessionModelSetResultMsgSchema,
 	AiAbortAckMsgSchema,
 	AiAgentsListResultMsgSchema,
 	AiProvidersListResultMsgSchema,

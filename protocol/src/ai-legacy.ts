@@ -6,15 +6,15 @@ import { MsgType } from "./base";
 export const AiBackendSchema = z.enum([
 	"opencode",
 	"codex",
-	"copilot",
 	"claude-code",
+	"cursor",
 ]);
 export type AiBackend = z.infer<typeof AiBackendSchema>;
 export const AI_BACKENDS: AiBackend[] = [
 	"opencode",
 	"codex",
-	"copilot",
 	"claude-code",
+	"cursor",
 ];
 
 // ─── Session ──────────────────────────────────────────────────────────────────
@@ -26,6 +26,7 @@ export const AiSessionSchema = z.object({
 	model: z.string().optional(),
 	title: z.string().optional(),
 	workspacePath: z.string().optional(),
+	configOptions: z.array(z.any()).optional(),
 });
 export type AiSession = z.infer<typeof AiSessionSchema>;
 
@@ -68,6 +69,7 @@ const AiMessagePartToolCallSchema = z.object({
 	arguments: z.string().optional(),
 	status: z.string().optional(),
 	output: z.string().optional(),
+	parts: z.array(z.unknown()).optional(),
 });
 export type AiMessagePartToolCall = z.infer<typeof AiMessagePartToolCallSchema>;
 
@@ -183,6 +185,8 @@ export const AiSessionListMsgSchema = z.object({
 	data: z
 		.object({
 			backend: AiBackendSchema,
+			workspace: z.string().optional(),
+			cursor: z.string().optional(),
 		})
 		.optional(),
 });
@@ -195,7 +199,11 @@ export const AiSessionCreateMsgSchema = z.object({
 	data: z.object({
 		backend: AiBackendSchema,
 		prompt: z.string(),
+		content: z.array(z.unknown()).optional(),
 		workspacePath: z.string(),
+		cwd: z.string().optional(),
+		additionalDirectories: z.array(z.string()).optional(),
+		mcpServers: z.array(z.record(z.string(), z.unknown())).optional(),
 		model: z.any().optional(),
 	}),
 });
@@ -242,10 +250,12 @@ export const AiPromptMsgSchema = z.object({
 		backend: AiBackendSchema,
 		sessionId: z.string(),
 		text: z.string(),
+		content: z.array(z.unknown()).optional(),
 		model: z.any().optional(),
 		agent: z.string().optional(),
 		files: z.any().optional(),
 		codexOptions: z.any().optional(),
+		requestId: z.string().optional(),
 	}),
 });
 export type AiPromptMsg = z.infer<typeof AiPromptMsgSchema>;
@@ -344,12 +354,20 @@ export const AiPermissionReplyMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_PERMISSION_REPLY),
 	clientId: z.string(),
-	data: z.object({
-		backend: AiBackendSchema,
-		sessionId: z.string(),
-		permissionId: z.string(),
-		response: z.enum(["once", "always", "reject"]),
-	}),
+	data: z.union([
+		z.object({
+			backend: AiBackendSchema,
+			sessionId: z.string(),
+			permissionId: z.string(),
+			optionId: z.string(),
+		}),
+		z.object({
+			backend: AiBackendSchema,
+			sessionId: z.string(),
+			permissionId: z.string(),
+			response: z.enum(["once", "always", "reject"]),
+		}),
+	]),
 });
 export type AiPermissionReplyMsg = z.infer<typeof AiPermissionReplyMsgSchema>;
 
@@ -403,6 +421,7 @@ export const AiSessionListResultMsgSchema = z.object({
 	data: z
 		.object({
 			sessions: z.array(AiSessionSchema),
+			nextCursor: z.string().optional(),
 		})
 		.optional(),
 });
@@ -419,6 +438,7 @@ export const AiSessionCreateResultMsgSchema = z.object({
 	data: z
 		.object({
 			session: AiSessionSchema,
+			state: z.record(z.string(), z.unknown()).optional(),
 		})
 		.optional(),
 });
