@@ -206,12 +206,13 @@ function appendText(message: AcpMessage, text: string) {
 	appendPart(message, { type: "text", text });
 }
 
-function promptText(prompt: acp.PromptRequest["prompt"]) {
-	return prompt
-		.map((content) => textFromContent(content))
-		.filter(Boolean)
-		.join("\n")
-		.trim();
+function appendPromptContent(
+	message: AcpMessage,
+	prompt: acp.PromptRequest["prompt"],
+) {
+	for (const content of prompt) {
+		appendContent(message, content);
+	}
 }
 
 function hasText(message: AcpMessage, text: string) {
@@ -241,8 +242,7 @@ export class AcpTranscript {
 		this.currentUser = null;
 		this.currentAssistant = null;
 		this.toolParts.clear();
-		const text = prompt ? promptText(prompt) : "";
-		if (text) appendText(this.ensureCurrentUser(), text);
+		if (prompt?.length) appendPromptContent(this.ensureCurrentUser(), prompt);
 	}
 
 	endTurn(stopReason?: string) {
