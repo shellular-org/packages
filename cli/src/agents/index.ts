@@ -35,8 +35,12 @@ export class AgentsManager {
 	private sessionAgents = new Map<string, string>();
 
 	constructor() {
-		for (const descriptor of BUILTIN_AGENT_DESCRIPTORS) {
-			this.descriptors.set(descriptor.id, descriptor);
+		for (const agent of Object.values(BUILTIN_AGENT_DESCRIPTORS)) {
+			if (agent.disabled) {
+				continue;
+			}
+
+			this.descriptors.set(agent.id, agent);
 		}
 	}
 
@@ -47,7 +51,7 @@ export class AgentsManager {
 			return (
 				runtime?.getInfo() ?? {
 					id: descriptor.id,
-					backend: descriptor.backend,
+					backend: descriptor.id,
 					name: descriptor.name,
 					title: descriptor.title,
 					version: descriptor.version,
@@ -72,7 +76,7 @@ export class AgentsManager {
 			// ACP permission requests are client-side JSON-RPC calls. Convert them
 			// into the existing Shellular event stream so the mobile app can decide.
 			agent.onPermission((permission) => {
-				const backend = descriptor.backend ?? (descriptor.id as AiBackend);
+				const backend = descriptor.id ?? (descriptor.id as AiBackend);
 				const clientId =
 					this.sessionClientIds.get(
 						this.sessionKey(agentId, permission.sessionId),
@@ -91,7 +95,7 @@ export class AgentsManager {
 				});
 			});
 			agent.onSessionUpdate((notification) => {
-				const backend = descriptor.backend ?? (descriptor.id as AiBackend);
+				const backend = descriptor.id ?? (descriptor.id as AiBackend);
 				const clientId =
 					this.sessionClientIds.get(
 						this.sessionKey(descriptor.id, notification.sessionId),
@@ -204,7 +208,7 @@ export class AgentsManager {
 				onEvent: (event) =>
 					this.emit(
 						eventClientId(event, clientId),
-						agent.descriptor.backend ?? (agent.descriptor.id as AiBackend),
+						agent.descriptor.id ?? (agent.descriptor.id as AiBackend),
 						event,
 					),
 			},
@@ -262,10 +266,8 @@ export class AgentsManager {
 	}
 
 	getAvailableAgents(): AiBackend[] {
-		return BUILTIN_AGENT_DESCRIPTORS.flatMap((descriptor) =>
-			descriptor.backend && isAgentAvailable(descriptor)
-				? [descriptor.backend]
-				: [],
+		return Object.values(BUILTIN_AGENT_DESCRIPTORS).flatMap((descriptor) =>
+			descriptor.id && isAgentAvailable(descriptor) ? [descriptor.id] : [],
 		);
 	}
 
@@ -781,10 +783,8 @@ export class AgentsManager {
 		workspace?: string,
 	): Promise<AiSession[]> {
 		const results = await Promise.allSettled(
-			BUILTIN_AGENT_DESCRIPTORS.flatMap((descriptor) =>
-				descriptor.backend
-					? [this.listSessions(descriptor.backend, workspace)]
-					: [],
+			Object.values(BUILTIN_AGENT_DESCRIPTORS).flatMap((descriptor) =>
+				descriptor.id ? [this.listSessions(descriptor.id, workspace)] : [],
 			),
 		);
 		return results

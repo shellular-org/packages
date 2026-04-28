@@ -1,11 +1,12 @@
+import type { AiBackend } from "@shellular/protocol";
+
 import { npxCommand } from "@/config";
 import { commandExists } from "@/utils";
 import type { AgentDescriptor, AgentInfo } from "./types";
 
-export const BUILTIN_AGENT_DESCRIPTORS: AgentDescriptor[] = [
-	{
+export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
+	codex: {
 		id: "codex",
-		backend: "codex",
 		name: "Codex",
 		title: "Codex",
 		source: "builtin",
@@ -15,9 +16,8 @@ export const BUILTIN_AGENT_DESCRIPTORS: AgentDescriptor[] = [
 			args: ["-yes", "@zed-industries/codex-acp"],
 		},
 	},
-	{
+	opencode: {
 		id: "opencode",
-		backend: "opencode",
 		name: "OpenCode",
 		title: "OpenCode",
 		source: "builtin",
@@ -27,9 +27,8 @@ export const BUILTIN_AGENT_DESCRIPTORS: AgentDescriptor[] = [
 			args: ["acp"],
 		},
 	},
-	{
+	"claude-code": {
 		id: "claude-code",
-		backend: "claude-code",
 		name: "Claude Code",
 		title: "Claude Code",
 		source: "builtin",
@@ -39,23 +38,25 @@ export const BUILTIN_AGENT_DESCRIPTORS: AgentDescriptor[] = [
 			args: ["-yes", "@agentclientprotocol/claude-agent-acp"],
 		},
 	},
-	{
+	cursor: {
 		id: "cursor",
-		backend: "cursor",
 		name: "Cursor",
 		title: "Cursor",
-		description: "Cursor CLI ACP agent",
 		source: "builtin",
 		agentExecutable: "cursor-agent",
+		// disabled for now because cursor's ACP is buggy
+		// it doesn't return session notifications for session/load, due to which
+		// we are unable to display existing chats
+		disabled: true,
 		spawn: {
 			command: "cursor-agent",
 			args: ["acp"],
 		},
 	},
-];
+};
 
 export function isAgentAvailable(agent: AgentDescriptor): boolean {
-	return commandExists(agent.agentExecutable);
+	return !agent.disabled && commandExists(agent.agentExecutable);
 }
 
 export function toAgentInfo(
@@ -65,7 +66,7 @@ export function toAgentInfo(
 ): AgentInfo {
 	return {
 		id: descriptor.id,
-		backend: descriptor.backend,
+		backend: descriptor.id,
 		name: descriptor.name,
 		title: descriptor.title,
 		version: descriptor.version,

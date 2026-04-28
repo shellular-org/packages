@@ -95,7 +95,7 @@ export class ACP {
 	getInfo(): AgentInfo {
 		return {
 			id: this.descriptor.id,
-			backend: this.descriptor.backend,
+			backend: this.descriptor.id,
 			name: this.descriptor.name,
 			title: this.descriptor.title,
 			version: this.descriptor.version ?? this.initResult?.agentInfo?.version,

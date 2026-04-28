@@ -1,10 +1,6 @@
 import { BUILTIN_AGENT_DESCRIPTORS } from "./agents";
 import { ACP } from "./base";
 
-const descriptor = BUILTIN_AGENT_DESCRIPTORS.find(
-	(agent) => agent.id === "cursor",
-);
-
 /**
  * ACP client for Cursor CLI.
  *
@@ -13,7 +9,6 @@ const descriptor = BUILTIN_AGENT_DESCRIPTORS.find(
  */
 export class Cursor extends ACP {
 	static create() {
-		if (!descriptor) return null;
-		return new Cursor(descriptor);
+		return new Cursor(BUILTIN_AGENT_DESCRIPTORS.cursor);
 	}
 }

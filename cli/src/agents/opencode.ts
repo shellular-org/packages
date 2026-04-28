@@ -12,10 +12,6 @@ import { BUILTIN_AGENT_DESCRIPTORS } from "./agents";
 import { ACP } from "./base";
 import { acpSessionToAiSession } from "./events";
 
-const descriptor = BUILTIN_AGENT_DESCRIPTORS.find(
-	(agent) => agent.id === "opencode",
-);
-
 const OpenCodeSessionSchema = z.object({
 	id: z.string(),
 	slug: z.string(),
@@ -69,13 +65,11 @@ export class OpenCode extends ACP {
 	private ocAuthHeader: string | null = null;
 
 	static create() {
-		if (!descriptor) return null;
 		return new OpenCode();
 	}
 
 	constructor() {
-		if (!descriptor) throw new Error("OpenCode descriptor is missing");
-		super(descriptor);
+		super(BUILTIN_AGENT_DESCRIPTORS.opencode);
 		const opencodeUsername = config.NAME;
 		const opencodePassword = crypto.randomBytes(32).toString("base64url");
 		this.ocAuthHeader = `Basic ${Buffer.from(`${opencodeUsername}:${opencodePassword}`).toString("base64")}`;

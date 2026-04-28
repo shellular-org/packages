@@ -23,14 +23,14 @@ export interface AgentSpawnCommand {
 }
 
 export interface AgentDescriptor {
-	id: string;
-	backend?: AiBackend;
+	id: AiBackend;
 	name: string;
 	title: string;
 	version?: string;
 	description?: string;
 	icon?: string;
 	source: AgentSource;
+	disabled?: boolean;
 	/**
 	 * Command to check if an agent is available.
 	 *
