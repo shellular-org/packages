@@ -9,11 +9,7 @@ import type {
 import { AcpContentBlockSchema, MsgType } from "@shellular/protocol";
 
 import type { Connection } from "@/connection";
-import {
-	BUILTIN_AGENT_DESCRIPTORS,
-	getSpawnCheck,
-	isSpawnAvailable,
-} from "./agents";
+import { BUILTIN_AGENT_DESCRIPTORS, isAgentAvailable } from "./agents";
 import { ACP } from "./base";
 import { ClaudeCode } from "./claude-code";
 import { Codex } from "./codex";
@@ -47,7 +43,7 @@ export class AgentsManager {
 	listAgents() {
 		return [...this.descriptors.values()].map((descriptor) => {
 			const runtime = this.agents.get(descriptor.id);
-			const adapter = getSpawnCheck(descriptor.spawn);
+			const available = isAgentAvailable(descriptor);
 			return (
 				runtime?.getInfo() ?? {
 					id: descriptor.id,
@@ -58,9 +54,8 @@ export class AgentsManager {
 					description: descriptor.description,
 					icon: descriptor.icon,
 					source: descriptor.source,
-					state: adapter.available ? "exited" : "unavailable",
-					available: adapter.available,
-					adapter,
+					state: available ? "exited" : "unavailable",
+					available,
 				}
 			);
 		}) satisfies AgentInfo[];
@@ -268,7 +263,7 @@ export class AgentsManager {
 
 	getAvailableAgents(): AiBackend[] {
 		return BUILTIN_AGENT_DESCRIPTORS.flatMap((descriptor) =>
-			descriptor.backend && isSpawnAvailable(descriptor.spawn)
+			descriptor.backend && isAgentAvailable(descriptor)
 				? [descriptor.backend]
 				: [],
 		);

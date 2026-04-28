@@ -1,5 +1,13 @@
 import { z } from "zod";
-
+import {
+	AiSessionCloseMsgSchema,
+	AiSessionConfigSetMsgSchema,
+	AiSessionForkMsgSchema,
+	AiSessionLoadMsgSchema,
+	AiSessionModelSetMsgSchema,
+	AiSessionModeSetMsgSchema,
+	AiSessionResumeMsgSchema,
+} from "@/agents";
 import {
 	AiAbortMsgSchema,
 	AiAgentsListMsgSchema,
@@ -19,16 +27,7 @@ import {
 	AiSessionListMsgSchema,
 	AiShareMsgSchema,
 	AiUnrevertMsgSchema,
-} from "@/ai";
-import {
-	AiSessionCloseMsgSchema,
-	AiSessionConfigSetMsgSchema,
-	AiSessionForkMsgSchema,
-	AiSessionLoadMsgSchema,
-	AiSessionModelSetMsgSchema,
-	AiSessionModeSetMsgSchema,
-	AiSessionResumeMsgSchema,
-} from "@/ai-new";
+} from "@/ai-legacy";
 import { PongMsgSchema } from "@/base";
 import {
 	FsDeleteMsgSchema,

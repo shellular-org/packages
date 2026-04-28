@@ -1,6 +1,6 @@
 import { npxCommand } from "@/config";
 import { commandExists } from "@/utils";
-import type { AgentDescriptor, AgentInfo, AgentSpawnCommand } from "./types";
+import type { AgentDescriptor, AgentInfo } from "./types";
 
 export const BUILTIN_AGENT_DESCRIPTORS: AgentDescriptor[] = [
 	{
@@ -9,10 +9,10 @@ export const BUILTIN_AGENT_DESCRIPTORS: AgentDescriptor[] = [
 		name: "Codex",
 		title: "Codex",
 		source: "builtin",
+		agentExecutable: "codex",
 		spawn: {
 			command: npxCommand,
 			args: ["-yes", "@zed-industries/codex-acp"],
-			checkCommand: "codex",
 		},
 	},
 	{
@@ -21,10 +21,10 @@ export const BUILTIN_AGENT_DESCRIPTORS: AgentDescriptor[] = [
 		name: "OpenCode",
 		title: "OpenCode",
 		source: "builtin",
+		agentExecutable: "opencode",
 		spawn: {
 			command: "opencode",
 			args: ["acp"],
-			checkCommand: "opencode",
 		},
 	},
 	{
@@ -33,10 +33,10 @@ export const BUILTIN_AGENT_DESCRIPTORS: AgentDescriptor[] = [
 		name: "Claude Code",
 		title: "Claude Code",
 		source: "builtin",
+		agentExecutable: "claude",
 		spawn: {
 			command: npxCommand,
 			args: ["-yes", "@agentclientprotocol/claude-agent-acp"],
-			checkCommand: "claude",
 		},
 	},
 	{
@@ -46,24 +46,16 @@ export const BUILTIN_AGENT_DESCRIPTORS: AgentDescriptor[] = [
 		title: "Cursor",
 		description: "Cursor CLI ACP agent",
 		source: "builtin",
+		agentExecutable: "cursor-agent",
 		spawn: {
-			command: "agent",
+			command: "cursor-agent",
 			args: ["acp"],
-			checkCommand: "cursor-agent",
 		},
 	},
 ];
 
-export function isSpawnAvailable(spawn: AgentSpawnCommand): boolean {
-	return commandExists(spawn.checkCommand ?? spawn.command);
-}
-
-export function getSpawnCheck(spawn: AgentSpawnCommand) {
-	const command = spawn.checkCommand ?? spawn.command;
-	return {
-		command,
-		available: commandExists(command),
-	};
+export function isAgentAvailable(agent: AgentDescriptor): boolean {
+	return commandExists(agent.agentExecutable);
 }
 
 export function toAgentInfo(

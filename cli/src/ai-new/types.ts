@@ -20,17 +20,6 @@ export interface AgentSpawnCommand {
 	args: string[];
 	env?: Record<string, string>;
 	cwd?: string;
-	/**
-	 * Command to check if an agent is available.
-	 *
-	 * Example:
-	 * If we wanna check whether the user is using codex or not, we simply check
-	 * if the `codex` command is available. Note that we check for the existence of the
-	 * `codex` command and not `npx`, because
-	 * 1. we wanna check if that specific agent is available, not just npx
-	 * 2. we can assume that it's installed because the user runs our CLI via `npx shellular`, so npx should be available.
-	 */
-	checkCommand?: string;
 }
 
 export interface AgentDescriptor {
@@ -42,6 +31,17 @@ export interface AgentDescriptor {
 	description?: string;
 	icon?: string;
 	source: AgentSource;
+	/**
+	 * Command to check if an agent is available.
+	 *
+	 * Example:
+	 * If we wanna check whether the user is using codex or not, we simply check
+	 * if the `codex` command is available. Note that we check for the existence of the
+	 * `codex` command and not `npx`, because
+	 * 1. we wanna check if that specific agent is available, not just npx
+	 * 2. we can assume that it's installed because the user runs our CLI via `npx shellular`, so npx should be available.
+	 */
+	agentExecutable: string;
 	spawn: AgentSpawnCommand;
 }
 
@@ -58,10 +58,6 @@ export interface AgentInfo {
 	available: boolean;
 	error?: string;
 	capabilities?: acp.AgentCapabilities;
-	adapter?: {
-		command: string;
-		available: boolean;
-	};
 }
 
 export interface PromptCallbacks {

@@ -131,7 +131,7 @@ export class ACP {
 		try {
 			this.spawnedAgent = ACP.spawnAgentProcess({
 				name: this.id,
-				agentExecutable: this.descriptor.spawn.checkCommand,
+				agentExecutable: this.descriptor.agentExecutable,
 				command: this.descriptor.spawn.command,
 				args: this.descriptor.spawn.args,
 				env: this.descriptor.spawn.env,
@@ -526,7 +526,7 @@ export class ACP {
 
 	private isCommandAvailable() {
 		return commandExists(
-			this.descriptor.spawn.checkCommand ?? this.descriptor.spawn.command,
+			this.descriptor.agentExecutable ?? this.descriptor.spawn.command,
 		);
 	}
 

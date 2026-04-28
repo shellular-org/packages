@@ -1,5 +1,13 @@
 import { z } from "zod";
-
+import {
+	AiSessionCloseResultMsgSchema,
+	AiSessionConfigSetResultMsgSchema,
+	AiSessionForkResultMsgSchema,
+	AiSessionLoadResultMsgSchema,
+	AiSessionModelSetResultMsgSchema,
+	AiSessionModeSetResultMsgSchema,
+	AiSessionResumeResultMsgSchema,
+} from "@/agents";
 import {
 	AiAbortAckMsgSchema,
 	AiAgentsListResultMsgSchema,
@@ -20,16 +28,7 @@ import {
 	AiSessionListResultMsgSchema,
 	AiShareResultMsgSchema,
 	AiUnrevertAckMsgSchema,
-} from "@/ai";
-import {
-	AiSessionCloseResultMsgSchema,
-	AiSessionConfigSetResultMsgSchema,
-	AiSessionForkResultMsgSchema,
-	AiSessionLoadResultMsgSchema,
-	AiSessionModelSetResultMsgSchema,
-	AiSessionModeSetResultMsgSchema,
-	AiSessionResumeResultMsgSchema,
-} from "@/ai-new";
+} from "@/ai-legacy";
 import {
 	FsListResultMsgSchema,
 	FsReadResultMsgSchema,
