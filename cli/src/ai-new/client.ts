@@ -2,7 +2,7 @@ import type * as acp from "@agentclientprotocol/sdk";
 import { nanoid } from "nanoid";
 
 import { PermissionNotFoundError } from "./errors";
-import type { PermissionReply, PermissionRequestEvent } from "./types";
+import type { PermissionRequestEvent } from "./types";
 
 interface PendingPermission {
 	resolve: (response: acp.RequestPermissionResponse) => void;
@@ -87,16 +87,23 @@ export class AcpClient implements acp.Client {
 
 	replyPermission(
 		permissionId: string,
-		reply: PermissionReply,
+		optionId: string,
 	): acp.RequestPermissionResponse {
 		const pending = this.pendingPermissions.get(permissionId);
 		if (!pending) throw new PermissionNotFoundError(permissionId);
 
-		const option = this.pickOption(pending.params.options, reply);
+		const option = pending.params.options.find(
+			(candidate) => candidate.optionId === optionId,
+		);
+		if (!option) {
+			throw new Error(
+				`Permission option "${optionId}" was not found for request "${permissionId}"`,
+			);
+		}
 		const response: acp.RequestPermissionResponse = {
 			outcome: {
 				outcome: "selected",
-				optionId: option.optionId,
+				optionId,
 			},
 		};
 		this.pendingPermissions.delete(permissionId);
@@ -122,28 +129,5 @@ export class AcpClient implements acp.Client {
 				listener(params);
 			}
 		}
-	}
-
-	private pickOption(
-		options: acp.PermissionOption[],
-		reply: PermissionReply,
-	): acp.PermissionOption {
-		const preferredKinds: acp.PermissionOptionKind[] =
-			reply === "once"
-				? ["allow_once", "allow_always"]
-				: reply === "always"
-					? ["allow_always", "allow_once"]
-					: ["reject_once", "reject_always"];
-
-		for (const kind of preferredKinds) {
-			const option = options.find((candidate) => candidate.kind === kind);
-			if (option) return option;
-		}
-
-		const fallback = options[0];
-		if (!fallback) {
-			throw new Error("Permission request did not include any options");
-		}
-		return fallback;
 	}
 }

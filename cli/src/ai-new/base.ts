@@ -28,7 +28,6 @@ import type {
 	AgentDescriptor,
 	AgentInfo,
 	LoadSessionResult,
-	PermissionReply,
 	PromptCallbacks,
 	PromptResult,
 	StoredSession,
@@ -348,13 +347,6 @@ export class ACP {
 		return response;
 	}
 
-	async deleteSession(params: { sessionId: string }): Promise<boolean> {
-		this.sessions.delete(params.sessionId);
-		this.transcripts.delete(params.sessionId);
-		this.client.cancelSessionPermissions(params.sessionId);
-		return false;
-	}
-
 	async loadSession(
 		params: acp.LoadSessionRequest,
 	): Promise<LoadSessionResult> {
@@ -491,8 +483,8 @@ export class ACP {
 		return this.requireConnection().unstable_setSessionModel(params);
 	}
 
-	replyPermission(permissionId: string, response: PermissionReply) {
-		return this.client.replyPermission(permissionId, response);
+	replyPermission(permissionId: string, optionId: string) {
+		return this.client.replyPermission(permissionId, optionId);
 	}
 
 	getMessages(sessionId: string) {

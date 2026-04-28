@@ -356,12 +356,20 @@ export const AiPermissionReplyMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_PERMISSION_REPLY),
 	clientId: z.string(),
-	data: z.object({
-		backend: AiBackendSchema,
-		sessionId: z.string(),
-		permissionId: z.string(),
-		response: z.enum(["once", "always", "reject"]),
-	}),
+	data: z.union([
+		z.object({
+			backend: AiBackendSchema,
+			sessionId: z.string(),
+			permissionId: z.string(),
+			optionId: z.string(),
+		}),
+		z.object({
+			backend: AiBackendSchema,
+			sessionId: z.string(),
+			permissionId: z.string(),
+			response: z.enum(["once", "always", "reject"]),
+		}),
+	]),
 });
 export type AiPermissionReplyMsg = z.infer<typeof AiPermissionReplyMsgSchema>;
 

@@ -78,8 +78,6 @@ export interface PermissionRequestEvent {
 	raw: acp.RequestPermissionRequest;
 }
 
-export type PermissionReply = "once" | "always" | "reject";
-
 export interface StoredSession {
 	session: AcpAiSession;
 	messages: AcpMessage[];

@@ -20,7 +20,7 @@ import { Codex } from "./codex";
 import { Cursor } from "./cursor";
 import { AgentUnavailableError } from "./errors";
 import { OpenCode } from "./opencode";
-import type { AgentDescriptor, AgentInfo, PermissionReply } from "./types";
+import type { AgentDescriptor, AgentInfo } from "./types";
 
 function getErrorMessage(err: unknown): string {
 	if (err instanceof Error) return err.message;
@@ -191,13 +191,6 @@ export class AgentsManager {
 		return response;
 	}
 
-	async deleteSession(agentId: string, sessionId: string) {
-		const agent = await this.connectAgent(agentId);
-		const deleted = await agent.deleteSession({ sessionId });
-		this.sessionAgents.delete(sessionId);
-		return deleted;
-	}
-
 	async prompt(
 		agentId: string,
 		clientId: string,
@@ -232,10 +225,13 @@ export class AgentsManager {
 		agentId: string,
 		_sessionId: string,
 		permissionId: string,
-		response: PermissionReply,
+		optionId: string | undefined,
 	) {
+		if (!optionId) {
+			throw new Error("ACP permission reply requires an optionId");
+		}
 		const agent = await this.connectAgent(agentId);
-		return agent.replyPermission(permissionId, response);
+		return agent.replyPermission(permissionId, optionId);
 	}
 
 	async setSessionConfigOption(
@@ -570,28 +566,6 @@ export class AgentsManager {
 			}
 		});
 
-		conn.on(MsgType.AI_SESSION_DELETE, async (msg) => {
-			try {
-				const deleted = await this.deleteSession(
-					msg.data.backend,
-					msg.data.sessionId,
-				);
-				conn.send({
-					type: MsgType.AI_SESSION_DELETED,
-					clientId: msg.clientId,
-					respTo: msg.id,
-					data: { deleted },
-				});
-			} catch (err) {
-				conn.send({
-					type: MsgType.AI_SESSION_DELETED,
-					clientId: msg.clientId,
-					respTo: msg.id,
-					error: getErrorMessage(err),
-				});
-			}
-		});
-
 		conn.on(MsgType.AI_SESSION_GET, async (msg) => {
 			try {
 				const agent = await this.connectAgent(msg.data.backend);
@@ -787,7 +761,7 @@ export class AgentsManager {
 					msg.data.backend,
 					msg.data.sessionId,
 					msg.data.permissionId,
-					msg.data.response,
+					"optionId" in msg.data ? msg.data.optionId : undefined,
 				);
 				conn.send({
 					type: MsgType.AI_PERMISSION_REPLY_ACK,

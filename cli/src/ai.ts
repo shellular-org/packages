@@ -293,6 +293,9 @@ export async function initAiHandler(conn: Connection, aiManager: AiManager) {
 
 	conn.on(MsgType.AI_PERMISSION_REPLY, async (msg: AiPermissionReplyMsg) => {
 		try {
+			if (!("response" in msg.data)) {
+				throw new Error("Legacy AI permission replies require response");
+			}
 			await aiManager.permissionReply(
 				msg.clientId,
 				msg.data.backend,
