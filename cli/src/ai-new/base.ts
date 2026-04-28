@@ -387,6 +387,7 @@ export class ACP {
 	): Promise<PromptResult> {
 		await this.ensureReady();
 		const transcript = this.getTranscript(params.sessionId);
+		transcript.beginTurn();
 		const listener = (notification: acp.SessionNotification) => {
 			callbacks.onUpdate?.(notification);
 			// Normalize every ACP update immediately so UI consumers can render
@@ -399,6 +400,7 @@ export class ACP {
 
 		try {
 			const response = await this.requireConnection().prompt(params);
+			transcript.endTurn();
 			callbacks.onEvent?.(promptEndEvent(params.sessionId, response));
 			const messages = transcript.getMessages();
 			const existing = this.sessions.get(params.sessionId);
@@ -410,6 +412,7 @@ export class ACP {
 			}
 			return { response, messages };
 		} catch (err) {
+			transcript.endTurn();
 			callbacks.onEvent?.({
 				type: "error",
 				properties: {

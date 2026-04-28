@@ -54,6 +54,18 @@ export class AcpTranscript {
 		}));
 	}
 
+	beginTurn() {
+		this.currentUser = null;
+		this.currentAssistant = null;
+		this.toolParts.clear();
+	}
+
+	endTurn() {
+		this.currentUser = null;
+		this.currentAssistant = null;
+		this.toolParts.clear();
+	}
+
 	apply(notification: acp.SessionNotification): AiEvent[] {
 		const update = notification.update;
 		const events: AiEvent[] = [];
