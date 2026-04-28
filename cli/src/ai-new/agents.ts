@@ -49,7 +49,7 @@ export const BUILTIN_AGENT_DESCRIPTORS: AgentDescriptor[] = [
 		spawn: {
 			command: "agent",
 			args: ["acp"],
-			checkCommand: "cursor",
+			checkCommand: "cursor-agent",
 		},
 	},
 ];
