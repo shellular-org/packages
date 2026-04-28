@@ -14,14 +14,14 @@ import {
 import chalk from "chalk";
 import { Command } from "commander";
 import qrcode from "qrcode-terminal";
+// import { AiManager } from "@/ai/index";
+import { AgentsManager } from "@/agents";
 // import { initAiHandler } from "@/ai";
 import {
 	notifyExtensionClientPresence,
 	notifyExtensionClientsSnapshot,
 	notifyExtensionCliInfo,
 } from "@/ai/copilot";
-// import { AiManager } from "@/ai/index";
-import { AgentsManager } from "@/ai-new";
 import {
 	ensureSingleInstance,
 	releaseBootLock,
