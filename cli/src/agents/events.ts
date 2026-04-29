@@ -13,11 +13,16 @@ type AcpToolCallPart = AcpMessagePart & {
 	parts?: AcpMessagePart[];
 };
 
+export interface AcpTranscriptOptions {
+	shouldSkipUserReplayContent?: (content: unknown) => boolean;
+	normalizeUserReplayMessage?: (message: AcpMessage) => AcpMessage | null;
+}
+
 function now() {
 	return Date.now();
 }
 
-function textFromContent(content: unknown): string {
+export function textFromContent(content: unknown): string {
 	if (
 		content &&
 		typeof content === "object" &&
@@ -235,33 +240,29 @@ function hasText(message: AcpMessage, text: string) {
 	);
 }
 
-function isToolReadReplayContent(content: unknown) {
-	const text = textFromContent(content);
-	if (!text) return false;
-	return (
-		/Called the Read tool with the following input:\s*\{[^\n]*"filePath"\s*:/i.test(
-			text,
-		) ||
-		/<path>[^<]+<\/path>\s*<type>file<\/type>\s*<content>[\s\S]*<\/content>/i.test(
-			text,
-		) ||
-		/Image read successfully/i.test(text)
-	);
-}
-
 export class AcpTranscript {
 	private messages: AcpMessage[] = [];
 	private currentUser: AcpMessage | null = null;
 	private currentAssistant: AcpMessage | null = null;
 	private toolParts = new Map<string, AcpToolCallPart>();
 
-	constructor(readonly sessionId: string) {}
+	constructor(
+		readonly sessionId: string,
+		private readonly options: AcpTranscriptOptions = {},
+	) {}
 
 	getMessages(): AcpMessage[] {
-		return this.messages.map((message) => ({
-			...message,
-			parts: [...message.parts],
-		}));
+		return this.messages.flatMap((message) => {
+			const normalized = this.normalizeMessage(message);
+			return normalized
+				? [
+						{
+							...normalized,
+							parts: [...normalized.parts],
+						},
+					]
+				: [];
+		});
 	}
 
 	beginTurn(prompt?: acp.PromptRequest["prompt"]) {
@@ -286,7 +287,7 @@ export class AcpTranscript {
 
 		switch (update.sessionUpdate) {
 			case "user_message_chunk": {
-				if (isToolReadReplayContent(update.content)) break;
+				if (this.options.shouldSkipUserReplayContent?.(update.content)) break;
 				this.currentAssistant = null;
 				const message = this.ensureCurrentUser();
 				const userPart = contentToPart(update.content);
@@ -302,7 +303,9 @@ export class AcpTranscript {
 					const text = textFromContent(update.content);
 					if (!hasText(message, text)) appendText(message, text);
 				}
-				events.push(this.messageEvent(message));
+				const normalizedMessage = this.replaceWithNormalizedMessage(message);
+				if (normalizedMessage)
+					events.push(this.messageEvent(normalizedMessage));
 				break;
 			}
 			case "agent_message_chunk": {
@@ -465,6 +468,26 @@ export class AcpTranscript {
 		}
 
 		return events;
+	}
+
+	private normalizeMessage(message: AcpMessage): AcpMessage | null {
+		if (message.role !== "user") return message;
+		return this.options.normalizeUserReplayMessage?.(message) ?? message;
+	}
+
+	private replaceWithNormalizedMessage(message: AcpMessage): AcpMessage | null {
+		const normalized = this.normalizeMessage(message);
+		const index = this.messages.indexOf(message);
+		if (!normalized) {
+			if (index >= 0) this.messages.splice(index, 1);
+			if (this.currentUser === message) this.currentUser = null;
+			return null;
+		}
+		if (normalized !== message && index >= 0) {
+			this.messages[index] = normalized;
+		}
+		if (this.currentUser === message) this.currentUser = normalized;
+		return normalized;
 	}
 
 	private ensureCurrentUser(): AcpMessage {

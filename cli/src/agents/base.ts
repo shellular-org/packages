@@ -19,6 +19,7 @@ import { AcpClient } from "./client";
 import { AgentUnavailableError, UnsupportedCapabilityError } from "./errors";
 import {
 	AcpTranscript,
+	type AcpTranscriptOptions,
 	acpSessionToAiSession,
 	newAiSessionFromResponse,
 	promptEndEvent,
@@ -268,7 +269,7 @@ export class ACP {
 			});
 			this.transcripts.set(
 				response.sessionId,
-				new AcpTranscript(response.sessionId),
+				this.createTranscript(response.sessionId),
 			);
 			return {
 				response,
@@ -329,7 +330,7 @@ export class ACP {
 		);
 		if (session.id) {
 			this.sessions.set(session.id, { session, messages: [] });
-			this.transcripts.set(session.id, new AcpTranscript(session.id));
+			this.transcripts.set(session.id, this.createTranscript(session.id));
 		}
 		return { response, session };
 	}
@@ -356,7 +357,7 @@ export class ACP {
 		}
 
 		const sessionId = params.sessionId;
-		const transcript = new AcpTranscript(sessionId);
+		const transcript = this.createTranscript(sessionId);
 		const updates: acp.SessionNotification[] = [];
 		const listener = (notification: acp.SessionNotification) => {
 			// session/load replays history as session/update notifications before
@@ -514,10 +515,18 @@ export class ACP {
 	protected getTranscript(sessionId: string): AcpTranscript {
 		let transcript = this.transcripts.get(sessionId);
 		if (!transcript) {
-			transcript = new AcpTranscript(sessionId);
+			transcript = this.createTranscript(sessionId);
 			this.transcripts.set(sessionId, transcript);
 		}
 		return transcript;
+	}
+
+	protected createTranscript(sessionId: string): AcpTranscript {
+		return new AcpTranscript(sessionId, this.transcriptOptions());
+	}
+
+	protected transcriptOptions(): AcpTranscriptOptions {
+		return {};
 	}
 
 	protected setSessionStore(sessionId: string, stored: StoredSession) {

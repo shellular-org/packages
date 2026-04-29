@@ -10,7 +10,11 @@ import { z } from "zod";
 import { config } from "@/config";
 import { BUILTIN_AGENT_DESCRIPTORS } from "./agents";
 import { ACP } from "./base";
-import { acpSessionToAiSession } from "./events";
+import { type AcpTranscriptOptions, acpSessionToAiSession } from "./events";
+import {
+	normalizeUserFileAttachmentReplayMessage,
+	shouldSkipOpenCodeReadReplayContent,
+} from "./replay-normalization";
 
 const OpenCodeSessionSchema = z.object({
 	id: z.string(),
@@ -73,6 +77,13 @@ export class OpenCode extends ACP {
 		const opencodeUsername = config.NAME;
 		const opencodePassword = crypto.randomBytes(32).toString("base64url");
 		this.ocAuthHeader = `Basic ${Buffer.from(`${opencodeUsername}:${opencodePassword}`).toString("base64")}`;
+	}
+
+	protected override transcriptOptions(): AcpTranscriptOptions {
+		return {
+			shouldSkipUserReplayContent: shouldSkipOpenCodeReadReplayContent,
+			normalizeUserReplayMessage: normalizeUserFileAttachmentReplayMessage,
+		};
 	}
 
 	override async init(): Promise<acp.InitializeResponse> {
