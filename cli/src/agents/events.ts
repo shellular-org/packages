@@ -235,6 +235,20 @@ function hasText(message: AcpMessage, text: string) {
 	);
 }
 
+function isToolReadReplayContent(content: unknown) {
+	const text = textFromContent(content);
+	if (!text) return false;
+	return (
+		/Called the Read tool with the following input:\s*\{[^\n]*"filePath"\s*:/i.test(
+			text,
+		) ||
+		/<path>[^<]+<\/path>\s*<type>file<\/type>\s*<content>[\s\S]*<\/content>/i.test(
+			text,
+		) ||
+		/Image read successfully/i.test(text)
+	);
+}
+
 export class AcpTranscript {
 	private messages: AcpMessage[] = [];
 	private currentUser: AcpMessage | null = null;
@@ -272,6 +286,7 @@ export class AcpTranscript {
 
 		switch (update.sessionUpdate) {
 			case "user_message_chunk": {
+				if (isToolReadReplayContent(update.content)) break;
 				this.currentAssistant = null;
 				const message = this.ensureCurrentUser();
 				const userPart = contentToPart(update.content);
