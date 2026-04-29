@@ -41,7 +41,7 @@ export const SessionJoinedMsgSchema = z.object({
 		hostname: z.string(),
 		platform: z.string(),
 		dir: z.string(),
-		machineId: z.string().optional(),
+		machineId: z.string(),
 		sessionId: z.string(),
 	}),
 });
