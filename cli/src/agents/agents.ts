@@ -35,7 +35,7 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		agentExecutable: "claude",
 		spawn: {
 			command: npxCommand,
-			args: ["-yes", "@agentclientprotocol/claude-agent-acp"],
+			args: ["-y", "@agentclientprotocol/claude-agent-acp"],
 		},
 	},
 	cursor: {
@@ -51,6 +51,17 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		spawn: {
 			command: "cursor-agent",
 			args: ["acp"],
+		},
+	},
+	pi: {
+		id: "pi",
+		name: "Pi",
+		title: "Pi",
+		source: "builtin",
+		agentExecutable: "pi",
+		spawn: {
+			command: npxCommand,
+			args: ["-y", "pi-acp"],
 		},
 	},
 };

@@ -10,12 +10,13 @@ import { AcpContentBlockSchema, MsgType } from "@shellular/protocol";
 
 import type { Connection } from "@/connection";
 import { BUILTIN_AGENT_DESCRIPTORS, isAgentAvailable } from "./agents";
-import { ACP } from "./base";
+import type { ACP } from "./base";
 import { ClaudeCode } from "./claude-code";
 import { Codex } from "./codex";
 import { Cursor } from "./cursor";
 import { AgentUnavailableError } from "./errors";
 import { OpenCode } from "./opencode";
+import { Pi } from "./pi";
 import type { AgentDescriptor, AgentInfo } from "./types";
 
 function getErrorMessage(err: unknown): string {
@@ -65,13 +66,15 @@ export class AgentsManager {
 		}) satisfies AgentInfo[];
 	}
 
-	async connectAgent(agentId: string) {
+	async connectAgent(agentId: AiBackend) {
 		let agent = this.agents.get(agentId);
 		if (!agent) {
 			const descriptor = this.descriptors.get(agentId);
-			if (!descriptor)
+			if (!descriptor) {
 				throw new AgentUnavailableError(agentId, "unknown agent");
-			agent = createAgentRuntime(agentId, descriptor);
+			}
+
+			agent = createAgentRuntime(agentId);
 			this.agents.set(agentId, agent);
 			// ACP permission requests are client-side JSON-RPC calls. Convert them
 			// into the existing Shellular event stream so the mobile app can decide.
@@ -109,13 +112,13 @@ export class AgentsManager {
 		return agent;
 	}
 
-	async listSessions(agentId: string, cwd?: string): Promise<AiSession[]> {
+	async listSessions(agentId: AiBackend, cwd?: string): Promise<AiSession[]> {
 		const agent = await this.connectAgent(agentId);
 		return agent.listAiSessions(cwd);
 	}
 
 	async createSession(
-		agentId: string,
+		agentId: AiBackend,
 		cwd: string,
 		options: Parameters<ACP["createSession"]>[1] = {},
 	) {
@@ -129,7 +132,7 @@ export class AgentsManager {
 	}
 
 	async loadSession(
-		agentId: string,
+		agentId: AiBackend,
 		sessionId: string,
 		cwd: string,
 		options: Partial<
@@ -147,7 +150,7 @@ export class AgentsManager {
 	}
 
 	async resumeSession(
-		agentId: string,
+		agentId: AiBackend,
 		sessionId: string,
 		cwd: string,
 		options: Partial<
@@ -165,7 +168,7 @@ export class AgentsManager {
 	}
 
 	async forkSession(
-		agentId: string,
+		agentId: AiBackend,
 		sessionId: string,
 		cwd: string,
 		options: Partial<
@@ -183,7 +186,7 @@ export class AgentsManager {
 		return result;
 	}
 
-	async closeSession(agentId: string, sessionId: string) {
+	async closeSession(agentId: AiBackend, sessionId: string) {
 		const agent = await this.connectAgent(agentId);
 		const response = await agent.closeSession({ sessionId });
 		this.sessionAgents.delete(sessionId);
@@ -191,7 +194,7 @@ export class AgentsManager {
 	}
 
 	async prompt(
-		agentId: string,
+		agentId: AiBackend,
 		clientId: string,
 		sessionId: string,
 		content: string | unknown[],
@@ -215,13 +218,13 @@ export class AgentsManager {
 		);
 	}
 
-	async cancel(agentId: string, sessionId: string) {
+	async cancel(agentId: AiBackend, sessionId: string) {
 		const agent = await this.connectAgent(agentId);
 		return agent.interrupt({ sessionId });
 	}
 
 	async replyPermission(
-		agentId: string,
+		agentId: AiBackend,
 		_sessionId: string,
 		permissionId: string,
 		optionId: string | undefined,
@@ -234,7 +237,7 @@ export class AgentsManager {
 	}
 
 	async setSessionConfigOption(
-		agentId: string,
+		agentId: AiBackend,
 		sessionId: string,
 		configId: string,
 		value: string | boolean,
@@ -247,12 +250,16 @@ export class AgentsManager {
 		});
 	}
 
-	async setSessionMode(agentId: string, sessionId: string, modeId: string) {
+	async setSessionMode(agentId: AiBackend, sessionId: string, modeId: string) {
 		const agent = await this.connectAgent(agentId);
 		return agent.setSessionMode({ sessionId, modeId });
 	}
 
-	async setSessionModel(agentId: string, sessionId: string, modelId: string) {
+	async setSessionModel(
+		agentId: AiBackend,
+		sessionId: string,
+		modelId: string,
+	) {
 		const agent = await this.connectAgent(agentId);
 		return agent.setSessionModel({ sessionId, modelId });
 	}
@@ -827,19 +834,19 @@ function normalizePromptContent(
 	return parsed.length ? parsed : [{ type: "text", text: "" }];
 }
 
-function createAgentRuntime(agentId: string, descriptor: AgentDescriptor): ACP {
-	const specialized =
-		agentId === "codex"
-			? Codex.create()
-			: agentId === "opencode"
-				? OpenCode.create()
-				: agentId === "claude-code"
-					? ClaudeCode.create()
-					: agentId === "cursor"
-						? Cursor.create()
-						: null;
-
-	return specialized ?? new ACP(descriptor);
+function createAgentRuntime(agentId: AiBackend): ACP {
+	switch (agentId) {
+		case "codex":
+			return Codex.create();
+		case "claude-code":
+			return ClaudeCode.create();
+		case "opencode":
+			return OpenCode.create();
+		case "pi":
+			return Pi.create();
+		case "cursor":
+			return Cursor.create();
+	}
 }
 
 function latestAvailableCommands(updates: unknown[]) {

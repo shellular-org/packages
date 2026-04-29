@@ -7,6 +7,7 @@ import { ClaudeCode } from "./claude-code";
 import { Codex } from "./codex";
 import { Cursor } from "./cursor";
 import { OpenCode } from "./opencode";
+import { Pi } from "./pi";
 
 const rl = readline.createInterface({ input, output });
 
@@ -71,7 +72,7 @@ function renderUpdate(notification: acp.SessionNotification) {
 async function pickAgent(): Promise<ACP> {
 	while (true) {
 		const choice = await ask(
-			"Choose agent (1=Codex, 2=OpenCode, 3=ClaudeCode, 4=Cursor): ",
+			"Choose agent (1=Codex, 2=OpenCode, 3=ClaudeCode, 4=Cursor, 5=Pi): ",
 		);
 		if (choice === "1") {
 			const agent = Codex.create();
@@ -91,6 +92,11 @@ async function pickAgent(): Promise<ACP> {
 		if (choice === "4") {
 			const agent = Cursor.create();
 			if (!agent) throw new Error("Cursor not found. Is it installed?");
+			return agent;
+		}
+		if (choice === "5") {
+			const agent = Pi.create();
+			if (!agent) throw new Error("Pi not found. Is it installed?");
 			return agent;
 		}
 		console.log("Invalid choice, try again.");
