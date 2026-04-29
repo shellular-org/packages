@@ -107,11 +107,12 @@ function contentToPart(content: unknown): AcpMessagePart | null {
 			const uri = typeof res.uri === "string" ? res.uri : undefined;
 			const mimeType =
 				typeof res.mimeType === "string" ? res.mimeType : undefined;
-			if (uri?.startsWith("file://") && typeof res.text !== "string") {
+			if (uri?.startsWith("file://")) {
 				return {
 					type: "file_reference",
 					path: filePathFromUri(uri),
 					mimeType,
+					name: uri.split("/").pop(),
 					rawContent: content,
 				};
 			}
