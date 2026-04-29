@@ -1,5 +1,11 @@
 # @shellular/protocol
 
+## 0.0.7
+
+### Patch Changes
+
+- 117a1d8: feat(acp): add support for Pi agent
+
 ## 0.0.6
 
 ### Patch Changes
