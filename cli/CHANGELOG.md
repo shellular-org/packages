@@ -1,5 +1,11 @@
 # shellular
 
+## 0.0.14
+
+### Patch Changes
+
+- 4358476: fix: handle crashes, wrap listeners in try catch, don't send to disconnected clients & add github cli ACP
+
 ## 0.0.13
 
 ### Patch Changes
