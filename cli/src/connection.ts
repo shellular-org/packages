@@ -331,7 +331,7 @@ export class Connection extends EventEmitter {
 		eventName: string | symbol,
 		listener: (...args: TArgs) => void,
 	): this {
-		return super.on(eventName, listener);
+		return super.on(eventName, this.wrapListener(eventName, listener));
 	}
 
 	once(
@@ -458,7 +458,7 @@ export class Connection extends EventEmitter {
 		eventName: string | symbol,
 		listener: (...args: TArgs) => void,
 	): this {
-		return super.once(eventName, listener);
+		return super.once(eventName, this.wrapListener(eventName, listener));
 	}
 
 	emit(
@@ -645,6 +645,28 @@ export class Connection extends EventEmitter {
 		// SAFETY: IncomingMsgSchema validated the message. The generic emit
 		// avoids exhaustive overload matching on every MsgType variant.
 		return super.emit(msg.type, msg) as boolean;
+	}
+
+	private wrapListener<TArgs extends unknown[]>(
+		eventName: string | symbol,
+		listener: (...args: TArgs) => void | Promise<void>,
+	): (...args: TArgs) => void {
+		return (...args: TArgs) => {
+			try {
+				const result = listener(...args);
+				if (result instanceof Promise) {
+					result.catch((err) => {
+						this.logListenerError(eventName, err);
+					});
+				}
+			} catch (err) {
+				this.logListenerError(eventName, err);
+			}
+		};
+	}
+
+	private logListenerError(eventName: string | symbol, err: unknown) {
+		logger.error(`Connection listener for ${String(eventName)} failed:`, err);
 	}
 
 	open() {
