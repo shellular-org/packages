@@ -215,12 +215,52 @@ function appendPart(message: AcpMessage, part: AcpMessagePart) {
 
 function appendText(message: AcpMessage, text: string) {
 	if (!text) return;
+	const resourceLinkParts = partsFromResourceLinkText(text);
+	if (resourceLinkParts) {
+		for (const part of resourceLinkParts) {
+			if (part.type === "text") appendPlainText(message, part.text);
+			else appendPart(message, part);
+		}
+		return;
+	}
+	appendPlainText(message, text);
+}
+
+function appendPlainText(message: AcpMessage, text: string) {
 	const last = message.parts[message.parts.length - 1];
 	if (last?.type === "text") {
 		last.text += text;
 		return;
 	}
 	appendPart(message, { type: "text", text });
+}
+
+function partsFromResourceLinkText(text: string): AcpMessagePart[] | null {
+	const markerPattern = /\[Resource link:\s*(file:\/\/[^\]]+)\]/g;
+	const parts: AcpMessagePart[] = [];
+	let lastIndex = 0;
+	let match = markerPattern.exec(text);
+
+	while (match) {
+		const before = text.slice(lastIndex, match.index);
+		if (before) parts.push({ type: "text", text: before });
+		const uri = match[1]?.trim();
+		if (uri) {
+			parts.push({
+				type: "file_reference",
+				path: filePathFromUri(uri),
+				name: uri.split("/").pop(),
+				rawContent: { type: "resource_link", uri },
+			} as AcpMessagePart);
+		}
+		lastIndex = markerPattern.lastIndex;
+		match = markerPattern.exec(text);
+	}
+
+	if (!parts.length) return null;
+	const after = text.slice(lastIndex);
+	if (after) parts.push({ type: "text", text: after });
+	return parts;
 }
 
 function appendPromptContent(

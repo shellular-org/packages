@@ -32,14 +32,19 @@ export function normalizeUserFileAttachmentReplayMessage(
 ): AcpMessage {
 	return {
 		...message,
-		parts: message.parts.map((part) => {
+		parts: message.parts.flatMap((part) => {
+			if (part.type === "text") {
+				return normalizeResourceLinkTextPart(part);
+			}
 			const uri = fileUriFromPart(part);
 			if (!uri) return part;
-			return fileReferencePartFromUri(
-				uri,
-				part.title || part.name || part.alt || uri.split("/").pop(),
-				part.mimeType || part.mime,
-			);
+			return [
+				fileReferencePartFromUri(
+					uri,
+					part.title || part.name || part.alt || uri.split("/").pop(),
+					part.mimeType || part.mime,
+				),
+			];
 		}),
 	};
 }
@@ -57,6 +62,27 @@ function normalizeCodexUserReplayPart(part: AcpMessagePart): AcpMessagePart[] {
 		lastIndex = regex.lastIndex;
 		match = regex.exec(part.text);
 	}
+	const after = part.text.slice(lastIndex);
+	if (after) result.push({ type: "text", text: after });
+	return result.length ? result : [part];
+}
+
+function normalizeResourceLinkTextPart(part: AcpMessagePart): AcpMessagePart[] {
+	if (part.type !== "text") return [part];
+	const result: AcpMessagePart[] = [];
+	const regex = /\[Resource link:\s*(file:\/\/[^\]]+)\]/g;
+	let lastIndex = 0;
+	let match = regex.exec(part.text);
+
+	while (match) {
+		const before = part.text.slice(lastIndex, match.index);
+		if (before) result.push({ type: "text", text: before });
+		const uri = match[1]?.trim();
+		if (uri) result.push(fileReferencePartFromUri(uri));
+		lastIndex = regex.lastIndex;
+		match = regex.exec(part.text);
+	}
+
 	const after = part.text.slice(lastIndex);
 	if (after) result.push({ type: "text", text: after });
 	return result.length ? result : [part];
