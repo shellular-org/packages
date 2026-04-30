@@ -28,7 +28,6 @@ import {
 	type AiShareMsg,
 	type AiUnrevertMsg,
 	BaseMsgSchema,
-	type ClientInfo,
 	EncryptedMsgSchema,
 	type FsDeleteMsg,
 	type FsListMsg,
@@ -70,10 +69,10 @@ import {
 } from "@shellular/protocol";
 import { nanoid } from "nanoid";
 import WebSocket from "ws";
-
-import { config } from "./config";
-import { decrypt, encrypt } from "./encryption";
-import { logger } from "./logger";
+import { ConnectedClients } from "@/clients/connected";
+import { config } from "@/config";
+import { decrypt, encrypt } from "@/encryption";
+import { logger } from "@/logger";
 
 const HEARTBEAT_INTERVAL_MS = 25_000;
 
@@ -94,18 +93,20 @@ export class Connection extends EventEmitter {
 	hostInfo: HostInfo;
 	sessionId: string;
 	ws: WebSocket;
-	connectedClients: Map<string, ClientInfo>;
 	private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+	clients: ConnectedClients;
 
 	constructor(serverUrl: string | URL, hostInfo: HostInfo) {
 		super();
 		this.hostInfo = hostInfo;
 		this.sessionId = "";
-		this.connectedClients = new Map();
+		this.clients = new ConnectedClients();
+
 		const wsUrl = new URL(serverUrl);
 		if (hostInfo.id) {
 			wsUrl.searchParams.set("hostId", hostInfo.id);
 		}
+
 		this.ws = new WebSocket(wsUrl.toString());
 	}
 
@@ -330,7 +331,7 @@ export class Connection extends EventEmitter {
 		eventName: string | symbol,
 		listener: (...args: TArgs) => void,
 	): this {
-		return super.on(eventName, listener);
+		return super.on(eventName, this.wrapListener(eventName, listener));
 	}
 
 	once(
@@ -457,7 +458,7 @@ export class Connection extends EventEmitter {
 		eventName: string | symbol,
 		listener: (...args: TArgs) => void,
 	): this {
-		return super.once(eventName, listener);
+		return super.once(eventName, this.wrapListener(eventName, listener));
 	}
 
 	emit(
@@ -636,9 +637,9 @@ export class Connection extends EventEmitter {
 	private dispatchMessage(msg: HostIncomingMsg) {
 		// Handle client joined/left events
 		if (msg.type === MsgType.SESSION_CLIENT_JOINED) {
-			this.connectedClients.set(msg.data.clientId, msg.data);
+			this.clients.add(msg.data.clientId, msg.data);
 		} else if (msg.type === MsgType.SESSION_CLIENT_LEFT) {
-			this.connectedClients.delete(msg.data.clientId);
+			this.clients.delete(msg.data.clientId);
 		}
 
 		// SAFETY: IncomingMsgSchema validated the message. The generic emit
@@ -646,20 +647,26 @@ export class Connection extends EventEmitter {
 		return super.emit(msg.type, msg) as boolean;
 	}
 
-	addClient(clientId: string, info: ClientInfo): void {
-		this.connectedClients.set(clientId, info);
+	private wrapListener<TArgs extends unknown[]>(
+		eventName: string | symbol,
+		listener: (...args: TArgs) => void | Promise<void>,
+	): (...args: TArgs) => void {
+		return (...args: TArgs) => {
+			try {
+				const result = listener(...args);
+				if (result instanceof Promise) {
+					result.catch((err) => {
+						this.logListenerError(eventName, err);
+					});
+				}
+			} catch (err) {
+				this.logListenerError(eventName, err);
+			}
+		};
 	}
 
-	removeClient(clientId: string): void {
-		this.connectedClients.delete(clientId);
-	}
-
-	getClient(clientId: string): ClientInfo | undefined {
-		return this.connectedClients.get(clientId);
-	}
-
-	getConnectedClients(): ClientInfo[] {
-		return Array.from(this.connectedClients.values());
+	private logListenerError(eventName: string | symbol, err: unknown) {
+		logger.error(`Connection listener for ${String(eventName)} failed:`, err);
 	}
 
 	open() {
@@ -751,6 +758,13 @@ export class Connection extends EventEmitter {
 
 			// Expose clientId on the outer envelope so the relay server can route
 			const clientId = "clientId" in msg ? msg.clientId : undefined;
+			if (clientId && !this.clients.isConnected(clientId)) {
+				logger.debug(
+					`Not sending message of type ${msg.type} to client ${clientId} because it's NOT connected`,
+				);
+				return;
+			}
+
 			const encryptedMsg = clientId
 				? {
 						id,
