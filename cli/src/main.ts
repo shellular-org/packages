@@ -340,15 +340,15 @@ async function runCli({
 	process.on("beforeExit", cleanup);
 
 	process.on("uncaughtException", (err) => {
-		logger.error(err);
+		logger.error("uncaughtException", err);
 		cleanup();
-		process.exit(1);
+		// process.exit(1);
 	});
 
 	process.on("unhandledRejection", (err) => {
-		logger.error(err);
+		logger.error("unhandledRejection", err);
 		cleanup();
-		process.exit(1);
+		// process.exit(1);
 	});
 
 	startCaffeinate();
