@@ -1,5 +1,12 @@
 # shellular
 
+## 0.0.15
+
+### Patch Changes
+
+- Updated dependencies [08bdf89]
+  - @shellular/protocol@0.0.8
+
 ## 0.0.14
 
 ### Patch Changes

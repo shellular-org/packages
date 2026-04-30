@@ -1,5 +1,11 @@
 # @shellular/protocol
 
+## 0.0.8
+
+### Patch Changes
+
+- 08bdf89: feat: add copilot to protocol
+
 ## 0.0.7
 
 ### Patch Changes
