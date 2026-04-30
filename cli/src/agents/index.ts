@@ -13,6 +13,7 @@ import { BUILTIN_AGENT_DESCRIPTORS, isAgentAvailable } from "./agents";
 import type { ACP } from "./base";
 import { ClaudeCode } from "./claude-code";
 import { Codex } from "./codex";
+import { Copilot } from "./copilot";
 import { Cursor } from "./cursor";
 import { AgentUnavailableError } from "./errors";
 import { OpenCode } from "./opencode";
@@ -79,7 +80,7 @@ export class AgentsManager {
 			// ACP permission requests are client-side JSON-RPC calls. Convert them
 			// into the existing Shellular event stream so the mobile app can decide.
 			agent.onPermission((permission) => {
-				const backend = descriptor.id ?? (descriptor.id as AiBackend);
+				const backend = descriptor.id;
 				const clientId =
 					this.sessionClientIds.get(
 						this.sessionKey(agentId, permission.sessionId),
@@ -98,7 +99,7 @@ export class AgentsManager {
 				});
 			});
 			agent.onSessionUpdate((notification) => {
-				const backend = descriptor.id ?? (descriptor.id as AiBackend);
+				const backend = descriptor.id;
 				const clientId =
 					this.sessionClientIds.get(
 						this.sessionKey(descriptor.id, notification.sessionId),
@@ -209,11 +210,7 @@ export class AgentsManager {
 			},
 			{
 				onEvent: (event) =>
-					this.emit(
-						eventClientId(event, clientId),
-						agent.descriptor.id ?? (agent.descriptor.id as AiBackend),
-						event,
-					),
+					this.emit(eventClientId(event, clientId), agent.descriptor.id, event),
 			},
 		);
 	}
@@ -840,6 +837,8 @@ function createAgentRuntime(agentId: AiBackend): ACP {
 			return Codex.create();
 		case "claude-code":
 			return ClaudeCode.create();
+		case "copilot":
+			return Copilot.create();
 		case "opencode":
 			return OpenCode.create();
 		case "pi":

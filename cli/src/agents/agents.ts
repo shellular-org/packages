@@ -38,6 +38,17 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 			args: ["-y", "@agentclientprotocol/claude-agent-acp"],
 		},
 	},
+	copilot: {
+		id: "copilot",
+		name: "GitHub Copilot",
+		title: "GitHub Copilot",
+		source: "builtin",
+		agentExecutable: npxCommand,
+		spawn: {
+			command: npxCommand,
+			args: ["-y", "@github/copilot@1.0.39", "--acp"],
+		},
+	},
 	cursor: {
 		id: "cursor",
 		name: "Cursor",

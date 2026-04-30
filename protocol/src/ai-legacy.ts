@@ -7,6 +7,7 @@ export const AiBackendSchema = z.enum([
 	"opencode",
 	"codex",
 	"claude-code",
+	"copilot",
 	"cursor",
 	"pi",
 ]);
@@ -15,6 +16,7 @@ export const AI_BACKENDS: AiBackend[] = [
 	"opencode",
 	"codex",
 	"claude-code",
+	"copilot",
 	"cursor",
 	"pi",
 ];
