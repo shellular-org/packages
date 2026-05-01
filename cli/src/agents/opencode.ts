@@ -46,13 +46,15 @@ const OpenCodeSessionListSchema = z.object({
 	data: z.array(OpenCodeSessionSchema),
 });
 
+const OPENCODE_SESSION_PAGE_SIZE = 40;
+
 /**
  * OpenCode ACP client with custom session listing using opencode sdk.
  *
  * OpenCode's ACP `session/list` does not yet return project-level metadata
  * (project ID, slug, summary stats) or accurate timestamps that the
  * Shellular UI depends on. Until the ACP endpoint gains parity, this class
- * overrides `listSessions()` to fetch sessions via the v2 HTTP
+ * overrides `listSessionPage()` to fetch sessions via the v2 HTTP
  * API (`@opencode-ai/sdk/v2`) and maps them into the standard
  * `acp.SessionInfo` shape.
  *
@@ -103,12 +105,19 @@ export class OpenCode extends ACP {
 		return result;
 	}
 
-	override async listSessions(params: acp.ListSessionsRequest = {}) {
+	override async listSessionPage(
+		params: acp.ListSessionsRequest = {},
+	): Promise<acp.ListSessionsResponse> {
 		await this.init();
-		if (!this.ocClient) return super.listSessions(params);
+		if (!this.ocClient) return super.listSessionPage(params);
+
+		const cursor = Number.parseInt(params.cursor ?? "0", 10);
+		const start = Number.isFinite(cursor) && cursor > 0 ? cursor : 0;
 
 		const response = await this.ocClient.experimental.session.list({
 			...(params.cwd ? { directory: params.cwd } : { roots: true }),
+			start,
+			limit: OPENCODE_SESSION_PAGE_SIZE,
 		});
 		const parsed = OpenCodeSessionListSchema.parse(response);
 
@@ -137,7 +146,13 @@ export class OpenCode extends ACP {
 			});
 		}
 
-		return sessions;
+		return {
+			sessions,
+			nextCursor:
+				sessions.length === OPENCODE_SESSION_PAGE_SIZE
+					? String(start + sessions.length)
+					: undefined,
+		};
 	}
 
 	override destroy() {

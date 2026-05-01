@@ -212,20 +212,29 @@ export class ACP {
 		const all: acp.SessionInfo[] = [];
 		let cursor = params.cursor;
 		do {
-			const raw = await this.requireConnection().listSessions({
-				...params,
-				cursor,
-			});
-			const response = this.safeParse(
-				"session/list",
-				zListSessionsResponse,
-				raw,
-			);
+			const response = await this.listSessionPage({ ...params, cursor });
 			all.push(...response.sessions);
 			cursor = response.nextCursor ?? undefined;
 		} while (cursor);
 
-		for (const session of all) {
+		return all;
+	}
+
+	async listSessionPage(
+		params: acp.ListSessionsRequest = {},
+	): Promise<acp.ListSessionsResponse> {
+		await this.ensureReady();
+		if (!this.capabilities?.sessionCapabilities?.list) {
+			throw new UnsupportedCapabilityError(this.id, "session/list");
+		}
+
+		const raw = await this.requireConnection().listSessions(params);
+		const response = this.safeParse(
+			"session/list",
+			zListSessionsResponse,
+			raw,
+		);
+		for (const session of response.sessions) {
 			const normalized = acpSessionToAiSession(session);
 			const existing = this.sessions.get(session.sessionId);
 			this.sessions.set(session.sessionId, {
@@ -234,7 +243,7 @@ export class ACP {
 			});
 		}
 
-		return all;
+		return response;
 	}
 
 	async listAiSessions(cwd?: string) {
@@ -242,6 +251,17 @@ export class ACP {
 			cwd ? { cwd: path.resolve(cwd) } : {},
 		);
 		return sessions.map(acpSessionToAiSession);
+	}
+
+	async listAiSessionsPage(cwd?: string, cursor?: string) {
+		const response = await this.listSessionPage({
+			...(cwd ? { cwd: path.resolve(cwd) } : {}),
+			...(cursor ? { cursor } : {}),
+		});
+		return {
+			sessions: response.sessions.map(acpSessionToAiSession),
+			nextCursor: response.nextCursor ?? undefined,
+		};
 	}
 
 	async createSession(

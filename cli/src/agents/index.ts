@@ -114,9 +114,13 @@ export class AgentsManager {
 		return agent;
 	}
 
-	async listSessions(agentId: AiBackend, cwd?: string): Promise<AiSession[]> {
+	async listSessions(
+		agentId: AiBackend,
+		cwd?: string,
+		cursor?: string,
+	): Promise<{ sessions: AiSession[]; nextCursor?: string }> {
 		const agent = await this.connectAgent(agentId);
-		return agent.listAiSessions(cwd);
+		return agent.listAiSessionsPage(cwd, cursor);
 	}
 
 	async createSession(
@@ -322,14 +326,15 @@ export class AgentsManager {
 				const backend = msg.data?.backend;
 				const workspace = (msg.data as { workspace?: string } | undefined)
 					?.workspace;
-				const sessions = backend
-					? await this.listSessions(backend, workspace)
-					: await this.listAllBuiltinSessions(workspace);
+				const cursor = (msg.data as { cursor?: string } | undefined)?.cursor;
+				const result = backend
+					? await this.listSessions(backend, workspace, cursor)
+					: { sessions: await this.listAllBuiltinSessions(workspace) };
 				conn.send({
 					type: MsgType.AI_SESSION_LIST_RESULT,
 					clientId: msg.clientId,
 					respTo: msg.id,
-					data: { sessions },
+					data: result,
 				});
 			} catch (err) {
 				conn.send({
@@ -789,7 +794,13 @@ export class AgentsManager {
 	): Promise<AiSession[]> {
 		const results = await Promise.allSettled(
 			Object.values(BUILTIN_AGENT_DESCRIPTORS).flatMap((descriptor) =>
-				descriptor.id ? [this.listSessions(descriptor.id, workspace)] : [],
+				descriptor.id
+					? [
+							this.connectAgent(descriptor.id).then((agent) =>
+								agent.listAiSessions(workspace),
+							),
+						]
+					: [],
 			),
 		);
 		return results
