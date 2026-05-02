@@ -78,10 +78,17 @@ export function initPortsHandler(conn: Connection) {
 				}
 			}
 
-			const ignoreSet = new Set([
+			const ignoreProcessSet = new Set([
 				"ControlCe", // macOS internal networking ports
 				"Code\\x20H", // VS Code Helper (truncated on macOS)
 				"rapportd", // macOS Remote Management
+			]);
+
+			const ignorePortsSet = new Set([
+				22, // SSH
+				23, // Telnet
+				3389, // microsoft RDP
+				7265, // raycast
 			]);
 
 			const respMsg: PortsListResultMsg = {
@@ -89,7 +96,10 @@ export function initPortsHandler(conn: Connection) {
 				clientId,
 				respTo: msg.id,
 				data: {
-					ports: ports.filter((p) => !ignoreSet.has(p.process)),
+					ports: ports.filter(
+						(p) =>
+							!ignoreProcessSet.has(p.process) && !ignorePortsSet.has(p.port),
+					),
 				},
 			};
 			conn.send(respMsg);
