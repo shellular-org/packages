@@ -738,7 +738,7 @@ export class Connection extends EventEmitter {
 						return;
 
 					case MsgType.SESSION_ERROR:
-						reject(new Error(msg.error ?? "Machine registration error"));
+						reject(new Error(msg.error ?? "Handshake Error"));
 						return;
 				}
 			});

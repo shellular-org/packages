@@ -31,6 +31,7 @@ import {
 import { config, ensureConfig, getOrRegisterHostId } from "@/config";
 import { connectWithReconnect } from "@/connection";
 import {
+	restartDaemon,
 	showDaemonLogs,
 	showDaemonStatus,
 	startDaemon,
@@ -136,6 +137,13 @@ function createProgram(): Command {
 		.description("Stop the Shellular daemon")
 		.action(async () => {
 			await stopDaemon();
+		});
+
+	program
+		.command("restart")
+		.description("Restart the Shellular daemon")
+		.action(async () => {
+			await restartDaemon();
 		});
 
 	program
@@ -287,7 +295,17 @@ async function runCli({
 		workDir,
 	});
 
-	const hostId = await getOrRegisterHostId(serverUrl);
+	let hostId: string;
+	try {
+		hostId = await getOrRegisterHostId(serverUrl);
+	} catch (err) {
+		logger.error(
+			"Error with host registration:",
+			err instanceof Error ? err.message : String(err),
+		);
+		process.exit(1);
+	}
+
 	await initEncryption();
 
 	const line = chalk.gray("─".repeat(34));
@@ -311,8 +329,8 @@ async function runCli({
 
 	if (config.SHELLULAR_DEV) {
 		logger.log(label("Directory:", workDir));
-		logger.log(label("Platform:", os.platform()));
-		logger.log(label("Host:", os.hostname()));
+		logger.log(label("Platform:", config.PLATFORM));
+		logger.log(label("Host:", config.HOSTNAME));
 	}
 
 	logger.log();
@@ -320,8 +338,8 @@ async function runCli({
 	const hostInfo: HostInfo = {
 		id: hostId,
 		username: config.USERNAME,
-		hostname: os.hostname(),
-		platform: os.platform(),
+		hostname: config.HOSTNAME,
+		platform: config.PLATFORM,
 		dir: workDir,
 		machineId: config.MACHINE_ID,
 	};

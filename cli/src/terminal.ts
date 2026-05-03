@@ -1,11 +1,4 @@
-import os from "node:os";
 import path from "node:path";
-
-import { SerializeAddon } from "@xterm/addon-serialize";
-import XtermHeadless, { type Terminal } from "@xterm/headless";
-
-const { Terminal: HeadlessTerminal } = XtermHeadless;
-
 import {
 	MsgType,
 	type TerminalAttachResultMsg,
@@ -13,11 +6,17 @@ import {
 	type TerminalCreateResultMsg,
 	type TerminalListResultMsg,
 } from "@shellular/protocol";
+import { SerializeAddon } from "@xterm/addon-serialize";
+import XtermHeadless, { type Terminal } from "@xterm/headless";
 import chalk from "chalk";
 import * as nodePty from "node-pty";
+
+import { config } from "./config";
 import type { Connection } from "./connection";
 import { logger } from "./logger";
 import { mapGetOrInsert } from "./utils";
+
+const { Terminal: HeadlessTerminal } = XtermHeadless;
 
 interface TerminalEntry {
 	pty: nodePty.IPty;
@@ -28,7 +27,7 @@ interface TerminalEntry {
 }
 
 const shell =
-	os.platform() === "win32"
+	config.PLATFORM === "win32"
 		? "powershell.exe"
 		: process.env.SHELL || "/bin/bash";
 const shellPath = path.basename(shell);

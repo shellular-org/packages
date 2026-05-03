@@ -431,6 +431,29 @@ export async function startDaemon(options: DaemonOptions): Promise<void> {
 	await streamDaemonLogs(logs, offsets);
 }
 
+export async function restartDaemon(): Promise<void> {
+	const restarted = await withPm2(async () => {
+		const daemon = await describeDaemon();
+		if (!daemon) {
+			return false;
+		}
+		await new Promise<void>((resolve, reject) => {
+			pm2.restart(config.NAME, (err) => {
+				if (err) reject(err);
+				else resolve();
+			});
+		});
+		return true;
+	});
+
+	if (!restarted) {
+		logger.log("Shellular daemon is not running. Use 'start' to launch it.");
+		return;
+	}
+
+	logger.log(chalk.green("Shellular daemon restarted."));
+}
+
 export async function stopDaemon(): Promise<void> {
 	const stopped = await withPm2(async () => {
 		const daemon = await describeDaemon();
