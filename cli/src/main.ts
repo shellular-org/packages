@@ -287,7 +287,17 @@ async function runCli({
 		workDir,
 	});
 
-	const hostId = await getOrRegisterHostId(serverUrl);
+	let hostId: string;
+	try {
+		hostId = await getOrRegisterHostId(serverUrl);
+	} catch (err) {
+		logger.error(
+			"Error with host registration:",
+			err instanceof Error ? err.message : String(err),
+		);
+		process.exit(1);
+	}
+
 	await initEncryption();
 
 	const line = chalk.gray("─".repeat(34));

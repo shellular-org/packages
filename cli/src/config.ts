@@ -7,6 +7,7 @@ import { z } from "zod";
 import packageJson from "../package.json";
 import { logger } from "./logger";
 import type { ServerUrl } from "./server-url";
+import { isErrnoException } from "./utils";
 
 const filename =
 	typeof __filename === "string" ? __filename : fileURLToPath(import.meta.url);
@@ -18,7 +19,6 @@ const CONFIG_FILE = path.resolve(SHELLULAR_DIR, "config.json");
 
 const username = os.userInfo().username.replace(/[^a-zA-Z0-9._-]/g, "_");
 const machineId = nodeMachineId.machineIdSync();
-const platformName = os.platform();
 
 const _config = {
 	NAME: "shellular",
@@ -30,7 +30,7 @@ const _config = {
 	LOGS_DIR: path.join(SHELLULAR_DIR, "logs"),
 	CLIENTS_FILE: path.join(SHELLULAR_DIR, "clients.json"),
 	MACHINE_ID: machineId,
-	PLATFORM: platformName,
+	PLATFORM: process.platform,
 	USERNAME: username,
 	EXT_SRC_DIR: path.join(dirname, "..", "vscode-extension"),
 	EXT_OUT_DIR: path.join(dirname, "..", "dist"),
@@ -43,6 +43,33 @@ export function ensureConfig() {
 
 	if (!fs.existsSync(_config.LOGS_DIR)) {
 		fs.mkdirSync(_config.LOGS_DIR, { recursive: true });
+	}
+}
+
+const configFileSchema = z.object({
+	hostId: z.string().optional(),
+	machineId: z.string().optional(),
+});
+
+type ConfigFileData = z.infer<typeof configFileSchema>;
+
+function readConfigFile(): ConfigFileData | null {
+	try {
+		const raw = fs.readFileSync(_config.CONFIG_FILE, "utf-8");
+		const parsed = configFileSchema.safeParse(JSON.parse(raw));
+		if (!parsed.success) {
+			throw new Error(
+				`Config file is invalid or corrupted: ${parsed.error.message}`,
+			);
+		}
+		return parsed.data;
+	} catch (err) {
+		if (isErrnoException(err) && err.code === "ENOENT") {
+			// config file doesn't exist yet - not an error, just means we need to register and create it
+			return null;
+		}
+
+		throw err;
 	}
 }
 
@@ -63,10 +90,16 @@ const registerRespSchema = z.discriminatedUnion("success", [
 export async function getOrRegisterHostId(
 	serverUrl: ServerUrl,
 ): Promise<string> {
-	if (fs.existsSync(_config.CONFIG_FILE)) {
-		const data = JSON.parse(fs.readFileSync(_config.CONFIG_FILE, "utf-8"));
-		if (data.hostId && data.machineId === _config.MACHINE_ID) {
-			return data.hostId;
+	const existing = readConfigFile();
+	if (existing) {
+		if (existing.machineId && existing.machineId !== machineId) {
+			throw new Error(
+				"Machine ID mismatch — config file belongs to a different machine.",
+			);
+		}
+
+		if (existing.hostId) {
+			return existing.hostId;
 		}
 	}
 
@@ -76,8 +109,8 @@ export async function getOrRegisterHostId(
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({
-			machineId,
-			platform: platformName,
+			machineId: _config.MACHINE_ID,
+			platform: _config.PLATFORM,
 		}),
 	});
 
@@ -87,7 +120,7 @@ export async function getOrRegisterHostId(
 
 	const respJson = registerRespSchema.parse(await resp.json());
 
-	if ("error" in respJson) {
+	if (!respJson.success) {
 		logger.error("Registration error details:", respJson.details);
 		throw new Error(`Registration error: ${respJson.error}`);
 	}
@@ -95,14 +128,11 @@ export async function getOrRegisterHostId(
 	const { hostId } = respJson.data;
 	logger.log(`Registered host with ID: ${hostId}`);
 
-	try {
-		fs.writeFileSync(
-			CONFIG_FILE,
-			JSON.stringify({ hostId, machineId }, null, 2),
-		);
-	} catch {
-		logger.warn("Could not save hostId to file");
-	}
+	fs.writeFileSync(
+		_config.CONFIG_FILE,
+		JSON.stringify({ hostId, machineId: _config.MACHINE_ID }, null, 2),
+		"utf-8",
+	);
 
 	return hostId;
 }
@@ -111,4 +141,4 @@ export const config = {
 	..._config,
 };
 
-export const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
+export const npxCommand = config.PLATFORM === "win32" ? "npx.cmd" : "npx";
