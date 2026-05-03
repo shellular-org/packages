@@ -31,6 +31,7 @@ import {
 import { config, ensureConfig, getOrRegisterHostId } from "@/config";
 import { connectWithReconnect } from "@/connection";
 import {
+	restartDaemon,
 	showDaemonLogs,
 	showDaemonStatus,
 	startDaemon,
@@ -136,6 +137,13 @@ function createProgram(): Command {
 		.description("Stop the Shellular daemon")
 		.action(async () => {
 			await stopDaemon();
+		});
+
+	program
+		.command("restart")
+		.description("Restart the Shellular daemon")
+		.action(async () => {
+			await restartDaemon();
 		});
 
 	program
