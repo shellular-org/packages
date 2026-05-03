@@ -9,13 +9,12 @@ Host agent for [Shellular](https://shellular.dev) — connects your dev machine 
 - **Ports** — list and kill processes by port
 - **Proxy** — HTTP and WebSocket proxying to local services
 - **System monitor** — CPU, memory, and battery streaming
-- **AI** — routes prompts to OpenCode, Claude Code, GitHub Copilot, or Codex depending on what's available
-- **VS Code extension** — install via `--install-vs-plugin` to unlock GitHub Copilot as an AI backend
+- **Agents VIA ACP** — use agents like Codex, Claude Code, OpenCode, Copilot CLI, Pi
 - **End-to-end encryption** — all messages are encrypted with libsodium; the pairing key is exchanged out-of-band via QR code
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 20+
 - macOS / Linux / Windows
 
 ## Quick Start
@@ -62,7 +61,6 @@ npx shellular stop
 | `--server <url>`             | `wss://api.shellular.dev`   | Relay server WebSocket URL                                                               |
 | `--dir <path>`               | OS home directory (`$HOME`) | Root directory exposed to the client                                                     |
 | `--unknown-clients <policy>` | `requires-approval`         | How unknown clients are handled: `always-reject`, `always-allow`, or `requires-approval` |
-| `--install-vs-plugin`        | —                           | Install the VS Code extension and exit                                                   |
 
 `--unknown-clients` only applies to clients that are not already in the local approvals file.
 
@@ -84,7 +82,7 @@ pnpm run dev -- start --dir ~/projects # background host with custom options
 ### Build
 
 ```bash
-pnpm run build   # tsc + tsup + bundles the VS Code extension
+pnpm run build   # tsc + tsup
 ```
 
 Output goes to `dist/`. Entry point: `dist/main.js`.
