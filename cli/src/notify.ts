@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import os from "node:os";
 
+import { config } from "./config";
 import { logger } from "./logger";
 
 type NotifyArgs = {
@@ -31,7 +31,7 @@ function run(cmd: string, args: string[]) {
 
 export function notify({ title, body }: NotifyArgs): boolean {
 	try {
-		switch (os.platform()) {
+		switch (config.PLATFORM) {
 			case "darwin":
 				run("osascript", [
 					"-e",
@@ -73,7 +73,7 @@ $notifier.Show($toast)
 				return true;
 
 			default:
-				logger.debug(`Unsupported platform: ${os.platform()}`);
+				logger.debug(`Unsupported platform: ${config.PLATFORM}`);
 				return false;
 		}
 	} catch (err) {

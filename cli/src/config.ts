@@ -32,9 +32,10 @@ const _config = {
 	MACHINE_ID: machineId,
 	PLATFORM: process.platform,
 	USERNAME: username,
+	HOSTNAME: os.hostname(),
 	EXT_SRC_DIR: path.join(dirname, "..", "vscode-extension"),
 	EXT_OUT_DIR: path.join(dirname, "..", "dist"),
-};
+} as const;
 
 export function ensureConfig() {
 	if (!fs.existsSync(_config.SHELLULAR_DIR)) {

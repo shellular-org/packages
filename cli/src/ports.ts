@@ -1,16 +1,19 @@
 import { execSync, spawnSync } from "node:child_process";
-import os from "node:os";
 import {
 	MsgType,
 	type PortsKillResultMsg,
 	type PortsListResultMsg,
 } from "@shellular/protocol";
+
+import { config } from "./config";
 import type { Connection } from "./connection";
+
+const { PLATFORM: platform } = config;
 
 export function initPortsHandler(conn: Connection) {
 	conn.on(MsgType.PORTS_LIST, (msg) => {
 		const { clientId } = msg;
-		const platform = os.platform();
+
 		const ports: Array<{
 			port: number;
 			pid: number;
@@ -128,7 +131,6 @@ export function initPortsHandler(conn: Connection) {
 			return;
 		}
 
-		const platform = os.platform();
 		let pid: number | null = null;
 
 		try {

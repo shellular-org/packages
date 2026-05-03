@@ -321,8 +321,8 @@ async function runCli({
 
 	if (config.SHELLULAR_DEV) {
 		logger.log(label("Directory:", workDir));
-		logger.log(label("Platform:", os.platform()));
-		logger.log(label("Host:", os.hostname()));
+		logger.log(label("Platform:", config.PLATFORM));
+		logger.log(label("Host:", config.HOSTNAME));
 	}
 
 	logger.log();
@@ -330,8 +330,8 @@ async function runCli({
 	const hostInfo: HostInfo = {
 		id: hostId,
 		username: config.USERNAME,
-		hostname: os.hostname(),
-		platform: os.platform(),
+		hostname: config.HOSTNAME,
+		platform: config.PLATFORM,
 		dir: workDir,
 		machineId: config.MACHINE_ID,
 	};
