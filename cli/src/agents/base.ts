@@ -229,11 +229,7 @@ export class ACP {
 		}
 
 		const raw = await this.requireConnection().listSessions(params);
-		const response = this.safeParse(
-			"session/list",
-			zListSessionsResponse,
-			raw,
-		);
+		const response = this.safeParse("session/list", zListSessionsResponse, raw);
 		for (const session of response.sessions) {
 			const normalized = acpSessionToAiSession(session);
 			const existing = this.sessions.get(session.sessionId);
