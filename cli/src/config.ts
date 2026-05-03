@@ -84,7 +84,6 @@ const registerRespSchema = z.discriminatedUnion("success", [
 	z.object({
 		success: z.literal(false),
 		error: z.string(),
-		details: z.unknown().optional(),
 	}),
 ]);
 
@@ -115,15 +114,18 @@ export async function getOrRegisterHostId(
 		}),
 	});
 
-	if (!resp.ok) {
+	let data: unknown;
+	try {
+		data = await resp.json();
+	} catch (err) {
+		logger.error("Failed to parse registration response as JSON:", err);
 		throw new Error(`Registration failed: ${resp.statusText}`);
 	}
 
-	const respJson = registerRespSchema.parse(await resp.json());
+	const respJson = registerRespSchema.parse(data);
 
 	if (!respJson.success) {
-		logger.error("Registration error details:", respJson.details);
-		throw new Error(`Registration error: ${respJson.error}`);
+		throw new Error(`Registration error: ${resp.status} ${respJson.error}`);
 	}
 
 	const { hostId } = respJson.data;
