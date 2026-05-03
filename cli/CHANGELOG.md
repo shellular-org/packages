@@ -1,5 +1,11 @@
 # shellular
 
+## 0.0.17
+
+### Patch Changes
+
+- b7b52dc: improve host registration, update pm2 to v7, remove unused deps & add daemon restart
+
 ## 0.0.16
 
 ### Patch Changes
