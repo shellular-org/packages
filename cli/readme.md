@@ -50,6 +50,7 @@ npx shellular stop
 | `shellular`         | Run Shellular in the foreground                 |
 | `shellular start`   | Start the background host and print the QR code |
 | `shellular stop`    | Stop the background host                        |
+| `shellular restart` | Restart the background host                     |
 | `shellular status`  | Show host status, PID, restart count, and logs  |
 | `shellular logs`    | Stream background host logs                     |
 | `shellular clients` | Review and approve known client devices         |
