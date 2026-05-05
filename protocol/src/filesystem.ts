@@ -49,6 +49,21 @@ export const FsWriteMsgSchema = z.object({
 });
 export type FsWriteMsg = z.infer<typeof FsWriteMsgSchema>;
 
+export const FsAttachmentWriteMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.FS_ATTACHMENT_WRITE),
+	clientId: z.string(),
+	data: z.object({
+		agentId: z.string(),
+		sessionId: z.string(),
+		name: z.string(),
+		content: z.string(),
+		mimeType: z.string().startsWith("image/"),
+		encoding: z.literal("base64"),
+	}),
+});
+export type FsAttachmentWriteMsg = z.infer<typeof FsAttachmentWriteMsgSchema>;
+
 export const FsMkdirMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.FS_MKDIR),
@@ -181,6 +196,25 @@ export const FsWriteResultMsgSchema = z.object({
 		.optional(),
 });
 export type FsWriteResultMsg = z.infer<typeof FsWriteResultMsgSchema>;
+
+export const FsAttachmentWriteResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.FS_ATTACHMENT_WRITE_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			path: z.string(),
+			name: z.string(),
+			size: z.number(),
+			mimeType: z.string().optional(),
+		})
+		.optional(),
+});
+export type FsAttachmentWriteResultMsg = z.infer<
+	typeof FsAttachmentWriteResultMsgSchema
+>;
 
 export const FsStatResultMsgSchema = z.object({
 	id: z.string().optional(),

@@ -30,6 +30,7 @@ import {
 } from "@/ai-legacy";
 import { PongMsgSchema } from "@/base";
 import {
+	FsAttachmentWriteMsgSchema,
 	FsDeleteMsgSchema,
 	FsListMsgSchema,
 	FsMkdirMsgSchema,
@@ -67,6 +68,7 @@ export const ClientToHostMsgSchema = z.discriminatedUnion("type", [
 	TerminalCloseMsgSchema,
 	FsListMsgSchema,
 	FsReadMsgSchema,
+	FsAttachmentWriteMsgSchema,
 	FsWriteMsgSchema,
 	FsMkdirMsgSchema,
 	FsDeleteMsgSchema,

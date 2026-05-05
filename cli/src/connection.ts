@@ -29,6 +29,7 @@ import {
 	type AiUnrevertMsg,
 	BaseMsgSchema,
 	EncryptedMsgSchema,
+	type FsAttachmentWriteMsg,
 	type FsDeleteMsg,
 	type FsListMsg,
 	type FsMkdirMsg,
@@ -169,6 +170,10 @@ export class Connection extends EventEmitter {
 	on(
 		eventName: typeof MsgType.FS_WRITE,
 		listener: (msg: FsWriteMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.FS_ATTACHMENT_WRITE,
+		listener: (msg: FsAttachmentWriteMsg) => void,
 	): this;
 	on(
 		eventName: typeof MsgType.FS_MKDIR,
@@ -395,6 +400,10 @@ export class Connection extends EventEmitter {
 		listener: (msg: FsWriteMsg) => void,
 	): this;
 	once(
+		eventName: typeof MsgType.FS_ATTACHMENT_WRITE,
+		listener: (msg: FsAttachmentWriteMsg) => void,
+	): this;
+	once(
 		eventName: typeof MsgType.FS_MKDIR,
 		listener: (msg: FsMkdirMsg) => void,
 	): this;
@@ -500,6 +509,10 @@ export class Connection extends EventEmitter {
 	emit(eventName: typeof MsgType.FS_LIST, msg: FsListMsg): boolean;
 	emit(eventName: typeof MsgType.FS_READ, msg: FsReadMsg): boolean;
 	emit(eventName: typeof MsgType.FS_WRITE, msg: FsWriteMsg): boolean;
+	emit(
+		eventName: typeof MsgType.FS_ATTACHMENT_WRITE,
+		msg: FsAttachmentWriteMsg,
+	): boolean;
 	emit(eventName: typeof MsgType.FS_MKDIR, msg: FsMkdirMsg): boolean;
 	emit(eventName: typeof MsgType.FS_DELETE, msg: FsDeleteMsg): boolean;
 	emit(eventName: typeof MsgType.FS_RENAME, msg: FsRenameMsg): boolean;
