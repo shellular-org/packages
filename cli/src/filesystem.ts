@@ -2,6 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import {
+	type FsAttachmentWriteMsg,
+	type FsAttachmentWriteResultMsg,
 	type FsListMsg,
 	type FsListResultMsg,
 	type FsMkdirMsg,
@@ -22,6 +24,7 @@ import {
 	type ProjectInfoResultMsg,
 } from "@shellular/protocol";
 
+import { config } from "./config";
 import type { Connection } from "./connection";
 import {
 	computeEntryGitStatus,
@@ -30,6 +33,8 @@ import {
 	getProjectGitInfo,
 } from "./git";
 import { searchProjectFiles } from "./project-search";
+
+const MAX_CHAT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 /**
  * Resolve a path relative to rootDir and verify it doesn't escape.
@@ -41,6 +46,41 @@ function safePath(rootDir: string, requestedPath: string): string | null {
 		return null;
 	}
 	return resolved;
+}
+
+function safeSegment(value: string): string {
+	return (
+		value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "unknown"
+	);
+}
+
+function decodeBase64Attachment(content: string): Buffer {
+	if (
+		content.length % 4 === 1 ||
+		!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+			content,
+		)
+	) {
+		throw new Error("Invalid attachment encoding");
+	}
+	const bytes = Buffer.from(content, "base64");
+	if (bytes.length > MAX_CHAT_ATTACHMENT_BYTES) {
+		throw new Error("Attachment is too large");
+	}
+	return bytes;
+}
+
+function nextAvailablePath(dirPath: string, fileName: string): string {
+	const parsed = path.parse(fileName);
+	for (let index = 0; index < 1000; index += 1) {
+		const suffix = index === 0 ? "" : `-${index}`;
+		const candidate = path.join(
+			dirPath,
+			`${parsed.name}${suffix}${parsed.ext}`,
+		);
+		if (!fs.existsSync(candidate)) return candidate;
+	}
+	throw new Error("Unable to allocate attachment path");
 }
 
 function findNearestExistingDir(targetPath: string): string | null {
@@ -219,6 +259,56 @@ export function initFilesystemHandler(conn: Connection, rootDir: string) {
 		} catch (err) {
 			const respMsg: FsWriteResultMsg = {
 				type: MsgType.FS_WRITE_RESULT,
+				clientId,
+				respTo: msg.id,
+				error: (err as Error).message,
+			};
+			conn.send(respMsg);
+		}
+	});
+
+	conn.on(MsgType.FS_ATTACHMENT_WRITE, (msg: FsAttachmentWriteMsg) => {
+		const { clientId } = msg;
+		if (!msg.data.mimeType?.startsWith("image/")) {
+			const respMsg: FsAttachmentWriteResultMsg = {
+				type: MsgType.FS_ATTACHMENT_WRITE_RESULT,
+				clientId,
+				respTo: msg.id,
+				error: "Only image attachments are supported",
+			};
+			conn.send(respMsg);
+			return;
+		}
+		const agent = safeSegment(msg.data.agentId);
+		const session = safeSegment(msg.data.sessionId);
+		const fileName = safeSegment(path.basename(msg.data.name));
+		const dirPath = path.join(
+			config.SHELLULAR_DIR,
+			agent,
+			session,
+			"chat-attachments",
+		);
+
+		try {
+			const bytes = decodeBase64Attachment(msg.data.content);
+			fs.mkdirSync(dirPath, { recursive: true });
+			const filePath = nextAvailablePath(dirPath, fileName);
+			fs.writeFileSync(filePath, bytes, { flag: "wx" });
+			const respMsg: FsAttachmentWriteResultMsg = {
+				type: MsgType.FS_ATTACHMENT_WRITE_RESULT,
+				clientId,
+				respTo: msg.id,
+				data: {
+					path: filePath,
+					name: path.basename(filePath),
+					size: bytes.length,
+					mimeType: msg.data.mimeType,
+				},
+			};
+			conn.send(respMsg);
+		} catch (err) {
+			const respMsg: FsAttachmentWriteResultMsg = {
+				type: MsgType.FS_ATTACHMENT_WRITE_RESULT,
 				clientId,
 				respTo: msg.id,
 				error: (err as Error).message,
