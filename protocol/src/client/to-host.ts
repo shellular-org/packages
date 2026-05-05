@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+	AiAttachmentWriteMsgSchema,
 	AiSessionCloseMsgSchema,
 	AiSessionConfigSetMsgSchema,
 	AiSessionForkMsgSchema,
@@ -30,7 +31,6 @@ import {
 } from "@/ai-legacy";
 import { PongMsgSchema } from "@/base";
 import {
-	FsAttachmentWriteMsgSchema,
 	FsDeleteMsgSchema,
 	FsListMsgSchema,
 	FsMkdirMsgSchema,
@@ -68,7 +68,6 @@ export const ClientToHostMsgSchema = z.discriminatedUnion("type", [
 	TerminalCloseMsgSchema,
 	FsListMsgSchema,
 	FsReadMsgSchema,
-	FsAttachmentWriteMsgSchema,
 	FsWriteMsgSchema,
 	FsMkdirMsgSchema,
 	FsDeleteMsgSchema,
@@ -96,6 +95,7 @@ export const ClientToHostMsgSchema = z.discriminatedUnion("type", [
 	AiSessionDeleteMsgSchema,
 	AiMessagesListMsgSchema,
 	AiPromptMsgSchema,
+	AiAttachmentWriteMsgSchema,
 	AiSessionConfigSetMsgSchema,
 	AiSessionModeSetMsgSchema,
 	AiSessionModelSetMsgSchema,

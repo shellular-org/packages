@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+	AiAttachmentWriteResultMsgSchema,
 	AiSessionCloseResultMsgSchema,
 	AiSessionConfigSetResultMsgSchema,
 	AiSessionForkResultMsgSchema,
@@ -30,7 +31,6 @@ import {
 	AiUnrevertAckMsgSchema,
 } from "@/ai-legacy";
 import {
-	FsAttachmentWriteResultMsgSchema,
 	FsListResultMsgSchema,
 	FsReadResultMsgSchema,
 	FsResultMsgSchema,
@@ -70,7 +70,6 @@ export const HostToClientSchema = z.discriminatedUnion("type", [
 	FsListResultMsgSchema,
 	FsReadResultMsgSchema,
 	FsWriteResultMsgSchema,
-	FsAttachmentWriteResultMsgSchema,
 	FsStatResultMsgSchema,
 	SysmonResultMsgSchema,
 	BatteryUpdateMsgSchema,
@@ -96,6 +95,7 @@ export const HostToClientSchema = z.discriminatedUnion("type", [
 	AiSessionDeletedMsgSchema,
 	AiMessagesListResultMsgSchema,
 	AiPromptAckMsgSchema,
+	AiAttachmentWriteResultMsgSchema,
 	AiSessionConfigSetResultMsgSchema,
 	AiSessionModeSetResultMsgSchema,
 	AiSessionModelSetResultMsgSchema,

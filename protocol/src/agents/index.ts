@@ -237,6 +237,21 @@ export const AiSessionModelSetMsgSchema = z.object({
 });
 export type AiSessionModelSetMsg = z.infer<typeof AiSessionModelSetMsgSchema>;
 
+export const AiAttachmentWriteMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_ATTACHMENT_WRITE),
+	clientId: z.string(),
+	data: z.object({
+		backend: AiBackendSchema,
+		sessionId: z.string(),
+		name: z.string(),
+		content: z.string(),
+		mimeType: z.string().startsWith("image/"),
+		encoding: z.literal("base64"),
+	}),
+});
+export type AiAttachmentWriteMsg = z.infer<typeof AiAttachmentWriteMsgSchema>;
+
 // ── Result messages (CLI → app) ──────────────────────────────────────────────
 
 export const AiSessionLoadResultMsgSchema = z.object({
@@ -367,4 +382,25 @@ export const AiSessionModelSetResultMsgSchema = z.object({
 });
 export type AiSessionModelSetResultMsg = z.infer<
 	typeof AiSessionModelSetResultMsgSchema
+>;
+
+export const AiAttachmentWriteResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_ATTACHMENT_WRITE_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			backend: AiBackendSchema,
+			sessionId: z.string(),
+			path: z.string(),
+			name: z.string(),
+			size: z.number(),
+			mimeType: z.string().optional(),
+		})
+		.optional(),
+});
+export type AiAttachmentWriteResultMsg = z.infer<
+	typeof AiAttachmentWriteResultMsgSchema
 >;
