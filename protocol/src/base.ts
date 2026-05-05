@@ -29,6 +29,10 @@ export const MsgType = {
 	FS_WRITE: "fs:write",
 	/** Response after file write completes */
 	FS_WRITE_RESULT: "fs:write:result",
+	/** Request to write a chat attachment into CLI-owned storage */
+	FS_ATTACHMENT_WRITE: "fs:attachment:write",
+	/** Response after chat attachment write completes */
+	FS_ATTACHMENT_WRITE_RESULT: "fs:attachment:write:result",
 	/** Request to create a directory */
 	FS_MKDIR: "fs:mkdir",
 	/** Request to delete a file or directory */

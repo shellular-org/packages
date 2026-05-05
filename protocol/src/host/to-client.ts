@@ -30,6 +30,7 @@ import {
 	AiUnrevertAckMsgSchema,
 } from "@/ai-legacy";
 import {
+	FsAttachmentWriteResultMsgSchema,
 	FsListResultMsgSchema,
 	FsReadResultMsgSchema,
 	FsResultMsgSchema,
@@ -69,6 +70,7 @@ export const HostToClientSchema = z.discriminatedUnion("type", [
 	FsListResultMsgSchema,
 	FsReadResultMsgSchema,
 	FsWriteResultMsgSchema,
+	FsAttachmentWriteResultMsgSchema,
 	FsStatResultMsgSchema,
 	SysmonResultMsgSchema,
 	BatteryUpdateMsgSchema,
