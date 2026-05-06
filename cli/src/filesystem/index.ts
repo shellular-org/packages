@@ -1,5 +1,5 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
+import fs from "node:fs";
+import path from "node:path";
 
 import {
 	type FsListMsg,
@@ -22,7 +22,7 @@ import {
 	type ProjectInfoResultMsg,
 } from "@shellular/protocol";
 
-import type { Connection } from "./connection";
+import type { Connection } from "@/connection";
 import {
 	computeEntryGitStatus,
 	findGitRoot,

@@ -103,11 +103,14 @@ export async function getOrRegisterHostId(
 		}
 	}
 
-	const url = serverUrl.toApiUrl({ path: "register" });
+	const url = serverUrl.toApiUrl({ path: "/host/register" });
 	logger.debug(`Registering host with server at ${url}`);
 	const resp = await fetch(url, {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
+		headers: {
+			"Content-Type": "application/json",
+			"User-Agent": `shellular/${_config.VERSION}`,
+		},
 		body: JSON.stringify({
 			machineId: _config.MACHINE_ID,
 			platform: _config.PLATFORM,

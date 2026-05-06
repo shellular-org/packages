@@ -122,6 +122,10 @@ export const MsgType = {
 	AI_MESSAGES_LIST_RESULT: "ai:messages:list:result",
 	AI_PROMPT: "ai:prompt",
 	AI_PROMPT_ACK: "ai:prompt:ack",
+	/** Request to write an agent chat attachment into CLI-owned storage */
+	AI_ATTACHMENT_WRITE: "ai:attachment:write",
+	/** Response after agent chat attachment write completes */
+	AI_ATTACHMENT_WRITE_RESULT: "ai:attachment:write:result",
 	AI_SESSION_CONFIG_SET: "ai:session:config:set",
 	AI_SESSION_CONFIG_SET_RESULT: "ai:session:config:set:result",
 	AI_ABORT: "ai:abort",

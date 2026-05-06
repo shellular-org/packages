@@ -1,6 +1,10 @@
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
 import type {
 	AcpPromptRequest,
+	AiAttachmentWriteMsg,
+	AiAttachmentWriteResultMsg,
 	AiBackend,
 	AiEvent,
 	AiSession,
@@ -8,6 +12,7 @@ import type {
 } from "@shellular/protocol";
 import { AcpContentBlockSchema, MsgType } from "@shellular/protocol";
 
+import { config } from "@/config";
 import type { Connection } from "@/connection";
 import { BUILTIN_AGENT_DESCRIPTORS, isAgentAvailable } from "./agents";
 import type { ACP } from "./base";
@@ -20,10 +25,72 @@ import { OpenCode } from "./opencode";
 import { Pi } from "./pi";
 import type { AgentDescriptor, AgentInfo } from "./types";
 
+const MAX_AGENT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
 function getErrorMessage(err: unknown): string {
 	if (err instanceof Error) return err.message;
 	if (typeof err === "string") return err;
 	return String(err);
+}
+
+function safeAttachmentSegment(value: string) {
+	return (
+		value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "unknown"
+	);
+}
+
+function decodeBase64Attachment(content: string): Buffer {
+	if (
+		content.length % 4 === 1 ||
+		!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+			content,
+		)
+	) {
+		throw new Error("Invalid attachment encoding");
+	}
+	const bytes = Buffer.from(content, "base64");
+	if (bytes.length > MAX_AGENT_ATTACHMENT_BYTES) {
+		throw new Error("Attachment is too large");
+	}
+	return bytes;
+}
+
+function nextAvailableAttachmentPath(dirPath: string, fileName: string) {
+	const parsed = path.parse(fileName);
+	for (let index = 0; index < 1000; index += 1) {
+		const suffix = index === 0 ? "" : `-${index}`;
+		const candidate = path.join(
+			dirPath,
+			`${parsed.name}${suffix}${parsed.ext}`,
+		);
+		if (!existsSync(candidate)) return candidate;
+	}
+	throw new Error("Unable to allocate attachment path");
+}
+
+function writeAgentAttachment(msg: AiAttachmentWriteMsg) {
+	if (!msg.data.mimeType?.startsWith("image/")) {
+		throw new Error("Only image attachments are supported");
+	}
+	const agent = safeAttachmentSegment(msg.data.backend);
+	const session = safeAttachmentSegment(msg.data.sessionId);
+	const fileName = safeAttachmentSegment(path.basename(msg.data.name));
+	const dirPath = path.join(
+		config.SHELLULAR_DIR,
+		agent,
+		session,
+		"chat-attachments",
+	);
+	const bytes = decodeBase64Attachment(msg.data.content);
+	mkdirSync(dirPath, { recursive: true });
+	const filePath = nextAvailableAttachmentPath(dirPath, fileName);
+	writeFileSync(filePath, bytes, { flag: "wx" });
+	return {
+		path: filePath,
+		name: path.basename(filePath),
+		size: bytes.length,
+		mimeType: msg.data.mimeType,
+	};
 }
 
 function eventClientId(event: AiEvent, fallbackClientId: string): string {
@@ -645,6 +712,31 @@ export class AgentsManager {
 					respTo: msg.id,
 					error: getErrorMessage(err),
 				});
+			}
+		});
+
+		conn.on(MsgType.AI_ATTACHMENT_WRITE, async (msg: AiAttachmentWriteMsg) => {
+			try {
+				const attachment = writeAgentAttachment(msg);
+				const respMsg: AiAttachmentWriteResultMsg = {
+					type: MsgType.AI_ATTACHMENT_WRITE_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: {
+						backend: msg.data.backend,
+						sessionId: msg.data.sessionId,
+						...attachment,
+					},
+				};
+				conn.send(respMsg);
+			} catch (err) {
+				const respMsg: AiAttachmentWriteResultMsg = {
+					type: MsgType.AI_ATTACHMENT_WRITE_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(err),
+				};
+				conn.send(respMsg);
 			}
 		});
 

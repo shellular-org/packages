@@ -4,6 +4,7 @@ import type { HostInfo } from "@shellular/protocol";
 import {
 	type AiAbortMsg,
 	type AiAgentsListMsg,
+	type AiAttachmentWriteMsg,
 	type AiAuthSetMsg,
 	type AiAvailabilityMsg,
 	type AiCommandMsg,
@@ -265,6 +266,10 @@ export class Connection extends EventEmitter {
 	on(
 		eventName: typeof MsgType.AI_PROMPT,
 		listener: (msg: AiPromptMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_ATTACHMENT_WRITE,
+		listener: (msg: AiAttachmentWriteMsg) => void,
 	): this;
 	on(
 		eventName: typeof MsgType.AI_SESSION_CONFIG_SET,
@@ -538,6 +543,10 @@ export class Connection extends EventEmitter {
 		msg: AiMessagesListMsg,
 	): boolean;
 	emit(eventName: typeof MsgType.AI_PROMPT, msg: AiPromptMsg): boolean;
+	emit(
+		eventName: typeof MsgType.AI_ATTACHMENT_WRITE,
+		msg: AiAttachmentWriteMsg,
+	): boolean;
 	emit(eventName: typeof MsgType.AI_ABORT, msg: AiAbortMsg): boolean;
 	emit(eventName: typeof MsgType.AI_AGENTS_LIST, msg: AiAgentsListMsg): boolean;
 	emit(

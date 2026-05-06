@@ -9,7 +9,7 @@ import {
 import { SerializeAddon } from "@xterm/addon-serialize";
 import XtermHeadless, { type Terminal } from "@xterm/headless";
 import chalk from "chalk";
-import * as nodePty from "node-pty";
+import nodePty from "node-pty";
 
 import { config } from "./config";
 import type { Connection } from "./connection";

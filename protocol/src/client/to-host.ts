@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+	AiAttachmentWriteMsgSchema,
 	AiSessionCloseMsgSchema,
 	AiSessionConfigSetMsgSchema,
 	AiSessionForkMsgSchema,
@@ -94,6 +95,7 @@ export const ClientToHostMsgSchema = z.discriminatedUnion("type", [
 	AiSessionDeleteMsgSchema,
 	AiMessagesListMsgSchema,
 	AiPromptMsgSchema,
+	AiAttachmentWriteMsgSchema,
 	AiSessionConfigSetMsgSchema,
 	AiSessionModeSetMsgSchema,
 	AiSessionModelSetMsgSchema,
