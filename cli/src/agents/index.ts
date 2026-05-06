@@ -1,10 +1,10 @@
-import type * as acp from "@agentclientprotocol/sdk";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
+import type * as acp from "@agentclientprotocol/sdk";
 import type {
+	AcpPromptRequest,
 	AiAttachmentWriteMsg,
 	AiAttachmentWriteResultMsg,
-	AcpPromptRequest,
 	AiBackend,
 	AiEvent,
 	AiSession,
