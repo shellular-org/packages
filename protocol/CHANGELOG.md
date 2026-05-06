@@ -1,5 +1,11 @@
 # @shellular/protocol
 
+## 0.0.9
+
+### Patch Changes
+
+- 23cc546: feat: add msgs for agent chat attachment, and call /host/register endpoint now
+
 ## 0.0.8
 
 ### Patch Changes
