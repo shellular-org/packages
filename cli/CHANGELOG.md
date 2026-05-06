@@ -1,5 +1,12 @@
 # shellular
 
+## 0.0.19
+
+### Patch Changes
+
+- Updated dependencies [5fc49c9]
+  - @shellular/protocol@0.0.10
+
 ## 0.0.18
 
 ### Patch Changes
