@@ -1,5 +1,11 @@
 # @shellular/protocol
 
+## 0.0.10
+
+### Patch Changes
+
+- 5fc49c9: fix: add some constraints to ClientInfoSchema
+
 ## 0.0.9
 
 ### Patch Changes
