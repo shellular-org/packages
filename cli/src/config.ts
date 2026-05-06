@@ -103,7 +103,7 @@ export async function getOrRegisterHostId(
 		}
 	}
 
-	const url = serverUrl.toApiUrl({ path: "register" });
+	const url = serverUrl.toApiUrl({ path: "/host/register" });
 	logger.debug(`Registering host with server at ${url}`);
 	const resp = await fetch(url, {
 		method: "POST",
