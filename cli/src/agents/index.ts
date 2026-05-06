@@ -1,5 +1,5 @@
 import type * as acp from "@agentclientprotocol/sdk";
-import * as fs from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import type {
 	AiAttachmentWriteMsg,
@@ -63,7 +63,7 @@ function nextAvailableAttachmentPath(dirPath: string, fileName: string) {
 			dirPath,
 			`${parsed.name}${suffix}${parsed.ext}`,
 		);
-		if (!fs.existsSync(candidate)) return candidate;
+		if (!existsSync(candidate)) return candidate;
 	}
 	throw new Error("Unable to allocate attachment path");
 }
@@ -82,9 +82,9 @@ function writeAgentAttachment(msg: AiAttachmentWriteMsg) {
 		"chat-attachments",
 	);
 	const bytes = decodeBase64Attachment(msg.data.content);
-	fs.mkdirSync(dirPath, { recursive: true });
+	mkdirSync(dirPath, { recursive: true });
 	const filePath = nextAvailableAttachmentPath(dirPath, fileName);
-	fs.writeFileSync(filePath, bytes, { flag: "wx" });
+	writeFileSync(filePath, bytes, { flag: "wx" });
 	return {
 		path: filePath,
 		name: path.basename(filePath),
