@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import * as path from "node:path";
+import path from "node:path";
 import { promisify } from "node:util";
 
 import type { GitStatus } from "@shellular/protocol";
