@@ -52,6 +52,16 @@ export function encrypt(plaintext: string): {
 	};
 }
 
+export function encryptBytes(plaintext: Uint8Array): {
+	nonce: Uint8Array;
+	ciphertext: Uint8Array;
+} {
+	const nonce = sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES);
+	const ciphertext = sodium.crypto_secretbox_easy(plaintext, nonce, key);
+
+	return { nonce, ciphertext };
+}
+
 export function decrypt(
 	nonceB64: string,
 	ciphertextB64: string,

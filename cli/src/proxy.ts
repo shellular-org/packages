@@ -4,10 +4,15 @@ import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 import { MsgType } from "@shellular/protocol";
 import WebSocket from "ws";
 import type { Connection } from "./connection";
+import { encryptBytes } from "./encryption";
 
 const ALLOWED_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
-const INITIAL_BASE64_CHUNK_SIZE = 64 * 1024;
-const STEADY_STATE_BASE64_CHUNK_SIZE = 1024 * 1024;
+const PROXY_BINARY_MAGIC = Buffer.from("SHPB");
+const PROXY_BINARY_VERSION = 1;
+const PROXY_BINARY_KIND_HTTP_RESPONSE_DATA = 1;
+const PROXY_BINARY_HEADER_BYTES = 4 + 1 + 1 + 1 + 24;
+const INITIAL_HTTP_RESPONSE_CHUNK_BYTES = 64 * 1024;
+const STEADY_STATE_HTTP_RESPONSE_CHUNK_BYTES = 256 * 1024;
 const INITIAL_RESPONSE_WINDOW_BYTES = 192 * 1024;
 const MAX_REDIRECTS = 20;
 const REDIRECT_STATUS_CODES = new Set([301, 302, 303, 307, 308]);
@@ -40,17 +45,6 @@ const httpsAgent = new HttpsAgent({
 	maxSockets: 128,
 	timeout: 30_000,
 });
-
-function base64ChunkBytes(base64Length: number) {
-	return Math.floor(base64Length / 4) * 3;
-}
-
-const INITIAL_HTTP_RESPONSE_CHUNK_BYTES = base64ChunkBytes(
-	INITIAL_BASE64_CHUNK_SIZE,
-);
-const STEADY_STATE_HTTP_RESPONSE_CHUNK_BYTES = base64ChunkBytes(
-	STEADY_STATE_BASE64_CHUNK_SIZE,
-);
 
 // Active HTTP requests (requestId → ClientRequest) for abort-on-disconnect
 const activeRequests = new Map<string, http.ClientRequest>();
@@ -250,38 +244,91 @@ function maybePauseForBackpressure(
 	setTimeout(resumeWhenReady, WS_BACKPRESSURE_POLL_MS);
 }
 
-function splitBase64AlignedChunk(
+function buildHttpResponseDataPlaintext(
+	clientId: string,
+	requestId: string,
+	chunkIndex: number,
 	chunk: Buffer,
-	carryover: Buffer | undefined,
-	sendData: (data: Buffer) => void,
-): Buffer | undefined {
-	let data = chunk;
-
-	if (carryover) {
-		const bytesNeeded = 3 - carryover.length;
-		if (data.length < bytesNeeded) {
-			return Buffer.concat([carryover, data], carryover.length + data.length);
-		}
-
-		const prefix = Buffer.allocUnsafe(3);
-		carryover.copy(prefix, 0);
-		data.copy(prefix, carryover.length, 0, bytesNeeded);
-		sendData(prefix);
-		data = data.subarray(bytesNeeded);
+): Buffer {
+	const clientIdBytes = Buffer.from(clientId);
+	const requestIdBytes = Buffer.from(requestId);
+	if (clientIdBytes.length > 255) {
+		throw new Error("Client id is too large for proxy binary frame");
+	}
+	if (requestIdBytes.length > 65_535) {
+		throw new Error("Request id is too large for proxy binary frame");
 	}
 
-	const completeLength = data.length - (data.length % 3);
-	if (completeLength > 0) {
-		sendData(data.subarray(0, completeLength));
+	const headerLength = 1 + 1 + 2 + 4;
+	const plaintext = Buffer.allocUnsafe(
+		headerLength + clientIdBytes.length + requestIdBytes.length + chunk.length,
+	);
+	plaintext.writeUInt8(PROXY_BINARY_KIND_HTTP_RESPONSE_DATA, 0);
+	plaintext.writeUInt8(clientIdBytes.length, 1);
+	plaintext.writeUInt16BE(requestIdBytes.length, 2);
+	plaintext.writeUInt32BE(chunkIndex, 4);
+	clientIdBytes.copy(plaintext, headerLength);
+	requestIdBytes.copy(plaintext, headerLength + clientIdBytes.length);
+	chunk.copy(
+		plaintext,
+		headerLength + clientIdBytes.length + requestIdBytes.length,
+	);
+
+	return plaintext;
+}
+
+function buildProxyBinaryFrame(
+	kind: number,
+	clientId: string,
+	plaintext: Buffer,
+) {
+	const clientIdBytes = Buffer.from(clientId);
+	if (clientIdBytes.length > 255) {
+		throw new Error("Client id is too large for proxy binary frame");
 	}
 
-	if (completeLength === data.length) {
-		return undefined;
+	const { nonce, ciphertext } = encryptBytes(plaintext);
+	const frame = Buffer.allocUnsafe(
+		PROXY_BINARY_HEADER_BYTES + clientIdBytes.length + ciphertext.length,
+	);
+	PROXY_BINARY_MAGIC.copy(frame, 0);
+	frame.writeUInt8(PROXY_BINARY_VERSION, 4);
+	frame.writeUInt8(kind, 5);
+	frame.writeUInt8(clientIdBytes.length, 6);
+	Buffer.from(nonce).copy(frame, 7);
+	clientIdBytes.copy(frame, PROXY_BINARY_HEADER_BYTES);
+	Buffer.from(ciphertext).copy(
+		frame,
+		PROXY_BINARY_HEADER_BYTES + clientIdBytes.length,
+	);
+
+	return frame;
+}
+
+function sendHttpResponseData(
+	conn: Connection,
+	clientId: string,
+	requestId: string,
+	chunkIndex: number,
+	chunk: Buffer,
+): boolean {
+	if (!conn.clients.isConnected(clientId)) {
+		return false;
 	}
 
-	const nextCarryover = Buffer.allocUnsafe(data.length - completeLength);
-	data.copy(nextCarryover, 0, completeLength);
-	return nextCarryover;
+	const plaintext = buildHttpResponseDataPlaintext(
+		clientId,
+		requestId,
+		chunkIndex,
+		chunk,
+	);
+	return conn.sendBinary(
+		buildProxyBinaryFrame(
+			PROXY_BINARY_KIND_HTTP_RESPONSE_DATA,
+			clientId,
+			plaintext,
+		),
+	);
 }
 
 export function initProxyHandler(conn: Connection) {
@@ -400,9 +447,6 @@ export function initProxyHandler(conn: Connection) {
 
 				// Stream response body in chunks
 				let chunkIndex = 0;
-				// Keep base64 padding out of intermediate chunks so receivers can
-				// either decode each chunk or concatenate chunks before decoding.
-				let carryover: Buffer | undefined;
 				let responseBytesSent = 0;
 
 				const sendData = (data: Buffer) => {
@@ -416,28 +460,30 @@ export function initProxyHandler(conn: Connection) {
 						responseBytesSent += chunk.length;
 						offset += chunk.length;
 
-						conn.send({
-							type: MsgType.HTTP_RESPONSE_DATA,
+						const sent = sendHttpResponseData(
+							conn,
 							clientId,
-							data: {
-								requestId,
-								chunk: chunk.toString("base64"),
-								index: chunkIndex++,
-							},
-						});
+							requestId,
+							chunkIndex++,
+							chunk,
+						);
+						if (!sent) {
+							return false;
+						}
 					}
+
+					return true;
 				};
 
 				res.on("data", (chunk: Buffer) => {
-					carryover = splitBase64AlignedChunk(chunk, carryover, sendData);
+					if (!sendData(chunk)) {
+						res.destroy(new Error("Failed to send proxy response data"));
+						return;
+					}
 					maybePauseForBackpressure(conn, res);
 				});
 
 				res.on("end", () => {
-					if (carryover) {
-						sendData(carryover);
-					}
-
 					sendEnd();
 				});
 

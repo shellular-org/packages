@@ -792,6 +792,20 @@ export class Connection extends EventEmitter {
 		}
 	}
 
+	sendBinary(data: Uint8Array | Buffer): boolean {
+		if (this.ws.readyState !== WebSocket.OPEN) {
+			return false;
+		}
+
+		try {
+			this.ws.send(data, { binary: true });
+			return true;
+		} catch (err) {
+			logger.error("Failed to send binary WebSocket frame:", err);
+			return false;
+		}
+	}
+
 	private startHeartbeat() {
 		this.heartbeatTimer = setInterval(() => {
 			if (this.ws.readyState === WebSocket.CONNECTING) {
