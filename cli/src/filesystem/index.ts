@@ -22,7 +22,7 @@ import {
 	type ProjectInfoResultMsg,
 } from "@shellular/protocol";
 
-import type { Connection } from "./connection";
+import type { Connection } from "@/connection";
 import {
 	computeEntryGitStatus,
 	findGitRoot,
