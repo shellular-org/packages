@@ -56,16 +56,16 @@ export const SessionErrorMsgSchema = z.object({
 export type SessionErrorMsg = z.infer<typeof SessionErrorMsgSchema>;
 
 export const ClientInfoSchema = z.object({
-	hostId: z.string(),
-	clientId: z.string(),
-	appVersion: z.string(),
-	platform: z.string(),
-	deviceModel: z.string(),
+	hostId: z.string().min(7).max(32),
+	clientId: z.string().min(7).max(32),
+	appVersion: z.string().min(1).max(32),
+	platform: z.enum(["android", "browser", "ios"]),
+	deviceModel: z.string().min(1).max(64),
 	deviceIsEmulator: z.union([
 		z.boolean(),
 		z.enum(["true", "false"]).transform((val) => val === "true"),
 	]),
-	deviceManufacturer: z.string(),
+	deviceManufacturer: z.string().min(1).max(128),
 });
 export type ClientInfo = z.infer<typeof ClientInfoSchema>;
 
