@@ -120,7 +120,10 @@ export class ACP {
 	}
 
 	async init(): Promise<acp.InitializeResponse> {
-		if (this.state === "ready" && this.initResult) return this.initResult;
+		if (this.state === "ready" && this.initResult) {
+			return this.initResult;
+		}
+
 		if (!this.isCommandAvailable()) {
 			this.state = "unavailable";
 			throw new AgentUnavailableError(this.id, "spawn command was not found");

@@ -87,26 +87,23 @@ export class OpenCode extends ACP {
 	}
 
 	override async init(): Promise<acp.InitializeResponse> {
-		if (this.ocServer) {
-			throw new Error("OpenCode server already initialized");
-		}
-
 		const result = await super.init();
 
-		this.ocServer = await createOpencodeServer({
-			hostname: "127.0.0.1",
-			port: 0,
-			timeout: 15000,
-		});
-		this.#ocClient = createOpencodeClient({
-			baseUrl: this.ocServer.url,
-			headers: { Authorization: this.ocAuthHeader },
-			directory: undefined,
-		});
+		if (!this.ocServer) {
+			this.ocServer = await createOpencodeServer({
+				hostname: "127.0.0.1",
+				port: 0,
+				timeout: 15000,
+			});
+			this.#ocClient = createOpencodeClient({
+				baseUrl: this.ocServer.url,
+				headers: { Authorization: this.ocAuthHeader },
+				directory: undefined,
+			});
+		}
 
 		return result;
 	}
-
 
 	get ocClient() {
 		if (!this.#ocClient) {

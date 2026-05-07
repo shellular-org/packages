@@ -49,7 +49,6 @@ import { initTerminalHandler } from "@/terminal";
 import { checkForUpdate } from "@/update-check";
 
 const DEFAULT_SERVER_URL = "wss://api.shellular.dev";
-const APP_URL = "https://shellular.dev";
 
 ensureConfig();
 
