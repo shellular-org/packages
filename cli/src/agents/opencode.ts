@@ -46,8 +46,6 @@ const OpenCodeSessionListSchema = z.object({
 	data: z.array(OpenCodeSessionSchema),
 });
 
-const OPENCODE_SESSION_PAGE_SIZE = 40;
-
 /**
  * OpenCode ACP client with custom session listing using opencode sdk.
  *
@@ -65,7 +63,7 @@ const OPENCODE_SESSION_PAGE_SIZE = 40;
  * project metadata and timestamps.
  */
 export class OpenCode extends ACP {
-	private ocClient: ReturnType<typeof createOpencodeClient> | null = null;
+	#ocClient: ReturnType<typeof createOpencodeClient> | null = null;
 	private ocServer: Awaited<ReturnType<typeof createOpencodeServer>> | null =
 		null;
 	private ocAuthHeader: string | null = null;
@@ -90,34 +88,38 @@ export class OpenCode extends ACP {
 
 	override async init(): Promise<acp.InitializeResponse> {
 		const result = await super.init();
+
 		if (!this.ocServer) {
 			this.ocServer = await createOpencodeServer({
 				hostname: "127.0.0.1",
 				port: 0,
 				timeout: 15000,
 			});
-			this.ocClient = createOpencodeClient({
+			this.#ocClient = createOpencodeClient({
 				baseUrl: this.ocServer.url,
 				headers: { Authorization: this.ocAuthHeader },
 				directory: undefined,
 			});
 		}
+
 		return result;
+	}
+
+	get ocClient() {
+		if (!this.#ocClient) {
+			throw new Error("OpenCode client not initialized");
+		}
+
+		return this.#ocClient;
 	}
 
 	override async listSessionPage(
 		params: acp.ListSessionsRequest = {},
 	): Promise<acp.ListSessionsResponse> {
 		await this.init();
-		if (!this.ocClient) return super.listSessionPage(params);
-
-		const cursor = Number.parseInt(params.cursor ?? "0", 10);
-		const start = Number.isFinite(cursor) && cursor > 0 ? cursor : 0;
 
 		const response = await this.ocClient.experimental.session.list({
 			...(params.cwd ? { directory: params.cwd } : { roots: true }),
-			start,
-			limit: OPENCODE_SESSION_PAGE_SIZE,
 		});
 		const parsed = OpenCodeSessionListSchema.parse(response);
 
@@ -148,17 +150,14 @@ export class OpenCode extends ACP {
 
 		return {
 			sessions,
-			nextCursor:
-				sessions.length === OPENCODE_SESSION_PAGE_SIZE
-					? String(start + sessions.length)
-					: undefined,
+			nextCursor: undefined,
 		};
 	}
 
 	override destroy() {
 		super.destroy();
 		this.ocAuthHeader = null;
-		this.ocClient = null;
+		this.#ocClient = null;
 		if (this.ocServer) {
 			this.ocServer.close();
 			this.ocServer = null;

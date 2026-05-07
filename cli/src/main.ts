@@ -49,7 +49,6 @@ import { initTerminalHandler } from "@/terminal";
 import { checkForUpdate } from "@/update-check";
 
 const DEFAULT_SERVER_URL = "wss://api.shellular.dev";
-const APP_URL = "https://shellular.dev";
 
 ensureConfig();
 
@@ -384,10 +383,6 @@ async function runCli({
 					const qrData = `${hostId}:${getKeyBase64()}`;
 					logger.log();
 					qrcode.generate(qrData, { small: true }, (qr: string) => {
-						logger.log(chalk.dim("Install the Shellular app:"));
-						logger.log(chalk.cyan.underline(APP_URL));
-						logger.log();
-
 						qr.split("\n").forEach((line) => {
 							logger.log(line);
 						});
@@ -397,7 +392,21 @@ async function runCli({
 							"📲",
 							`Scan the QR code with ${chalk.bold("Shellular app")} to connect.`,
 						);
-						logger.log("🔒", chalk.green("Messages are end-to-end encrypted."));
+						logger.log(
+							"🔒",
+							chalk.green(
+								`Messages are ${chalk.underline("end-to-end encrypted")}.`,
+							),
+						);
+
+						if (config.PLATFORM === "darwin") {
+							logger.log(
+								"💡",
+								"Connection stays active as long as Shellular CLI is running and your laptop is online, even if you lock your screen.",
+							);
+							logger.log("📌", "Just don't close the laptop lid.");
+						}
+
 						logger.log("👋", chalk.dim("Press Ctrl+C to exit.\n"));
 					});
 				} else {
