@@ -20,7 +20,8 @@ export class AcpClient implements acp.Client {
 		Set<SessionUpdateListener>
 	>();
 	private anySessionUpdateListeners = new Set<SessionUpdateListener>();
-	private permissionListeners = new Set<PermissionListener>();
+	private permissionListeners = new Map<string, PermissionListener>();
+	private sessionsWithPendingPermissions = new Map<string, string>();
 
 	addSessionUpdateListener(
 		sessionId: acp.SessionId,
@@ -54,15 +55,17 @@ export class AcpClient implements acp.Client {
 		this.anySessionUpdateListeners.delete(listener);
 	}
 
-	onPermission(listener: PermissionListener): () => void {
-		this.permissionListeners.add(listener);
-		return () => this.permissionListeners.delete(listener);
+	onPermission(clientId: string, listener: PermissionListener): () => void {
+		this.permissionListeners.set(clientId, listener);
+		return () => this.permissionListeners.delete(clientId);
 	}
 
 	requestPermission(
 		params: acp.RequestPermissionRequest,
+		permissionId?: string,
+		clientId?: string,
 	): Promise<acp.RequestPermissionResponse> {
-		const permissionId = nanoid();
+		permissionId = permissionId || nanoid();
 
 		return new Promise((resolve) => {
 			this.pendingPermissions.set(permissionId, {
@@ -70,6 +73,7 @@ export class AcpClient implements acp.Client {
 				sessionId: params.sessionId,
 				params,
 			});
+			this.sessionsWithPendingPermissions.set(params.sessionId, permissionId);
 
 			const event: PermissionRequestEvent = {
 				id: permissionId,
@@ -79,8 +83,10 @@ export class AcpClient implements acp.Client {
 				raw: params,
 			};
 
-			for (const listener of this.permissionListeners) {
-				listener(event);
+			for (const [key, listener] of this.permissionListeners.entries()) {
+				if (!clientId || clientId === key) {
+					listener(event);
+				}
 			}
 		});
 	}
@@ -106,9 +112,28 @@ export class AcpClient implements acp.Client {
 				optionId,
 			},
 		};
+		this.sessionsWithPendingPermissions.delete(pending.sessionId);
 		this.pendingPermissions.delete(permissionId);
 		pending.resolve(response);
 		return response;
+	}
+
+	requestPendingPermission(sessionId: string) {
+		const permissionId = this.sessionsWithPendingPermissions.get(sessionId);
+		if (!permissionId) return false;
+		const permission = this.pendingPermissions.get(permissionId);
+		if (!permission) return false;
+		this.requestPermission(permission.params, permissionId);
+		return true;
+	}
+
+	requestPendingPermissions(clientId: string) {
+		for (const [
+			permissionId,
+			permission,
+		] of this.pendingPermissions.entries()) {
+			this.requestPermission(permission.params, permissionId, clientId);
+		}
 	}
 
 	cancelSessionPermissions(sessionId: string) {

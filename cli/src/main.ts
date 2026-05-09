@@ -537,6 +537,7 @@ async function runCli({
 						title: "Shellular Client Connected",
 						body: `Client ${msg.data.clientId} connected on ${deviceSummary} (${msg.data.platform}, v${msg.data.appVersion}).`,
 					});
+					agentsManager.notifyClient(msg.data.clientId);
 
 					logger.log(
 						chalk.green(

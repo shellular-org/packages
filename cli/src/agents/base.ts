@@ -110,8 +110,11 @@ export class ACP {
 		};
 	}
 
-	onPermission(listener: Parameters<AcpClient["onPermission"]>[0]) {
-		return this.client.onPermission(listener);
+	onPermission(
+		clientId: string,
+		listener: Parameters<AcpClient["onPermission"]>[1],
+	) {
+		return this.client.onPermission(clientId, listener);
 	}
 
 	onSessionUpdate(listener: (notification: acp.SessionNotification) => void) {
@@ -417,6 +420,7 @@ export class ACP {
 			return { response, updates, messages };
 		} finally {
 			this.client.removeSessionUpdateListener(sessionId, listener);
+			this.client.requestPendingPermission(params.sessionId);
 		}
 	}
 
@@ -426,11 +430,17 @@ export class ACP {
 	): Promise<PromptResult> {
 		await this.ensureReady();
 		const transcript = this.getTranscript(params.sessionId);
+		let permissionRequested = false;
 		transcript.beginTurn(params.prompt);
 		const listener = (notification: acp.SessionNotification) => {
+			if (permissionRequested) return;
+
+			if (this.client.requestPendingPermission(params.sessionId)) {
+				permissionRequested = true;
+				return;
+			}
+
 			callbacks.onUpdate?.(notification);
-			// Normalize every ACP update immediately so UI consumers can render
-			// tokens, tool calls, thoughts, and plans without knowing ACP internals.
 			for (const event of transcript.apply(notification)) {
 				callbacks.onEvent?.(event);
 			}
@@ -501,6 +511,10 @@ export class ACP {
 	async setSessionModel(params: acp.SetSessionModelRequest) {
 		await this.ensureReady();
 		return this.requireConnection().unstable_setSessionModel(params);
+	}
+
+	requestPendingPermissions(clientId: string) {
+		return this.client.requestPendingPermissions(clientId);
 	}
 
 	replyPermission(permissionId: string, optionId: string) {

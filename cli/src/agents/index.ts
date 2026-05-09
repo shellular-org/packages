@@ -135,7 +135,13 @@ export class AgentsManager {
 			}) satisfies AgentInfo[];
 	}
 
-	async connectAgent(agentId: AiBackend) {
+	notifyClient(clientId: string) {
+		for (const [, agent] of this.agents.entries()) {
+			agent.requestPendingPermissions(clientId);
+		}
+	}
+
+	async connectAgent(clientId: string, agentId: AiBackend) {
 		let agent = this.agents.get(agentId);
 		if (!agent) {
 			const descriptor = this.descriptors.get(agentId);
@@ -147,7 +153,7 @@ export class AgentsManager {
 			this.agents.set(agentId, agent);
 			// ACP permission requests are client-side JSON-RPC calls. Convert them
 			// into the existing Shellular event stream so the mobile app can decide.
-			agent.onPermission((permission) => {
+			agent.onPermission(clientId, (permission) => {
 				const backend = descriptor.id;
 				const clientId =
 					this.sessionClientIds.get(
@@ -182,20 +188,22 @@ export class AgentsManager {
 	}
 
 	async listSessions(
+		clientId: string,
 		agentId: AiBackend,
 		cwd?: string,
 		cursor?: string,
 	): Promise<{ sessions: AiSession[]; nextCursor?: string }> {
-		const agent = await this.connectAgent(agentId);
+		const agent = await this.connectAgent(clientId, agentId);
 		return agent.listAiSessionsPage(cwd, cursor);
 	}
 
 	async createSession(
+		clientId: string,
 		agentId: AiBackend,
 		cwd: string,
 		options: Parameters<ACP["createSession"]>[1] = {},
 	) {
-		const agent = await this.connectAgent(agentId);
+		const agent = await this.connectAgent(clientId, agentId);
 		const result = await agent.createSession(cwd, options);
 		this.sessionAgents.set(
 			result.session.id ?? result.response.sessionId,
@@ -205,6 +213,7 @@ export class AgentsManager {
 	}
 
 	async loadSession(
+		clientId: string,
 		agentId: AiBackend,
 		sessionId: string,
 		cwd: string,
@@ -212,7 +221,7 @@ export class AgentsManager {
 			Omit<Parameters<ACP["loadSession"]>[0], "sessionId" | "cwd">
 		> = {},
 	) {
-		const agent = await this.connectAgent(agentId);
+		const agent = await this.connectAgent(clientId, agentId);
 		this.sessionAgents.set(sessionId, agentId);
 		return agent.loadSession({
 			...options,
@@ -223,6 +232,7 @@ export class AgentsManager {
 	}
 
 	async resumeSession(
+		clientId: string,
 		agentId: AiBackend,
 		sessionId: string,
 		cwd: string,
@@ -230,7 +240,7 @@ export class AgentsManager {
 			Omit<Parameters<ACP["resumeSession"]>[0], "sessionId" | "cwd">
 		> = {},
 	) {
-		const agent = await this.connectAgent(agentId);
+		const agent = await this.connectAgent(clientId, agentId);
 		this.sessionAgents.set(sessionId, agentId);
 		return agent.resumeSession({
 			...options,
@@ -241,6 +251,7 @@ export class AgentsManager {
 	}
 
 	async forkSession(
+		clientId: string,
 		agentId: AiBackend,
 		sessionId: string,
 		cwd: string,
@@ -248,7 +259,7 @@ export class AgentsManager {
 			Omit<Parameters<ACP["forkSession"]>[0], "sessionId" | "cwd">
 		> = {},
 	) {
-		const agent = await this.connectAgent(agentId);
+		const agent = await this.connectAgent(clientId, agentId);
 		const result = await agent.forkSession({
 			...options,
 			sessionId,
@@ -259,20 +270,20 @@ export class AgentsManager {
 		return result;
 	}
 
-	async closeSession(agentId: AiBackend, sessionId: string) {
-		const agent = await this.connectAgent(agentId);
+	async closeSession(clientId: string, agentId: AiBackend, sessionId: string) {
+		const agent = await this.connectAgent(clientId, agentId);
 		const response = await agent.closeSession({ sessionId });
 		this.sessionAgents.delete(sessionId);
 		return response;
 	}
 
 	async prompt(
-		agentId: AiBackend,
 		clientId: string,
+		agentId: AiBackend,
 		sessionId: string,
 		content: string | unknown[],
 	) {
-		const agent = await this.connectAgent(agentId);
+		const agent = await this.connectAgent(clientId, agentId);
 		this.rememberSessionClient(agentId, sessionId, clientId);
 		const prompt = normalizePromptContent(content);
 		return agent.prompt(
@@ -281,18 +292,20 @@ export class AgentsManager {
 				prompt,
 			},
 			{
-				onEvent: (event) =>
-					this.emit(eventClientId(event, clientId), agent.descriptor.id, event),
+				onEvent: (event) => {
+					this.emit(eventClientId(event, clientId), agent.descriptor.id, event);
+				},
 			},
 		);
 	}
 
-	async cancel(agentId: AiBackend, sessionId: string) {
-		const agent = await this.connectAgent(agentId);
+	async cancel(clientId: string, agentId: AiBackend, sessionId: string) {
+		const agent = await this.connectAgent(clientId, agentId);
 		return agent.interrupt({ sessionId });
 	}
 
 	async replyPermission(
+		clientId: string,
 		agentId: AiBackend,
 		_sessionId: string,
 		permissionId: string,
@@ -301,17 +314,18 @@ export class AgentsManager {
 		if (!optionId) {
 			throw new Error("ACP permission reply requires an optionId");
 		}
-		const agent = await this.connectAgent(agentId);
+		const agent = await this.connectAgent(clientId, agentId);
 		return agent.replyPermission(permissionId, optionId);
 	}
 
 	async setSessionConfigOption(
+		clientId: string,
 		agentId: AiBackend,
 		sessionId: string,
 		configId: string,
 		value: string | boolean,
 	) {
-		const agent = await this.connectAgent(agentId);
+		const agent = await this.connectAgent(clientId, agentId);
 		return agent.setSessionConfigOption({
 			sessionId,
 			configId,
@@ -319,17 +333,23 @@ export class AgentsManager {
 		});
 	}
 
-	async setSessionMode(agentId: AiBackend, sessionId: string, modeId: string) {
-		const agent = await this.connectAgent(agentId);
+	async setSessionMode(
+		clientId: string,
+		agentId: AiBackend,
+		sessionId: string,
+		modeId: string,
+	) {
+		const agent = await this.connectAgent(clientId, agentId);
 		return agent.setSessionMode({ sessionId, modeId });
 	}
 
 	async setSessionModel(
+		clientId: string,
 		agentId: AiBackend,
 		sessionId: string,
 		modelId: string,
 	) {
-		const agent = await this.connectAgent(agentId);
+		const agent = await this.connectAgent(clientId, agentId);
 		return agent.setSessionModel({ sessionId, modelId });
 	}
 
@@ -395,8 +415,13 @@ export class AgentsManager {
 					?.workspace;
 				const cursor = (msg.data as { cursor?: string } | undefined)?.cursor;
 				const result = backend
-					? await this.listSessions(backend, workspace, cursor)
-					: { sessions: await this.listAllBuiltinSessions(workspace) };
+					? await this.listSessions(msg.clientId, backend, workspace, cursor)
+					: {
+							sessions: await this.listAllBuiltinSessions(
+								msg.clientId,
+								workspace,
+							),
+						};
 				conn.send({
 					type: MsgType.AI_SESSION_LIST_RESULT,
 					clientId: msg.clientId,
@@ -428,6 +453,7 @@ export class AgentsManager {
 		conn.on(MsgType.AI_SESSION_CREATE, async (msg: AiSessionCreateMsg) => {
 			try {
 				const { session, response, updates } = await this.createSession(
+					msg.clientId,
 					msg.data.backend,
 					msg.data.cwd ?? msg.data.workspacePath,
 					{
@@ -461,8 +487,8 @@ export class AgentsManager {
 				});
 				if (session.id && msg.data.prompt.trim()) {
 					void this.prompt(
-						msg.data.backend,
 						msg.clientId,
+						msg.data.backend,
 						session.id,
 						msg.data.content ?? msg.data.prompt,
 					).catch((err) => {
@@ -488,6 +514,7 @@ export class AgentsManager {
 		conn.on(MsgType.AI_SESSION_LOAD, async (msg) => {
 			try {
 				const result = await this.loadSession(
+					msg.clientId,
 					msg.data.backend,
 					msg.data.sessionId,
 					msg.data.cwd,
@@ -496,7 +523,7 @@ export class AgentsManager {
 						mcpServers: msg.data.mcpServers as never,
 					},
 				);
-				const agent = await this.connectAgent(msg.data.backend);
+				const agent = await this.connectAgent(msg.clientId, msg.data.backend);
 				const session = agent.getSession(msg.data.sessionId) ?? {
 					id: msg.data.sessionId,
 					createdAt: Date.now(),
@@ -538,6 +565,7 @@ export class AgentsManager {
 		conn.on(MsgType.AI_SESSION_RESUME, async (msg) => {
 			try {
 				const result = await this.resumeSession(
+					msg.clientId,
 					msg.data.backend,
 					msg.data.sessionId,
 					msg.data.cwd,
@@ -578,6 +606,7 @@ export class AgentsManager {
 		conn.on(MsgType.AI_SESSION_FORK, async (msg) => {
 			try {
 				const result = await this.forkSession(
+					msg.clientId,
 					msg.data.backend,
 					msg.data.sessionId,
 					msg.data.cwd,
@@ -619,7 +648,11 @@ export class AgentsManager {
 
 		conn.on(MsgType.AI_SESSION_CLOSE, async (msg) => {
 			try {
-				await this.closeSession(msg.data.backend, msg.data.sessionId);
+				await this.closeSession(
+					msg.clientId,
+					msg.data.backend,
+					msg.data.sessionId,
+				);
 				conn.send({
 					type: MsgType.AI_SESSION_CLOSE_RESULT,
 					clientId: msg.clientId,
@@ -642,7 +675,7 @@ export class AgentsManager {
 
 		conn.on(MsgType.AI_SESSION_GET, async (msg) => {
 			try {
-				const agent = await this.connectAgent(msg.data.backend);
+				const agent = await this.connectAgent(msg.clientId, msg.data.backend);
 				const session = agent.getSession(msg.data.sessionId);
 				conn.send({
 					type: MsgType.AI_SESSION_GET_RESULT,
@@ -662,7 +695,7 @@ export class AgentsManager {
 
 		conn.on(MsgType.AI_MESSAGES_LIST, async (msg) => {
 			try {
-				const agent = await this.connectAgent(msg.data.backend);
+				const agent = await this.connectAgent(msg.clientId, msg.data.backend);
 				conn.send({
 					type: MsgType.AI_MESSAGES_LIST_RESULT,
 					clientId: msg.clientId,
@@ -690,8 +723,8 @@ export class AgentsManager {
 					msg.clientId,
 				);
 				void this.prompt(
-					msg.data.backend,
 					msg.clientId,
+					msg.data.backend,
 					msg.data.sessionId,
 					msg.data.content ?? msg.data.text,
 				);
@@ -743,6 +776,7 @@ export class AgentsManager {
 		conn.on(MsgType.AI_SESSION_CONFIG_SET, async (msg) => {
 			try {
 				const response = await this.setSessionConfigOption(
+					msg.clientId,
 					msg.data.backend,
 					msg.data.sessionId,
 					msg.data.configId,
@@ -782,6 +816,7 @@ export class AgentsManager {
 		conn.on(MsgType.AI_SESSION_MODE_SET, async (msg) => {
 			try {
 				await this.setSessionMode(
+					msg.clientId,
 					msg.data.backend,
 					msg.data.sessionId,
 					msg.data.modeId,
@@ -810,6 +845,7 @@ export class AgentsManager {
 		conn.on(MsgType.AI_SESSION_MODEL_SET, async (msg) => {
 			try {
 				await this.setSessionModel(
+					msg.clientId,
 					msg.data.backend,
 					msg.data.sessionId,
 					msg.data.modelId,
@@ -837,7 +873,7 @@ export class AgentsManager {
 
 		conn.on(MsgType.AI_ABORT, async (msg) => {
 			try {
-				await this.cancel(msg.data.backend, msg.data.sessionId);
+				await this.cancel(msg.clientId, msg.data.backend, msg.data.sessionId);
 				conn.send({
 					type: MsgType.AI_ABORT_ACK,
 					clientId: msg.clientId,
@@ -857,6 +893,7 @@ export class AgentsManager {
 		conn.on(MsgType.AI_PERMISSION_REPLY, async (msg) => {
 			try {
 				await this.replyPermission(
+					msg.clientId,
 					msg.data.backend,
 					msg.data.sessionId,
 					msg.data.permissionId,
@@ -882,13 +919,14 @@ export class AgentsManager {
 	}
 
 	private async listAllBuiltinSessions(
+		clientId: string,
 		workspace?: string,
 	): Promise<AiSession[]> {
 		const results = await Promise.allSettled(
 			Object.values(BUILTIN_AGENT_DESCRIPTORS).flatMap((descriptor) =>
 				descriptor.id
 					? [
-							this.connectAgent(descriptor.id).then((agent) =>
+							this.connectAgent(clientId, descriptor.id).then((agent) =>
 								agent.listAiSessions(workspace),
 							),
 						]
