@@ -427,14 +427,13 @@ export class ACP {
 	): Promise<PromptResult> {
 		await this.ensureReady();
 		const transcript = this.getTranscript(params.sessionId);
-		let permissionRequested = false;
+		let permissionReplayed = false;
 		transcript.beginTurn(params.prompt);
 		const listener = (notification: acp.SessionNotification) => {
-			if (permissionRequested) return;
-
-			if (this.client.requestPendingPermission(params.sessionId)) {
-				permissionRequested = true;
-				return;
+			if (!permissionReplayed) {
+				permissionReplayed = this.client.requestPendingPermission(
+					params.sessionId,
+				);
 			}
 
 			callbacks.onUpdate?.(notification);

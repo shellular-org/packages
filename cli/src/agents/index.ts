@@ -142,36 +142,15 @@ export class AgentsManager {
 	}
 
 	async connectAgent(clientId: string, agentId: AiBackend) {
+		const descriptor = this.descriptors.get(agentId);
+		if (!descriptor) {
+			throw new AgentUnavailableError(agentId, "unknown agent");
+		}
+
 		let agent = this.agents.get(agentId);
 		if (!agent) {
-			const descriptor = this.descriptors.get(agentId);
-			if (!descriptor) {
-				throw new AgentUnavailableError(agentId, "unknown agent");
-			}
-
 			agent = createAgentRuntime(agentId);
 			this.agents.set(agentId, agent);
-			// ACP permission requests are client-side JSON-RPC calls. Convert them
-			// into the existing Shellular event stream so the mobile app can decide.
-			agent.onPermission(clientId, (permission) => {
-				const backend = descriptor.id;
-				const clientId =
-					this.sessionClientIds.get(
-						this.sessionKey(agentId, permission.sessionId),
-					) ?? "";
-				this.emit(clientId, backend, {
-					type: "permission.updated",
-					properties: {
-						id: permission.id,
-						sessionId: permission.sessionId,
-						callId: permission.toolCall.toolCallId,
-						kind: permission.toolCall.kind ?? "other",
-						title: permission.toolCall.title ?? "Permission requested",
-						options: permission.options,
-						metadata: permission.raw,
-					},
-				});
-			});
 			agent.onSessionUpdate((notification) => {
 				const backend = descriptor.id;
 				const clientId =
@@ -183,6 +162,29 @@ export class AgentsManager {
 				if (status) this.emit(clientId, backend, status);
 			});
 		}
+
+		// ACP permission requests are client-side JSON-RPC calls. Convert them
+		// into the existing Shellular event stream so the mobile app can decide.
+		agent.onPermission(clientId, (permission) => {
+			const backend = descriptor.id;
+			const sessionClientId = this.sessionClientIds.get(
+				this.sessionKey(agentId, permission.sessionId),
+			);
+			if (sessionClientId && sessionClientId !== clientId) return;
+			const targetClientId = sessionClientId ?? clientId;
+			this.emit(targetClientId, backend, {
+				type: "permission.updated",
+				properties: {
+					id: permission.id,
+					sessionId: permission.sessionId,
+					callId: permission.toolCall.toolCallId,
+					kind: permission.toolCall.kind ?? "other",
+					title: permission.toolCall.title ?? "Permission requested",
+					options: permission.options,
+					metadata: permission.raw,
+				},
+			});
+		});
 		await agent.init();
 		return agent;
 	}
