@@ -15,7 +15,7 @@ import {
 import { config } from "@/config";
 import { logger } from "@/logger";
 import { commandExists } from "@/utils";
-import { AcpClient } from "./client";
+import { AcpClient, type PermissionListener } from "./client";
 import { AgentUnavailableError, UnsupportedCapabilityError } from "./errors";
 import {
 	AcpTranscript,
@@ -110,10 +110,7 @@ export class ACP {
 		};
 	}
 
-	onPermission(
-		clientId: string,
-		listener: Parameters<AcpClient["onPermission"]>[1],
-	) {
+	onPermission(clientId: string, listener: PermissionListener) {
 		return this.client.onPermission(clientId, listener);
 	}
 

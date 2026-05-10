@@ -11,7 +11,7 @@ interface PendingPermission {
 }
 
 type SessionUpdateListener = (notification: acp.SessionNotification) => void;
-type PermissionListener = (event: PermissionRequestEvent) => void;
+export type PermissionListener = (event: PermissionRequestEvent) => void;
 
 export class AcpClient implements acp.Client {
 	private pendingPermissions = new Map<string, PendingPermission>();
