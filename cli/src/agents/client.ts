@@ -102,13 +102,13 @@ export class AcpClient implements acp.Client {
 		return response;
 	}
 
-	requestPendingPermission(sessionId: string) {
+	requestPendingPermission(sessionId: string, clientId?: string) {
 		for (const [
 			permissionId,
 			permission,
 		] of this.pendingPermissions.entries()) {
 			if (permission.sessionId !== sessionId) continue;
-			this.emitPermissionRequest(permissionId, permission.params);
+			this.emitPermissionRequest(permissionId, permission.params, clientId);
 			return true;
 		}
 		return false;

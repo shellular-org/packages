@@ -417,7 +417,6 @@ export class ACP {
 			return { response, updates, messages };
 		} finally {
 			this.client.removeSessionUpdateListener(sessionId, listener);
-			this.client.requestPendingPermission(params.sessionId);
 		}
 	}
 

@@ -136,7 +136,8 @@ export class AgentsManager {
 	}
 
 	notifyClient(clientId: string) {
-		for (const [, agent] of this.agents.entries()) {
+		for (const [agentId, agent] of this.agents.entries()) {
+			this.registerPermissionListener(agentId, clientId, agent);
 			agent.requestPendingPermissions(clientId);
 		}
 	}
@@ -163,28 +164,7 @@ export class AgentsManager {
 			});
 		}
 
-		// ACP permission requests are client-side JSON-RPC calls. Convert them
-		// into the existing Shellular event stream so the mobile app can decide.
-		agent.onPermission(clientId, (permission) => {
-			const backend = descriptor.id;
-			const sessionClientId = this.sessionClientIds.get(
-				this.sessionKey(agentId, permission.sessionId),
-			);
-			if (sessionClientId && sessionClientId !== clientId) return;
-			const targetClientId = sessionClientId ?? clientId;
-			this.emit(targetClientId, backend, {
-				type: "permission.updated",
-				properties: {
-					id: permission.id,
-					sessionId: permission.sessionId,
-					callId: permission.toolCall.toolCallId,
-					kind: permission.toolCall.kind ?? "other",
-					title: permission.toolCall.title ?? "Permission requested",
-					options: permission.options,
-					metadata: permission.raw,
-				},
-			});
-		});
+		this.registerPermissionListener(agentId, clientId, agent);
 		await agent.init();
 		return agent;
 	}
@@ -224,7 +204,7 @@ export class AgentsManager {
 		> = {},
 	) {
 		const agent = await this.connectAgent(clientId, agentId);
-		this.sessionAgents.set(sessionId, agentId);
+		this.rememberSessionClient(agentId, sessionId, clientId);
 		return agent.loadSession({
 			...options,
 			sessionId,
@@ -243,7 +223,7 @@ export class AgentsManager {
 		> = {},
 	) {
 		const agent = await this.connectAgent(clientId, agentId);
-		this.sessionAgents.set(sessionId, agentId);
+		this.rememberSessionClient(agentId, sessionId, clientId);
 		return agent.resumeSession({
 			...options,
 			sessionId,
@@ -373,6 +353,7 @@ export class AgentsManager {
 		(clientId: string, backend: AiBackend, event: AiEvent) => void
 	>();
 	private sessionClientIds = new Map<string, string>();
+	private permissionListenerCleanups = new Map<string, () => void>();
 
 	subscribe(
 		emitter: (clientId: string, backend: AiBackend, event: AiEvent) => void,
@@ -917,7 +898,14 @@ export class AgentsManager {
 			}
 		});
 
-		conn.on("disconnected", () => unsubscribe());
+		conn.on(MsgType.SESSION_CLIENT_LEFT, (msg) => {
+			this.removeClientPermissionListeners(msg.data.clientId);
+		});
+
+		conn.on("disconnected", () => {
+			unsubscribe();
+			this.removeAllPermissionListeners();
+		});
 	}
 
 	private async listAllBuiltinSessions(
@@ -948,6 +936,60 @@ export class AgentsManager {
 
 	private sessionKey(agentId: string, sessionId: string) {
 		return `${agentId}:${sessionId}`;
+	}
+
+	private permissionListenerKey(agentId: string, clientId: string) {
+		return `${agentId}:${clientId}`;
+	}
+
+	private registerPermissionListener(
+		agentId: string,
+		clientId: string,
+		agent: ACP,
+	) {
+		const key = this.permissionListenerKey(agentId, clientId);
+		if (this.permissionListenerCleanups.has(key)) return;
+		const descriptor = this.descriptors.get(agentId);
+		if (!descriptor) return;
+
+		// ACP permission requests are client-side JSON-RPC calls. Convert them
+		// into the existing Shellular event stream so the mobile app can decide.
+		const cleanup = agent.onPermission(clientId, (permission) => {
+			const targetClientId = this.sessionClientIds.get(
+				this.sessionKey(agentId, permission.sessionId),
+			);
+			if (targetClientId !== clientId) return;
+			this.emit(targetClientId, descriptor.id, {
+				type: "permission.updated",
+				properties: {
+					id: permission.id,
+					sessionId: permission.sessionId,
+					callId: permission.toolCall.toolCallId,
+					kind: permission.toolCall.kind ?? "other",
+					title: permission.toolCall.title ?? "Permission requested",
+					options: permission.options,
+					metadata: permission.raw,
+				},
+			});
+		});
+		this.permissionListenerCleanups.set(key, cleanup);
+	}
+
+	private removeClientPermissionListeners(clientId: string) {
+		for (const agentId of this.agents.keys()) {
+			const key = this.permissionListenerKey(agentId, clientId);
+			const cleanup = this.permissionListenerCleanups.get(key);
+			if (!cleanup) continue;
+			cleanup();
+			this.permissionListenerCleanups.delete(key);
+		}
+	}
+
+	private removeAllPermissionListeners() {
+		for (const cleanup of this.permissionListenerCleanups.values()) {
+			cleanup();
+		}
+		this.permissionListenerCleanups.clear();
 	}
 
 	private rememberSessionClient(
