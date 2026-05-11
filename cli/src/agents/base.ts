@@ -15,7 +15,7 @@ import {
 import { config } from "@/config";
 import { logger } from "@/logger";
 import { commandExists } from "@/utils";
-import { AcpClient } from "./client";
+import { AcpClient, type PermissionListener } from "./client";
 import { AgentUnavailableError, UnsupportedCapabilityError } from "./errors";
 import {
 	AcpTranscript,
@@ -72,6 +72,7 @@ export class ACP {
 	private initResult: acp.InitializeResponse | null = null;
 	private transcripts = new Map<string, AcpTranscript>();
 	private sessions = new Map<string, StoredSession>();
+	private loadingSessions = new Map<string, Promise<void>>();
 	private stderrBuffer = "";
 	private state: AgentConnectionState = "unavailable";
 	private stateError: string | undefined;
@@ -110,11 +111,13 @@ export class ACP {
 		};
 	}
 
-	onPermission(listener: Parameters<AcpClient["onPermission"]>[0]) {
-		return this.client.onPermission(listener);
+	onPermission(clientId: string, listener: PermissionListener) {
+		return this.client.onPermission(clientId, listener);
 	}
 
-	onSessionUpdate(listener: (notification: acp.SessionNotification) => void) {
+	onSessionUpdate(
+		listener: (notification: acp.SessionNotification) => void | Promise<void>,
+	) {
 		this.client.addAnySessionUpdateListener(listener);
 		return () => this.client.removeAnySessionUpdateListener(listener);
 	}
@@ -369,6 +372,7 @@ export class ACP {
 
 	async loadSession(
 		params: acp.LoadSessionRequest,
+		clientId?: string,
 	): Promise<LoadSessionResult> {
 		await this.ensureReady();
 		if (!this.capabilities?.loadSession) {
@@ -378,6 +382,20 @@ export class ACP {
 		const sessionId = params.sessionId;
 		const transcript = this.createTranscript(sessionId);
 		const updates: acp.SessionNotification[] = [];
+		let finishLoading: () => void = () => {
+			logger.warn(
+				"finishLoading called before initialization, this should not happen",
+			);
+		};
+		const loading = new Promise<void>((resolve) => {
+			finishLoading = () => {
+				if (this.loadingSessions.get(sessionId) === loading) {
+					this.loadingSessions.delete(sessionId);
+				}
+				resolve();
+			};
+		});
+		this.loadingSessions.set(sessionId, loading);
 		const listener = (notification: acp.SessionNotification) => {
 			// session/load replays history as session/update notifications before
 			// resolving, so collecting here gives callers a usable transcript.
@@ -416,29 +434,61 @@ export class ACP {
 			});
 			return { response, updates, messages };
 		} finally {
+			// When session is loaded again, this is required to show the permission prompt again.
+			this.client.requestPendingPermission(sessionId, clientId);
 			this.client.removeSessionUpdateListener(sessionId, listener);
+			finishLoading();
 		}
 	}
 
 	async prompt(
 		params: acp.PromptRequest,
 		callbacks: PromptCallbacks = {},
+		clientId?: string,
 	): Promise<PromptResult> {
 		await this.ensureReady();
 		const transcript = this.getTranscript(params.sessionId);
+		let permissionRequested = false;
+		const updateTasks = new Set<Promise<void>>();
 		transcript.beginTurn(params.prompt);
-		const listener = (notification: acp.SessionNotification) => {
-			callbacks.onUpdate?.(notification);
-			// Normalize every ACP update immediately so UI consumers can render
-			// tokens, tool calls, thoughts, and plans without knowing ACP internals.
-			for (const event of transcript.apply(notification)) {
-				callbacks.onEvent?.(event);
+		const listener = async (notification: acp.SessionNotification) => {
+			if (!permissionRequested) {
+				permissionRequested = this.client.requestPendingPermission(
+					params.sessionId,
+					clientId,
+				);
 			}
+			if (
+				permissionRequested &&
+				this.client.hasPendingPermission(params.sessionId)
+			) {
+				return;
+			}
+
+			const updateTask = (async () => {
+				const loading = this.loadingSessions.get(params.sessionId);
+				if (loading) {
+					await loading;
+				}
+
+				callbacks.onUpdate?.(notification);
+				for (const event of transcript.apply(notification)) {
+					callbacks.onEvent?.(event);
+				}
+			})();
+			updateTasks.add(updateTask);
+			void updateTask.finally(() => {
+				updateTasks.delete(updateTask);
+			});
+			await updateTask;
 		};
 		this.client.addSessionUpdateListener(params.sessionId, listener);
 
 		try {
 			const response = await this.requireConnection().prompt(params);
+			if (updateTasks.size > 0) {
+				await Promise.all(updateTasks);
+			}
 			transcript.endTurn(response.stopReason);
 			callbacks.onEvent?.(promptEndEvent(params.sessionId, response));
 			const messages = transcript.getMessages();
@@ -501,6 +551,10 @@ export class ACP {
 	async setSessionModel(params: acp.SetSessionModelRequest) {
 		await this.ensureReady();
 		return this.requireConnection().unstable_setSessionModel(params);
+	}
+
+	requestPendingPermissions(clientId: string) {
+		return this.client.requestPendingPermissions(clientId);
 	}
 
 	replyPermission(permissionId: string, optionId: string) {
