@@ -21,6 +21,7 @@ export class AcpClient implements acp.Client {
 	>();
 	private anySessionUpdateListeners = new Set<SessionUpdateListener>();
 	private permissionListeners = new Map<string, PermissionListener>();
+	private sessionsWithPendingPermissions = new Map<string, string>();
 
 	addSessionUpdateListener(
 		sessionId: acp.SessionId,
@@ -72,6 +73,7 @@ export class AcpClient implements acp.Client {
 				sessionId: params.sessionId,
 				params,
 			});
+			this.sessionsWithPendingPermissions.set(params.sessionId, permissionId);
 			this.emitPermissionRequest(permissionId, params, clientId);
 		});
 	}
@@ -98,20 +100,26 @@ export class AcpClient implements acp.Client {
 			},
 		};
 		this.pendingPermissions.delete(permissionId);
+		this.sessionsWithPendingPermissions.delete(pending.sessionId);
 		pending.resolve(response);
 		return response;
 	}
 
 	requestPendingPermission(sessionId: string, clientId?: string) {
-		for (const [
-			permissionId,
-			permission,
-		] of this.pendingPermissions.entries()) {
-			if (permission.sessionId !== sessionId) continue;
-			this.emitPermissionRequest(permissionId, permission.params, clientId);
-			return true;
-		}
-		return false;
+		const permissionId = this.sessionsWithPendingPermissions.get(sessionId);
+		if (!permissionId) return false;
+		const permission = this.pendingPermissions.get(permissionId);
+		if (!permission) return false;
+		this.emitPermissionRequest(permissionId, permission.params, clientId);
+		return true;
+	}
+
+	hasPendingPermission(sessionId: string) {
+		const permissionId = this.sessionsWithPendingPermissions.get(sessionId);
+		if (!permissionId) return false;
+		const permission = this.pendingPermissions.get(permissionId);
+		if (!permission) return false;
+		return true;
 	}
 
 	requestPendingPermissions(clientId: string) {

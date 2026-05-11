@@ -205,12 +205,15 @@ export class AgentsManager {
 	) {
 		const agent = await this.connectAgent(clientId, agentId);
 		this.rememberSessionClient(agentId, sessionId, clientId);
-		return agent.loadSession({
-			...options,
-			sessionId,
-			cwd,
-			mcpServers: options.mcpServers ?? [],
-		});
+		return agent.loadSession(
+			{
+				...options,
+				sessionId,
+				cwd,
+				mcpServers: options.mcpServers ?? [],
+			},
+			clientId,
+		);
 	}
 
 	async resumeSession(
@@ -278,6 +281,7 @@ export class AgentsManager {
 					this.emit(eventClientId(event, clientId), agent.descriptor.id, event);
 				},
 			},
+			clientId,
 		);
 	}
 

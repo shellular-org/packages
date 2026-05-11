@@ -369,6 +369,7 @@ export class ACP {
 
 	async loadSession(
 		params: acp.LoadSessionRequest,
+		clientId?: string,
 	): Promise<LoadSessionResult> {
 		await this.ensureReady();
 		if (!this.capabilities?.loadSession) {
@@ -416,6 +417,8 @@ export class ACP {
 			});
 			return { response, updates, messages };
 		} finally {
+			// When session is loaded again, this is required to show the permission prompt again.
+			this.client.requestPendingPermission(sessionId, clientId);
 			this.client.removeSessionUpdateListener(sessionId, listener);
 		}
 	}
@@ -423,16 +426,24 @@ export class ACP {
 	async prompt(
 		params: acp.PromptRequest,
 		callbacks: PromptCallbacks = {},
+		clientId?: string,
 	): Promise<PromptResult> {
 		await this.ensureReady();
 		const transcript = this.getTranscript(params.sessionId);
-		let permissionReplayed = false;
+		let permissionRequested = false;
 		transcript.beginTurn(params.prompt);
 		const listener = (notification: acp.SessionNotification) => {
-			if (!permissionReplayed) {
-				permissionReplayed = this.client.requestPendingPermission(
+			if (!permissionRequested) {
+				permissionRequested = this.client.requestPendingPermission(
 					params.sessionId,
+					clientId,
 				);
+			}
+			if (
+				permissionRequested &&
+				this.client.hasPendingPermission(params.sessionId)
+			) {
+				return;
 			}
 
 			callbacks.onUpdate?.(notification);
