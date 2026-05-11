@@ -1,5 +1,11 @@
 # shellular
 
+## 0.0.21
+
+### Patch Changes
+
+- 9aaa503: fix: ask for permission on client join, session load & prompt
+
 ## 0.0.20
 
 ### Patch Changes
