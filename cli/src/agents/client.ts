@@ -1,6 +1,7 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import { nanoid } from "nanoid";
 
+import { logger } from "@/logger";
 import { PermissionNotFoundError } from "./errors";
 import type { PermissionRequestEvent } from "./types";
 
@@ -10,7 +11,9 @@ interface PendingPermission {
 	params: acp.RequestPermissionRequest;
 }
 
-type SessionUpdateListener = (notification: acp.SessionNotification) => void;
+type SessionUpdateListener = (
+	notification: acp.SessionNotification,
+) => void | Promise<void>;
 export type PermissionListener = (event: PermissionRequestEvent) => void;
 
 export class AcpClient implements acp.Client {
@@ -161,13 +164,29 @@ export class AcpClient implements acp.Client {
 
 	async sessionUpdate(params: acp.SessionNotification): Promise<void> {
 		for (const listener of this.anySessionUpdateListeners) {
-			listener(params);
+			this.dispatchSessionUpdate(listener, params);
 		}
 		const listeners = this.sessionUpdateListeners.get(params.sessionId);
 		if (listeners) {
 			for (const listener of listeners) {
-				listener(params);
+				this.dispatchSessionUpdate(listener, params);
 			}
+		}
+	}
+
+	private dispatchSessionUpdate(
+		listener: SessionUpdateListener,
+		params: acp.SessionNotification,
+	) {
+		try {
+			const result = listener(params);
+			if (result instanceof Promise) {
+				result.catch((err) => {
+					logger.error("Session update listener failed:", err);
+				});
+			}
+		} catch (err) {
+			logger.error("Session update listener failed:", err);
 		}
 	}
 }
