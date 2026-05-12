@@ -1,6 +1,6 @@
 {
 	"name": "shellular",
-	"version": "0.0.19",
+	"version": "0.0.21",
 	"description": "Shellular CLI — host your dev environment for remote access from your phone.",
 	"main": "dist/main.js",
 	"scripts": {
@@ -33,7 +33,7 @@
 		"@agentclientprotocol/sdk": "^0.21.0",
 		"@ff-labs/fff-node": "^0.6.4",
 		"@inquirer/prompts": "^8.4.2",
-		"@opencode-ai/sdk": "1.14.33",
+		"@opencode-ai/sdk": "1.14.41",
 		"@shellular/protocol": "workspace:*",
 		"@xterm/addon-serialize": "^0.14.0",
 		"@xterm/headless": "^6.0.0",
