@@ -341,13 +341,19 @@ export function initProxyHandler(conn: Connection) {
 		}
 		const { clientId } = msg;
 		const { method, url: urlStr, headers, body, bodyEncoding } = msg.data;
-
-		const url = isLocalhostUrl(urlStr, ["http:", "https:"]);
+		let url = isLocalhostUrl(urlStr, ["http:", "https:"]);
+		if (!url) {
+			const host = headers?.host || headers?.Host || "localhost";
+			try {
+				const resolvedUrlStr = new URL(urlStr, `http://${host}`).toString();
+				url = isLocalhostUrl(resolvedUrlStr, ["http:", "https:"]);
+			} catch {}
+		}
 		if (!url) {
 			conn.send({
 				type: MsgType.HTTP_RESPONSE_END,
 				clientId,
-				error: "Only localhost URLs (http/https) are allowed",
+				error: `Only localhost URLs (http/https) are allowed: ${url}`,
 				data: {
 					requestId,
 				},
