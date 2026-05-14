@@ -1,5 +1,11 @@
 # shellular
 
+## 0.0.22
+
+### Patch Changes
+
+- ad5944a: fix: support binary sending for http browser proxy
+
 ## 0.0.21
 
 ### Patch Changes
