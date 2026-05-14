@@ -21,6 +21,7 @@ import { Codex } from "./codex";
 import { Copilot } from "./copilot";
 import { Cursor } from "./cursor";
 import { AgentUnavailableError } from "./errors";
+import { Hermes } from "./hermes";
 import { OpenCode } from "./opencode";
 import { Pi } from "./pi";
 import type { AgentDescriptor, AgentInfo } from "./types";
@@ -127,7 +128,6 @@ export class AgentsManager {
 						version: descriptor.version,
 						description: descriptor.description,
 						icon: descriptor.icon,
-						source: descriptor.source,
 						state: "exited",
 						available: true,
 					}
@@ -1035,6 +1035,10 @@ function createAgentRuntime(agentId: AiBackend): ACP {
 			return Pi.create();
 		case "cursor":
 			return Cursor.create();
+		case "hermes":
+			return Hermes.create();
+		default:
+			throw new AgentUnavailableError(agentId, "unknown agent");
 	}
 }
 

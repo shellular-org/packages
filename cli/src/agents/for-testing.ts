@@ -6,6 +6,7 @@ import type { ACP } from "./base";
 import { ClaudeCode } from "./claude-code";
 import { Codex } from "./codex";
 import { Cursor } from "./cursor";
+import { Hermes } from "./hermes";
 import { OpenCode } from "./opencode";
 import { Pi } from "./pi";
 
@@ -72,7 +73,7 @@ function renderUpdate(notification: acp.SessionNotification) {
 async function pickAgent(): Promise<ACP> {
 	while (true) {
 		const choice = await ask(
-			"Choose agent (1=Codex, 2=OpenCode, 3=ClaudeCode, 4=Cursor, 5=Pi): ",
+			"Choose agent (1=Codex, 2=OpenCode, 3=ClaudeCode, 4=Cursor, 5=Pi, 6=Hermes): ",
 		);
 		if (choice === "1") {
 			const agent = Codex.create();
@@ -97,6 +98,11 @@ async function pickAgent(): Promise<ACP> {
 		if (choice === "5") {
 			const agent = Pi.create();
 			if (!agent) throw new Error("Pi not found. Is it installed?");
+			return agent;
+		}
+		if (choice === "6") {
+			const agent = Hermes.create();
+			if (!agent) throw new Error("Hermes not found. Is it installed?");
 			return agent;
 		}
 		console.log("Invalid choice, try again.");

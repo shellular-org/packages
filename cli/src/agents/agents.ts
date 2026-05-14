@@ -1,5 +1,4 @@
 import type { AiBackend } from "@shellular/protocol";
-
 import { npxCommand } from "@/config";
 import { commandExists } from "@/utils";
 import type { AgentDescriptor, AgentInfo } from "./types";
@@ -9,7 +8,6 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		id: "codex",
 		name: "Codex",
 		title: "Codex",
-		source: "builtin",
 		agentExecutable: "codex",
 		spawn: {
 			command: npxCommand,
@@ -20,7 +18,6 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		id: "opencode",
 		name: "OpenCode",
 		title: "OpenCode",
-		source: "builtin",
 		agentExecutable: "opencode",
 		spawn: {
 			command: "opencode",
@@ -31,7 +28,6 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		id: "claude-code",
 		name: "Claude Code",
 		title: "Claude Code",
-		source: "builtin",
 		agentExecutable: "claude",
 		spawn: {
 			command: npxCommand,
@@ -42,7 +38,6 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		id: "copilot",
 		name: "GitHub Copilot",
 		title: "GitHub Copilot",
-		source: "builtin",
 		agentExecutable: "copilot",
 		spawn: {
 			command: npxCommand,
@@ -53,7 +48,6 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		id: "cursor",
 		name: "Cursor",
 		title: "Cursor",
-		source: "builtin",
 		agentExecutable: "cursor-agent",
 		// disabled for now because cursor's ACP is buggy
 		// it doesn't return session notifications for session/load, due to which
@@ -68,11 +62,20 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		id: "pi",
 		name: "Pi",
 		title: "Pi",
-		source: "builtin",
 		agentExecutable: "pi",
 		spawn: {
 			command: npxCommand,
 			args: ["-y", "pi-acp"],
+		},
+	},
+	hermes: {
+		id: "hermes",
+		name: "Hermes (beta)",
+		title: "Hermes (beta)",
+		agentExecutable: "hermes",
+		spawn: {
+			command: "hermes",
+			args: ["acp"],
 		},
 	},
 };
@@ -94,7 +97,6 @@ export function toAgentInfo(
 		version: descriptor.version,
 		description: descriptor.description,
 		icon: descriptor.icon,
-		source: descriptor.source,
 		state,
 		available: state !== "unavailable" && state !== "failed",
 		error,

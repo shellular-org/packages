@@ -103,7 +103,6 @@ export class ACP {
 			version: this.descriptor.version ?? this.initResult?.agentInfo?.version,
 			description: this.descriptor.description,
 			icon: this.descriptor.icon,
-			source: this.descriptor.source,
 			state: this.state,
 			available: this.isCommandAvailable(),
 			error: this.stateError,
