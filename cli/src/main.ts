@@ -379,6 +379,18 @@ async function runCli({
 				cleanupProxy();
 
 				if (isFirst) {
+					logger.log(
+						"📲",
+						`Scan the QR code with ${chalk.bold("Shellular app")} to connect.`,
+					);
+
+					logger.log(
+						"🔒",
+						chalk.green(
+							`Messages are ${chalk.underline("end-to-end encrypted")}.`,
+						),
+					);
+
 					// Display QR code with hostId:e2eeKey for out-of-band key exchange
 					const qrData = `${hostId}:${getKeyBase64()}`;
 					logger.log();
@@ -389,13 +401,9 @@ async function runCli({
 
 						logger.log();
 						logger.log(
-							"📲",
-							`Scan the QR code with ${chalk.bold("Shellular app")} to connect.`,
-						);
-						logger.log(
-							"🔒",
-							chalk.green(
-								`Messages are ${chalk.underline("end-to-end encrypted")}.`,
+							"⚠️ ",
+							chalk.yellow.bold(
+								"Keep this QR code private — do not share it with anyone.",
 							),
 						);
 
@@ -407,7 +415,7 @@ async function runCli({
 							logger.log("📌", "Just don't close the laptop lid.");
 						}
 
-						logger.log("👋", chalk.dim("Press Ctrl+C to exit.\n"));
+						logger.log("👋", "Press Ctrl+C to exit.\n");
 					});
 				} else {
 					logger.log(
