@@ -95,13 +95,11 @@ function createTerminal({
 	cols,
 	cwd,
 }: CreateTerminalOptions): TerminalEntry {
-	const { npm_config_prefix, ...cleanEnv } = process.env;
-	const pty = nodePty.spawn(shellPath, [], {
+	const pty = nodePty.spawn(shellPath, ["-l"], {
 		name: "xterm-256color",
 		cols,
 		rows,
 		cwd,
-		env: cleanEnv,
 	});
 
 	const headless = new HeadlessTerminal({
