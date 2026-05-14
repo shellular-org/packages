@@ -1,5 +1,11 @@
 # shellular
 
+## 0.0.23
+
+### Patch Changes
+
+- 5dea8fe: fix: spawn pty and resolve commands via login shell to pick up current PATH
+
 ## 0.0.22
 
 ### Patch Changes
