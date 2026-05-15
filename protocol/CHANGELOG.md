@@ -1,5 +1,11 @@
 # @shellular/protocol
 
+## 0.0.11
+
+### Patch Changes
+
+- e223074: feat: add Hermes support in beta
+
 ## 0.0.10
 
 ### Patch Changes
