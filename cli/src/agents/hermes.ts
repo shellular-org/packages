@@ -54,7 +54,32 @@ export class Hermes extends ACP {
 			)
 			.all(params.sessionId);
 
-		const messages: AcpMessage[] = rows.map((row) => {
+		const messages: AcpMessage[] = [];
+		// tool_call_id → part reference so tool rows can patch output in place
+		const toolCallParts = new Map<
+			string,
+			AcpMessagePart & { type: "tool_call"; output?: string }
+		>();
+
+		for (const row of rows) {
+			if (row.role === "tool") {
+				// Patch output onto the matching tool_call part built from the assistant row
+				if (row.tool_call_id && row.content) {
+					const part = toolCallParts.get(row.tool_call_id);
+					if (part) {
+						part.output = row.content;
+					}
+				}
+				continue;
+			}
+
+			if (row.role !== "user" && row.role !== "assistant") {
+				logger.warn(
+					`Unknown role "${row.role}" for hermes message ${row.id}, skipping`,
+				);
+				continue;
+			}
+
 			const parts: AcpMessagePart[] = [];
 
 			const reasoningText = row.reasoning_content ?? row.reasoning ?? null;
@@ -75,9 +100,10 @@ export class Hermes extends ACP {
 					const toolCalls = JSON.parse(row.tool_calls);
 					const calls = Array.isArray(toolCalls) ? toolCalls : [toolCalls];
 					for (const call of calls) {
-						parts.push({
-							id: call.id ?? row.tool_call_id ?? nanoid(),
-							type: "tool_call",
+						const callId = call.id ?? row.tool_call_id ?? nanoid();
+						const part = {
+							id: callId,
+							type: "tool_call" as const,
 							name: call.function?.name ?? call.name ?? row.tool_name ?? "tool",
 							title: call.function?.name ?? call.name ?? row.tool_name,
 							arguments:
@@ -90,7 +116,9 @@ export class Hermes extends ACP {
 											? call.arguments
 											: JSON.stringify(call.arguments, null, 2)
 										: undefined,
-						});
+						};
+						parts.push(part);
+						toolCallParts.set(callId, part);
 					}
 				} catch {
 					logger.warn(
@@ -99,13 +127,13 @@ export class Hermes extends ACP {
 				}
 			}
 
-			return {
+			messages.push({
 				id: String(row.id),
-				role: row.role as "user" | "assistant",
+				role: row.role,
 				parts,
 				timestamp: Math.round(row.timestamp * 1000),
-			};
-		});
+			});
+		}
 
 		this.setSessionStore(params.sessionId, {
 			session:
