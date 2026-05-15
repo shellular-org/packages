@@ -13,7 +13,7 @@ const _AiBackendSchema = z.enum([
 	"hermes",
 ]);
 export const AiBackendSchema = z.union([_AiBackendSchema, z.string()]);
-export type AiBackend = z.infer<typeof AiBackendSchema>;
+export type AiBackend = z.infer<typeof _AiBackendSchema> | (string & {});
 export const AI_BACKENDS: AiBackend[] = [
 	"opencode",
 	"codex",
