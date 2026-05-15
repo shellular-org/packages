@@ -3,7 +3,7 @@ import { z } from "zod";
 import { MsgType } from "./base";
 
 // ─── Backend ──────────────────────────────────────────────────────────────────
-export const AiBackendSchema = z.enum([
+const _AiBackendSchema = z.enum([
 	"opencode",
 	"codex",
 	"claude-code",
@@ -12,6 +12,7 @@ export const AiBackendSchema = z.enum([
 	"pi",
 	"hermes",
 ]);
+export const AiBackendSchema = z.union([_AiBackendSchema, z.string()]);
 export type AiBackend = z.infer<typeof AiBackendSchema>;
 export const AI_BACKENDS: AiBackend[] = [
 	"opencode",

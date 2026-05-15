@@ -17,7 +17,10 @@ export function mapGetOrInsert<K, V>(
 export function commandExists(command: string): boolean {
 	try {
 		if (process.platform === "win32") {
-			const result = spawnSync("where", [command], { stdio: "ignore", shell: false });
+			const result = spawnSync("where", [command], {
+				stdio: "ignore",
+				shell: false,
+			});
 			return result.status === 0;
 		}
 		// Run `which` inside a login shell so it searches the current PATH

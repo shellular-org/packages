@@ -135,15 +135,7 @@ export class ACP {
 		this.stateError = undefined;
 
 		try {
-			this.spawnedAgent = ACP.spawnAgentProcess({
-				name: this.id,
-				agentExecutable: this.descriptor.agentExecutable,
-				command: this.descriptor.spawn.command,
-				args: this.descriptor.spawn.args,
-				env: this.descriptor.spawn.env,
-				cwd: this.descriptor.spawn.cwd,
-			});
-			this.attachProcessListeners();
+			this.spawnedAgent = this.spawnAgent();
 
 			this.connection = new acp.ClientSideConnection(
 				() => this.client,
@@ -446,6 +438,11 @@ export class ACP {
 		clientId?: string,
 	): Promise<PromptResult> {
 		await this.ensureReady();
+		const loading = this.loadingSessions.get(params.sessionId);
+		if (loading) {
+			await loading;
+		}
+
 		const transcript = this.getTranscript(params.sessionId);
 		let permissionRequested = false;
 		const updateTasks = new Set<Promise<void>>();
@@ -650,9 +647,21 @@ export class ACP {
 		return result.data as T;
 	}
 
-	protected attachProcessListeners() {
-		if (!this.spawnedAgent) return;
-		const child = this.spawnedAgent.process;
+	protected spawnAgent() {
+		if (this.spawnedAgent) {
+			throw new Error("Agent process already spawned");
+		}
+
+		const spawnedAgent = ACP.spawnAgentProcess({
+			name: this.id,
+			agentExecutable: this.descriptor.agentExecutable,
+			command: this.descriptor.spawn.command,
+			args: this.descriptor.spawn.args,
+			env: this.descriptor.spawn.env,
+			cwd: this.descriptor.spawn.cwd,
+		});
+
+		const child = spawnedAgent.process;
 		child.stderr.on("data", (chunk: Buffer) => {
 			this.stderrBuffer += chunk.toString("utf8");
 			if (this.stderrBuffer.length > 20_000) {
@@ -673,5 +682,7 @@ export class ACP {
 						: `Agent exited with code ${code ?? "null"} signal ${signal ?? "null"}`;
 			}
 		});
+
+		return spawnedAgent;
 	}
 }

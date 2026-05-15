@@ -70,7 +70,7 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 	},
 	hermes: {
 		id: "hermes",
-		name: "Hermes (beta)",
+		name: "Hermes",
 		title: "Hermes (beta)",
 		agentExecutable: "hermes",
 		spawn: {
