@@ -13,8 +13,6 @@ export type AgentConnectionState =
 	| "failed"
 	| "exited";
 
-export type AgentSource = "builtin";
-
 export interface AgentSpawnCommand {
 	command: string;
 	args: string[];
@@ -29,7 +27,6 @@ export interface AgentDescriptor {
 	version?: string;
 	description?: string;
 	icon?: string;
-	source: AgentSource;
 	disabled?: boolean;
 	/**
 	 * Command to check if an agent is available.
@@ -53,7 +50,6 @@ export interface AgentInfo {
 	version?: string;
 	description?: string;
 	icon?: string;
-	source: AgentSource;
 	state: AgentConnectionState;
 	available: boolean;
 	error?: string;

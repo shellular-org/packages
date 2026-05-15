@@ -35,6 +35,7 @@ export class AcpClient implements acp.Client {
 			listeners = new Set();
 			this.sessionUpdateListeners.set(sessionId, listeners);
 		}
+
 		listeners.add(listener);
 	}
 

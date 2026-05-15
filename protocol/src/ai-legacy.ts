@@ -3,15 +3,17 @@ import { z } from "zod";
 import { MsgType } from "./base";
 
 // ─── Backend ──────────────────────────────────────────────────────────────────
-export const AiBackendSchema = z.enum([
+const _AiBackendSchema = z.enum([
 	"opencode",
 	"codex",
 	"claude-code",
 	"copilot",
 	"cursor",
 	"pi",
+	"hermes",
 ]);
-export type AiBackend = z.infer<typeof AiBackendSchema>;
+export const AiBackendSchema = z.union([_AiBackendSchema, z.string()]);
+export type AiBackend = z.infer<typeof _AiBackendSchema> | (string & {});
 export const AI_BACKENDS: AiBackend[] = [
 	"opencode",
 	"codex",
@@ -19,6 +21,7 @@ export const AI_BACKENDS: AiBackend[] = [
 	"copilot",
 	"cursor",
 	"pi",
+	"hermes",
 ];
 
 // ─── Session ──────────────────────────────────────────────────────────────────
