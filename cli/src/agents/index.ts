@@ -125,8 +125,8 @@ export class AgentsManager {
 					title: descriptor.title,
 					version: descriptor.version,
 					description: descriptor.description,
-					available: isAgentAvailable(descriptor) && false,
-                    installationCommands: descriptor.installationCommands
+					available: isAgentAvailable(descriptor),
+					installationCommands: descriptor.installationCommands,
 				}
 			);
 		}) satisfies AgentInfo[];

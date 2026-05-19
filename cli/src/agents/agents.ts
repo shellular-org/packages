@@ -74,11 +74,11 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 				os: ["windows"],
 				command: "winget install Anthropic.ClaudeCode",
 			},
-			"Windows PowerShell": {
+			PowerShell: {
 				os: ["windows"],
 				command: "irm https://claude.ai/install.ps1 | iex",
 			},
-			"Windows CMD": {
+			CMD: {
 				os: ["windows"],
 				command:
 					"curl -fsSL https://claude.ai/install.cmd -o install.cmd && install.cmd && del install.cmd",
@@ -103,7 +103,7 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 				os: ["all"],
 				command: "npm install -g @github/copilot",
 			},
-			"Windows PowerShell": {
+			PowerShell: {
 				os: ["windows"],
 				command: "winget install GitHub.Copilot",
 			},
