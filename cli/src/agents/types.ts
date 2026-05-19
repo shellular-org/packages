@@ -20,14 +20,15 @@ export interface AgentSpawnCommand {
 	cwd?: string;
 }
 
+export type SUPPORTED_OS = "windows" | "macos" | "linux" | "all";
+
 export interface AgentDescriptor {
 	id: AiBackend;
 	name: string;
 	title: string;
 	version?: string;
-	description?: string;
-	icon?: string;
 	disabled?: boolean;
+	description?: string;
 	/**
 	 * Command to check if an agent is available.
 	 *
@@ -40,6 +41,13 @@ export interface AgentDescriptor {
 	 */
 	agentExecutable: string;
 	spawn: AgentSpawnCommand;
+	installationCommands: Record<
+		string,
+		{
+			os: SUPPORTED_OS[];
+			command: string;
+		}
+	>;
 }
 
 export interface AgentInfo {

@@ -6,6 +6,9 @@
 	"[json]": {
 		"editor.defaultFormatter": "biomejs.biome"
 	},
+	"[typescript]": {
+		"editor.defaultFormatter": "biomejs.biome"
+	},
 	"cSpell.words": [
 		"ciphertext",
 		"collab",

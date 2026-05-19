@@ -115,24 +115,21 @@ export class AgentsManager {
 	}
 
 	listAgents() {
-		return [...this.descriptors.values()]
-			.filter(isAgentAvailable)
-			.map((descriptor) => {
-				const runtime = this.agents.get(descriptor.id);
-				return (
-					runtime?.getInfo() ?? {
-						id: descriptor.id,
-						backend: descriptor.id,
-						name: descriptor.name,
-						title: descriptor.title,
-						version: descriptor.version,
-						description: descriptor.description,
-						icon: descriptor.icon,
-						state: "exited",
-						available: true,
-					}
-				);
-			}) satisfies AgentInfo[];
+		return [...this.descriptors.values()].map((descriptor) => {
+			const runtime = this.agents.get(descriptor.id);
+			return (
+				runtime?.getInfo() ?? {
+					state: "exited",
+					id: descriptor.id,
+					name: descriptor.name,
+					title: descriptor.title,
+					version: descriptor.version,
+					description: descriptor.description,
+					available: isAgentAvailable(descriptor) && false,
+                    installationCommands: descriptor.installationCommands
+				}
+			);
+		}) satisfies AgentInfo[];
 	}
 
 	notifyClient(clientId: string) {

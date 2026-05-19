@@ -9,6 +9,16 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		name: "Codex",
 		title: "Codex",
 		agentExecutable: "codex",
+		installationCommands: {
+			npm: {
+				os: ["all"],
+				command: "npm i -g @openai/codex",
+			},
+			Homebrew: {
+				os: ["macos", "linux"],
+				command: "brew install codex",
+			},
+		},
 		spawn: {
 			command: npxCommand,
 			args: ["-yes", "@zed-industries/codex-acp"],
@@ -19,6 +29,28 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		name: "OpenCode",
 		title: "OpenCode",
 		agentExecutable: "opencode",
+		installationCommands: {
+			Shell: {
+				os: ["macos", "linux"],
+				command: "curl -fsSL https://opencode.ai/install | bash",
+			},
+			npm: {
+				os: ["all"],
+				command: "npm i -g opencode-ai",
+			},
+			bun: {
+				os: ["all"],
+				command: "bun add -g opencode-ai",
+			},
+			Homebrew: {
+				os: ["macos", "linux"],
+				command: "brew install anomalyco/tap/opencode",
+			},
+			paru: {
+				os: ["linux"],
+				command: "paru -S opencode",
+			},
+		},
 		spawn: {
 			command: "opencode",
 			args: ["acp"],
@@ -29,6 +61,29 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		name: "Claude Code",
 		title: "Claude Code",
 		agentExecutable: "claude",
+		installationCommands: {
+			Shell: {
+				os: ["linux", "macos"],
+				command: "curl -fsSL https://claude.ai/install.sh | bash",
+			},
+			Homebrew: {
+				os: ["macos", "linux"],
+				command: "brew install --cask claude-code",
+			},
+			WinGet: {
+				os: ["windows"],
+				command: "winget install Anthropic.ClaudeCode",
+			},
+			"Windows PowerShell": {
+				os: ["windows"],
+				command: "irm https://claude.ai/install.ps1 | iex",
+			},
+			"Windows CMD": {
+				os: ["windows"],
+				command:
+					"curl -fsSL https://claude.ai/install.cmd -o install.cmd && install.cmd && del install.cmd",
+			},
+		},
 		spawn: {
 			command: npxCommand,
 			args: ["-y", "@agentclientprotocol/claude-agent-acp"],
@@ -39,6 +94,24 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		name: "GitHub Copilot",
 		title: "GitHub Copilot",
 		agentExecutable: "copilot",
+		installationCommands: {
+			Shell: {
+				os: ["linux", "macos"],
+				command: "curl -fsSL https://gh.io/copilot-install | bash",
+			},
+			npm: {
+				os: ["all"],
+				command: "npm install -g @github/copilot",
+			},
+			"Windows PowerShell": {
+				os: ["windows"],
+				command: "winget install GitHub.Copilot",
+			},
+			Homebrew: {
+				os: ["macos", "linux"],
+				command: "brew install copilot-cli",
+			},
+		},
 		spawn: {
 			command: npxCommand,
 			args: ["-y", "@github/copilot@1.0.39", "--acp"],
@@ -53,6 +126,16 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		// it doesn't return session notifications for session/load, due to which
 		// we are unable to display existing chats
 		disabled: true,
+		installationCommands: {
+			Shell: {
+				os: ["linux", "macos"],
+				command: "curl https://cursor.com/install -fsS | bash",
+			},
+			Powershell: {
+				os: ["windows"],
+				command: "irm 'https://cursor.com/install?win32=true' | iex",
+			},
+		},
 		spawn: {
 			command: "cursor-agent",
 			args: ["acp"],
@@ -63,6 +146,12 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		name: "Pi",
 		title: "Pi",
 		agentExecutable: "pi",
+		installationCommands: {
+			npm: {
+				os: ["all"],
+				command: "npm install -g @earendil-works/pi-coding-agent",
+			},
+		},
 		spawn: {
 			command: npxCommand,
 			args: ["-y", "pi-acp"],
@@ -73,6 +162,18 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		name: "Hermes",
 		title: "Hermes (beta)",
 		agentExecutable: "hermes",
+		installationCommands: {
+			Shell: {
+				os: ["macos", "linux"],
+				command:
+					"curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash",
+			},
+			PowerShell: {
+				os: ["windows"],
+				command:
+					"iex (irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1)",
+			},
+		},
 		spawn: {
 			command: "hermes",
 			args: ["acp"],
@@ -96,7 +197,6 @@ export function toAgentInfo(
 		title: descriptor.title,
 		version: descriptor.version,
 		description: descriptor.description,
-		icon: descriptor.icon,
 		state,
 		available: state !== "unavailable" && state !== "failed",
 		error,
