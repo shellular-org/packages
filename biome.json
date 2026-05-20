@@ -6,7 +6,7 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"includes": ["**/src/**", "!!**/dist"]
+		"includes": ["**/src/**", "!!**/dist", ".vscode/settings.json"]
 	},
 	"formatter": {
 		"enabled": true,

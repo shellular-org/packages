@@ -96,17 +96,15 @@ export class ACP {
 
 	getInfo(): AgentInfo {
 		return {
+			state: this.state,
 			id: this.descriptor.id,
-			backend: this.descriptor.id,
+			error: this.stateError,
 			name: this.descriptor.name,
 			title: this.descriptor.title,
-			version: this.descriptor.version ?? this.initResult?.agentInfo?.version,
-			description: this.descriptor.description,
-			icon: this.descriptor.icon,
-			state: this.state,
-			available: this.isCommandAvailable(),
-			error: this.stateError,
 			capabilities: this.capabilities,
+			available: this.isCommandAvailable(),
+			description: this.descriptor.description,
+			version: this.descriptor.version ?? this.initResult?.agentInfo?.version,
 		};
 	}
 
