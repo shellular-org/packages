@@ -1,5 +1,11 @@
 # shellular
 
+## 0.0.25
+
+### Patch Changes
+
+- edb6d8b: feat: agents installation
+
 ## 0.0.24
 
 ### Patch Changes
