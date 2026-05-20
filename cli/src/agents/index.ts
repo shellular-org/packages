@@ -423,9 +423,7 @@ export class AgentsManager {
 		});
 
 		conn.on(MsgType.AI_AGENTS_LIST, (msg) => {
-			const agents = this.listAgents().filter(
-				(agent) => !msg.data?.backend || agent.backend === msg.data.backend,
-			);
+			const agents = this.listAgents();
 			conn.send({
 				type: MsgType.AI_AGENTS_LIST_RESULT,
 				clientId: msg.clientId,
