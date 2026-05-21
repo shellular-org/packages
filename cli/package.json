@@ -30,7 +30,7 @@
 		"LICENSE"
 	],
 	"dependencies": {
-		"@agentclientprotocol/sdk": "^0.21.1",
+		"@agentclientprotocol/sdk": "^0.22.1",
 		"@ff-labs/fff-node": "^0.6.4",
 		"@inquirer/prompts": "^8.4.2",
 		"@opencode-ai/sdk": "1.14.41",
