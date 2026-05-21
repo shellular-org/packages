@@ -32,6 +32,11 @@ const shell =
 		: process.env.SHELL || "/bin/bash";
 const shellPath = path.basename(shell);
 
+// Spawn the shell as a login shell so it loads the user's profile/rc files.
+// POSIX shells use `-l`; PowerShell has no login concept (it auto-loads profiles),
+// so we pass `-NoLogo` to suppress the startup banner.
+const shellArgs = config.PLATFORM === "win32" ? ["-NoLogo"] : ["-l"];
+
 const terminals = new Map<string, Map<string, TerminalEntry>>();
 const MAX_REPLAY_SCROLLBACK = 2000;
 
@@ -95,7 +100,7 @@ function createTerminal({
 	cols,
 	cwd,
 }: CreateTerminalOptions): TerminalEntry {
-	const pty = nodePty.spawn(shellPath, ["-l"], {
+	const pty = nodePty.spawn(shellPath, shellArgs, {
 		name: "xterm-256color",
 		cols,
 		rows,
