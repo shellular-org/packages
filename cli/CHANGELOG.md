@@ -1,5 +1,11 @@
 # shellular
 
+## 0.0.26
+
+### Patch Changes
+
+- 7e305dd: fix: use correct shell arguments for terminal spawning on windows
+
 ## 0.0.25
 
 ### Patch Changes
