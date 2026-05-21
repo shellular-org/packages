@@ -1,5 +1,11 @@
 # @shellular/protocol
 
+## 0.0.12
+
+### Patch Changes
+
+- 7f0ce79: chore: update acp sdk to 0.22.1
+
 ## 0.0.11
 
 ### Patch Changes
