@@ -267,6 +267,13 @@ export class AgentsManager {
 	) {
 		const agent = await this.connectAgent(clientId, agentId);
 		this.rememberSessionClient(agentId, sessionId, clientId);
+		// Announce the turn start before the (async) prompt runs so the app can
+		// flip into its streaming state immediately, without waiting for the
+		// first token to arrive from the agent.
+		this.emit(clientId, agentId, {
+			type: "turn_started",
+			properties: { sessionId },
+		});
 		const prompt = normalizePromptContent(content);
 		return agent.prompt(
 			{
@@ -529,6 +536,7 @@ export class AgentsManager {
 							configOptions: result.response.configOptions ?? undefined,
 							models: result.response.models,
 							modes: result.response.modes,
+							turnActive: agent.isTurnActive(msg.data.sessionId),
 						},
 						messages: result.messages,
 						updates: result.updates,

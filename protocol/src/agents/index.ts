@@ -77,6 +77,8 @@ export const AiSessionStateSchema = z.object({
 	configOptions: z.array(AiSessionConfigOptionSchema).optional(),
 	models: z.unknown().optional(),
 	modes: z.unknown().optional(),
+	/** Whether a prompt turn is currently in progress for this session. */
+	turnActive: z.boolean().optional(),
 });
 export type AiSessionState = z.infer<typeof AiSessionStateSchema>;
 

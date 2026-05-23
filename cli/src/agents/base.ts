@@ -73,6 +73,7 @@ export class ACP {
 	private transcripts = new Map<string, AcpTranscript>();
 	private sessions = new Map<string, StoredSession>();
 	private loadingSessions = new Map<string, Promise<void>>();
+	private activeTurns = new Set<string>();
 	private stderrBuffer = "";
 	private state: AgentConnectionState = "unavailable";
 	private stateError: string | undefined;
@@ -445,6 +446,7 @@ export class ACP {
 		let permissionRequested = false;
 		const updateTasks = new Set<Promise<void>>();
 		transcript.beginTurn(params.prompt);
+		this.activeTurns.add(params.sessionId);
 		const listener = async (notification: acp.SessionNotification) => {
 			if (!permissionRequested) {
 				permissionRequested = this.client.requestPendingPermission(
@@ -505,8 +507,13 @@ export class ACP {
 			});
 			throw err;
 		} finally {
+			this.activeTurns.delete(params.sessionId);
 			this.client.removeSessionUpdateListener(params.sessionId, listener);
 		}
+	}
+
+	isTurnActive(sessionId: string): boolean {
+		return this.activeTurns.has(sessionId);
 	}
 
 	async interrupt(params: acp.CancelNotification) {
