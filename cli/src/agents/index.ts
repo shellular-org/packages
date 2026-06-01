@@ -3,6 +3,7 @@ import path from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
 import type {
 	AcpPromptRequest,
+	AiActivityListMsg,
 	AiAttachmentWriteMsg,
 	AiAttachmentWriteResultMsg,
 	AiBackend,
@@ -14,6 +15,7 @@ import { AcpContentBlockSchema, MsgType } from "@shellular/protocol";
 
 import { config } from "@/config";
 import type { Connection } from "@/connection";
+import { AgentActivityStore } from "./activity";
 import { BUILTIN_AGENT_DESCRIPTORS, isAgentAvailable } from "./agents";
 import type { ACP } from "./base";
 import { ClaudeCode } from "./claude-code";
@@ -103,6 +105,8 @@ export class AgentsManager {
 	private descriptors = new Map<string, AgentDescriptor>();
 	private agents = new Map<string, ACP>();
 	private sessionAgents = new Map<string, string>();
+	private activity = new AgentActivityStore();
+	private hostId = "";
 
 	constructor() {
 		for (const agent of Object.values(BUILTIN_AGENT_DESCRIPTORS)) {
@@ -173,7 +177,16 @@ export class AgentsManager {
 		cursor?: string,
 	): Promise<{ sessions: AiSession[]; nextCursor?: string }> {
 		const agent = await this.connectAgent(clientId, agentId);
-		return agent.listAiSessionsPage(cwd, cursor);
+		const result = await agent.listAiSessionsPage(cwd, cursor);
+		for (const session of result.sessions) {
+			this.activity.rememberSession(this.hostId, agentId, session, clientId);
+		}
+		return {
+			...result,
+			sessions: result.sessions.map((session) =>
+				this.activity.withRuntimeState(agentId, session),
+			),
+		};
 	}
 
 	async createSession(
@@ -187,6 +200,12 @@ export class AgentsManager {
 		this.sessionAgents.set(
 			result.session.id ?? result.response.sessionId,
 			agentId,
+		);
+		this.activity.rememberSession(
+			this.hostId,
+			agentId,
+			result.session,
+			clientId,
 		);
 		return result;
 	}
@@ -267,6 +286,12 @@ export class AgentsManager {
 	) {
 		const agent = await this.connectAgent(clientId, agentId);
 		this.rememberSessionClient(agentId, sessionId, clientId);
+		this.activity.recordPromptStart({
+			hostId: this.hostId,
+			clientId,
+			agentId,
+			sessionId,
+		});
 		const prompt = normalizePromptContent(content);
 		return agent.prompt(
 			{
@@ -284,13 +309,20 @@ export class AgentsManager {
 
 	async cancel(clientId: string, agentId: AiBackend, sessionId: string) {
 		const agent = await this.connectAgent(clientId, agentId);
-		return agent.interrupt({ sessionId });
+		const result = await agent.interrupt({ sessionId });
+		this.activity.recordCancel({
+			hostId: this.hostId,
+			clientId,
+			agentId,
+			sessionId,
+		});
+		return result;
 	}
 
 	async replyPermission(
 		clientId: string,
 		agentId: AiBackend,
-		_sessionId: string,
+		sessionId: string,
 		permissionId: string,
 		optionId: string | undefined,
 	) {
@@ -298,7 +330,14 @@ export class AgentsManager {
 			throw new Error("ACP permission reply requires an optionId");
 		}
 		const agent = await this.connectAgent(clientId, agentId);
-		return agent.replyPermission(permissionId, optionId);
+		const result = await agent.replyPermission(permissionId, optionId);
+		this.activity.recordPromptStart({
+			hostId: this.hostId,
+			clientId,
+			agentId,
+			sessionId,
+		});
+		return result;
 	}
 
 	async setSessionConfigOption(
@@ -364,10 +403,12 @@ export class AgentsManager {
 	}
 
 	handleConnection(conn: Connection) {
+		this.hostId = conn.hostInfo.id;
 		// This adapter keeps the current app protocol stable while the internals
 		// move to ACP. Future UI work can consume listAgents/connectAgent directly.
 		const unsubscribe = this.subscribe((clientId, backend, event) => {
 			if (!clientId) return;
+			if (!conn.clients.isConnected(clientId)) return;
 			if (typeof event.properties.sessionId !== "string") return;
 			conn.send({
 				clientId,
@@ -380,6 +421,16 @@ export class AgentsManager {
 						sessionId: event.properties.sessionId,
 					},
 				},
+			});
+		});
+		const unsubscribeActivity = this.activity.subscribe((activity) => {
+			if (!activity.clientId || !conn.clients.isConnected(activity.clientId)) {
+				return;
+			}
+			conn.send({
+				clientId: activity.clientId,
+				type: MsgType.AI_ACTIVITY_UPDATE,
+				data: activity,
 			});
 		});
 
@@ -432,6 +483,20 @@ export class AgentsManager {
 			});
 		});
 
+		conn.on(MsgType.AI_ACTIVITY_LIST, (msg: AiActivityListMsg) => {
+			conn.send({
+				type: MsgType.AI_ACTIVITY_LIST_RESULT,
+				clientId: msg.clientId,
+				respTo: msg.id,
+				data: {
+					activities: this.activity.list({
+						limit: msg.data?.limit,
+						includeDoneSince: msg.data?.includeDoneSince,
+					}),
+				},
+			});
+		});
+
 		conn.on(MsgType.AI_SESSION_CREATE, async (msg: AiSessionCreateMsg) => {
 			try {
 				const { session, response, updates } = await this.createSession(
@@ -458,6 +523,12 @@ export class AgentsManager {
 						session: {
 							...session,
 							configOptions: response.configOptions ?? undefined,
+							runtimeState: session.id
+								? this.activity.getSessionRuntimeState(
+										msg.data.backend,
+										session.id,
+									)
+								: "idle",
 						} as typeof session,
 						state: {
 							availableCommands: latestAvailableCommands(updates),
@@ -506,16 +577,26 @@ export class AgentsManager {
 					},
 				);
 				const agent = await this.connectAgent(msg.clientId, msg.data.backend);
-				const session = agent.getSession(msg.data.sessionId) ?? {
+				const rawSession = agent.getSession(msg.data.sessionId) ?? {
 					id: msg.data.sessionId,
 					createdAt: Date.now(),
 					updatedAt: Date.now(),
 					workspacePath: msg.data.cwd,
 					configOptions: result.response.configOptions ?? undefined,
 				};
+				const session = this.activity.withRuntimeState(
+					msg.data.backend,
+					rawSession,
+				);
 				this.rememberSessionClient(
 					msg.data.backend,
 					msg.data.sessionId,
+					msg.clientId,
+				);
+				this.activity.rememberSession(
+					this.hostId,
+					msg.data.backend,
+					session,
 					msg.clientId,
 				);
 				conn.send({
@@ -561,13 +642,22 @@ export class AgentsManager {
 					msg.data.sessionId,
 					msg.clientId,
 				);
+				this.activity.rememberSession(
+					this.hostId,
+					msg.data.backend,
+					result.session,
+					msg.clientId,
+				);
 				conn.send({
 					type: MsgType.AI_SESSION_RESUME_RESULT,
 					clientId: msg.clientId,
 					respTo: msg.id,
 					data: {
 						backend: msg.data.backend,
-						session: result.session,
+						session: this.activity.withRuntimeState(
+							msg.data.backend,
+							result.session,
+						),
 						state: {
 							configOptions: result.response.configOptions ?? undefined,
 							models: result.response.models,
@@ -603,6 +693,12 @@ export class AgentsManager {
 						result.session.id,
 						msg.clientId,
 					);
+					this.activity.rememberSession(
+						this.hostId,
+						msg.data.backend,
+						result.session,
+						msg.clientId,
+					);
 				}
 				conn.send({
 					type: MsgType.AI_SESSION_FORK_RESULT,
@@ -610,7 +706,10 @@ export class AgentsManager {
 					respTo: msg.id,
 					data: {
 						backend: msg.data.backend,
-						session: result.session,
+						session: this.activity.withRuntimeState(
+							msg.data.backend,
+							result.session,
+						),
 						state: {
 							configOptions: result.response.configOptions ?? undefined,
 							models: result.response.models,
@@ -663,7 +762,12 @@ export class AgentsManager {
 					type: MsgType.AI_SESSION_GET_RESULT,
 					clientId: msg.clientId,
 					respTo: msg.id,
-					data: { backend: msg.data.backend, session },
+					data: {
+						backend: msg.data.backend,
+						session: session
+							? this.activity.withRuntimeState(msg.data.backend, session)
+							: session,
+					},
 				});
 			} catch (err) {
 				conn.send({
@@ -903,6 +1007,7 @@ export class AgentsManager {
 
 		conn.on("disconnected", () => {
 			unsubscribe();
+			unsubscribeActivity();
 			this.removeAllPermissionListeners();
 		});
 	}
@@ -915,19 +1020,39 @@ export class AgentsManager {
 			Object.values(BUILTIN_AGENT_DESCRIPTORS).flatMap((descriptor) =>
 				descriptor.id
 					? [
-							this.connectAgent(clientId, descriptor.id).then((agent) =>
-								agent.listAiSessions(workspace),
-							),
+							this.connectAgent(clientId, descriptor.id).then(async (agent) => {
+								const sessions = await agent.listAiSessions(workspace);
+								return {
+									agentId: descriptor.id,
+									sessions,
+								};
+							}),
 						]
 					: [],
 			),
 		);
 		return results
-			.flatMap((result) => (result.status === "fulfilled" ? result.value : []))
+			.flatMap((result) =>
+				result.status === "fulfilled"
+					? result.value.sessions.map((session) => {
+							this.activity.rememberSession(
+								this.hostId,
+								result.value.agentId,
+								session,
+								clientId,
+							);
+							return this.activity.withRuntimeState(
+								result.value.agentId,
+								session,
+							);
+						})
+					: [],
+			)
 			.sort((a, b) => b.updatedAt - a.updatedAt);
 	}
 
 	private emit(clientId: string, backend: AiBackend, event: AiEvent) {
+		this.activity.recordEvent(this.hostId, clientId, backend, event);
 		for (const subscriber of this.subscribers) {
 			subscriber(clientId, backend, event);
 		}

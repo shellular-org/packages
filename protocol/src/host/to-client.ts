@@ -1,5 +1,7 @@
 import { z } from "zod";
 import {
+	AiActivityListResultMsgSchema,
+	AiActivityUpdateMsgSchema,
 	AiAttachmentWriteResultMsgSchema,
 	AiSessionCloseResultMsgSchema,
 	AiSessionConfigSetResultMsgSchema,
@@ -96,6 +98,8 @@ export const HostToClientSchema = z.discriminatedUnion("type", [
 	AiMessagesListResultMsgSchema,
 	AiPromptAckMsgSchema,
 	AiAttachmentWriteResultMsgSchema,
+	AiActivityListResultMsgSchema,
+	AiActivityUpdateMsgSchema,
 	AiSessionConfigSetResultMsgSchema,
 	AiSessionModeSetResultMsgSchema,
 	AiSessionModelSetResultMsgSchema,

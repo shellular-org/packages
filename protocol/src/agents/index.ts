@@ -157,6 +157,43 @@ export const AcpAiSessionSchema = AiSessionSchema.extend({
 });
 export type AcpAiSession = z.infer<typeof AcpAiSessionSchema>;
 
+// ── Agent Activity (CLI-owned source of truth) ───────────────────────────────
+
+export const AgentSessionActivityStateSchema = z.enum([
+	"running",
+	"waiting_for_permission",
+	"done",
+	"failed",
+	"cancelled",
+	"idle",
+]);
+export type AgentSessionActivityState = z.infer<
+	typeof AgentSessionActivityStateSchema
+>;
+
+export const AgentSessionActivitySchema = z.object({
+	id: z.string(),
+	hostId: z.string(),
+	clientId: z.string().optional(),
+	agentId: AiBackendSchema,
+	sessionId: z.string(),
+	title: z.string().optional(),
+	workspacePath: z.string().optional(),
+	model: z.string().optional(),
+	state: AgentSessionActivityStateSchema,
+	headline: z.string(),
+	detail: z.string().optional(),
+	permissionId: z.string().optional(),
+	permissionKind: z.string().optional(),
+	startedAt: z.number().optional(),
+	updatedAt: z.number(),
+	endedAt: z.number().optional(),
+	unread: z.boolean(),
+	eventId: z.string(),
+	eventSeq: z.number(),
+});
+export type AgentSessionActivity = z.infer<typeof AgentSessionActivitySchema>;
+
 // ── Incoming messages (app → CLI) ────────────────────────────────────────────
 
 export const AiSessionLoadMsgSchema = z.object({
@@ -251,6 +288,20 @@ export const AiAttachmentWriteMsgSchema = z.object({
 	}),
 });
 export type AiAttachmentWriteMsg = z.infer<typeof AiAttachmentWriteMsgSchema>;
+
+export const AiActivityListMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_ACTIVITY_LIST),
+	clientId: z.string(),
+	data: z
+		.object({
+			hostId: z.string().optional(),
+			limit: z.number().int().positive().optional(),
+			includeDoneSince: z.number().optional(),
+		})
+		.optional(),
+});
+export type AiActivityListMsg = z.infer<typeof AiActivityListMsgSchema>;
 
 // ── Result messages (CLI → app) ──────────────────────────────────────────────
 
@@ -404,3 +455,27 @@ export const AiAttachmentWriteResultMsgSchema = z.object({
 export type AiAttachmentWriteResultMsg = z.infer<
 	typeof AiAttachmentWriteResultMsgSchema
 >;
+
+export const AiActivityListResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_ACTIVITY_LIST_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			activities: z.array(AgentSessionActivitySchema),
+		})
+		.optional(),
+});
+export type AiActivityListResultMsg = z.infer<
+	typeof AiActivityListResultMsgSchema
+>;
+
+export const AiActivityUpdateMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_ACTIVITY_UPDATE),
+	clientId: z.string().optional(),
+	data: AgentSessionActivitySchema,
+});
+export type AiActivityUpdateMsg = z.infer<typeof AiActivityUpdateMsgSchema>;

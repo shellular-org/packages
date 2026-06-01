@@ -446,6 +446,12 @@ export class ACP {
 		const updateTasks = new Set<Promise<void>>();
 		transcript.beginTurn(params.prompt);
 		const listener = async (notification: acp.SessionNotification) => {
+			const loadingAtArrival = this.loadingSessions.get(params.sessionId);
+			if (loadingAtArrival) {
+				await loadingAtArrival;
+				return;
+			}
+
 			if (!permissionRequested) {
 				permissionRequested = this.client.requestPendingPermission(
 					params.sessionId,
@@ -460,11 +466,6 @@ export class ACP {
 			}
 
 			const updateTask = (async () => {
-				const loading = this.loadingSessions.get(params.sessionId);
-				if (loading) {
-					await loading;
-				}
-
 				callbacks.onUpdate?.(notification);
 				for (const event of transcript.apply(notification)) {
 					callbacks.onEvent?.(event);

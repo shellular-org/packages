@@ -26,6 +26,15 @@ export const AI_BACKENDS: AiBackend[] = [
 
 // ─── Session ──────────────────────────────────────────────────────────────────
 
+export const AiSessionRuntimeStateSchema = z.enum([
+	"idle",
+	"streaming",
+	"waiting_for_permission",
+	"failed",
+	"cancelled",
+]);
+export type AiSessionRuntimeState = z.infer<typeof AiSessionRuntimeStateSchema>;
+
 export const AiSessionSchema = z.object({
 	id: z.string().optional(),
 	createdAt: z.number(),
@@ -34,6 +43,7 @@ export const AiSessionSchema = z.object({
 	title: z.string().optional(),
 	workspacePath: z.string().optional(),
 	configOptions: z.array(z.any()).optional(),
+	runtimeState: AiSessionRuntimeStateSchema.optional(),
 });
 export type AiSession = z.infer<typeof AiSessionSchema>;
 
