@@ -159,9 +159,41 @@ export type AiMessage = z.infer<typeof AiMessageSchema>;
 // ─── Loose shared types ───────────────────────────────────────────────────────
 
 /** Streaming event emitted by an AI backend */
+export const AiSessionRuntimeStatusSchema = z.enum([
+	"starting",
+	"running",
+	"waiting_for_permission",
+	"stopping",
+	"stopped",
+	"finished",
+	"error",
+	"cancelled",
+]);
+export type AiSessionRuntimeStatus = z.infer<
+	typeof AiSessionRuntimeStatusSchema
+>;
+
+export const AiSessionRuntimeStateSchema = z.object({
+	status: AiSessionRuntimeStatusSchema,
+	agentId: AiBackendSchema,
+	sessionId: z.string(),
+	updatedAt: z.number(),
+	title: z.string().optional(),
+	workspacePath: z.string().optional(),
+	model: z.string().optional(),
+	message: z.string().optional(),
+	stopReason: z.string().optional(),
+	error: z.string().optional(),
+	pendingPermission: z.record(z.string(), z.unknown()).optional(),
+});
+export type AiSessionRuntimeState = z.infer<
+	typeof AiSessionRuntimeStateSchema
+>;
+
 export const AiEventSchema = z.object({
 	type: z.string(),
 	properties: z.record(z.string(), z.unknown()),
+	state: AiSessionRuntimeStateSchema.optional(),
 });
 export type AiEvent = z.infer<typeof AiEventSchema>;
 
@@ -446,6 +478,7 @@ export const AiSessionCreateResultMsgSchema = z.object({
 		.object({
 			session: AiSessionSchema,
 			state: z.record(z.string(), z.unknown()).optional(),
+			runtimeState: AiSessionRuntimeStateSchema.optional(),
 		})
 		.optional(),
 });
@@ -508,6 +541,7 @@ export const AiEventMsgSchema = z.object({
 		.object({
 			backend: AiBackendSchema,
 			type: z.string(),
+			state: AiSessionRuntimeStateSchema.optional(),
 			properties: z
 				.object({
 					sessionId: z.string(),

@@ -9,6 +9,7 @@ import type {
 	AiEvent,
 	AiSession,
 	AiSessionCreateMsg,
+	AiSessionRuntimeState,
 } from "@shellular/protocol";
 import { AcpContentBlockSchema, MsgType } from "@shellular/protocol";
 
@@ -27,6 +28,11 @@ import { Pi } from "./pi";
 import type { AgentDescriptor, AgentInfo } from "./types";
 
 const MAX_AGENT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+type RuntimePatch = Partial<
+	Omit<AiSessionRuntimeState, "agentId" | "sessionId" | "updatedAt">
+> & {
+	updatedAt?: number;
+};
 
 function getErrorMessage(err: unknown): string {
 	if (err instanceof Error) return err.message;
@@ -267,6 +273,17 @@ export class AgentsManager {
 	) {
 		const agent = await this.connectAgent(clientId, agentId);
 		this.rememberSessionClient(agentId, sessionId, clientId);
+		this.setSessionRuntimeState(agentId, sessionId, {
+			status: "running",
+			message: "Working",
+		});
+		this.emit(clientId, agentId, {
+			type: "session.status",
+			properties: {
+				sessionId,
+				message: "Working",
+			},
+		});
 		const prompt = normalizePromptContent(content);
 		return agent.prompt(
 			{
@@ -284,7 +301,30 @@ export class AgentsManager {
 
 	async cancel(clientId: string, agentId: AiBackend, sessionId: string) {
 		const agent = await this.connectAgent(clientId, agentId);
-		return agent.interrupt({ sessionId });
+		this.setSessionRuntimeState(agentId, sessionId, {
+			status: "stopping",
+			message: "Stopping",
+		});
+		this.emit(clientId, agentId, {
+			type: "session.status",
+			properties: {
+				sessionId,
+				message: "Stopping",
+			},
+		});
+		const result = await agent.interrupt({ sessionId });
+		this.setSessionRuntimeState(agentId, sessionId, {
+			status: "stopped",
+			message: "Stopped",
+		});
+		this.emit(clientId, agentId, {
+			type: "session.status",
+			properties: {
+				sessionId,
+				message: "Stopped",
+			},
+		});
+		return result;
 	}
 
 	async replyPermission(
@@ -354,6 +394,7 @@ export class AgentsManager {
 		(clientId: string, backend: AiBackend, event: AiEvent) => void
 	>();
 	private sessionClientIds = new Map<string, string>();
+	private sessionRuntimeStates = new Map<string, AiSessionRuntimeState>();
 	private permissionListenerCleanups = new Map<string, () => void>();
 
 	subscribe(
@@ -375,6 +416,7 @@ export class AgentsManager {
 				data: {
 					backend,
 					...event,
+					state: "state" in event ? event.state : undefined,
 					properties: {
 						...event.properties,
 						sessionId: event.properties.sessionId,
@@ -450,6 +492,10 @@ export class AgentsManager {
 						msg.clientId,
 					);
 				}
+				const runtimeState = this.rememberSessionRuntimeMetadata(
+					msg.data.backend,
+					session,
+				);
 				conn.send({
 					type: MsgType.AI_SESSION_CREATE_RESULT,
 					clientId: msg.clientId,
@@ -465,6 +511,7 @@ export class AgentsManager {
 							models: response.models,
 							modes: response.modes,
 						},
+						runtimeState,
 					},
 				});
 				if (session.id && msg.data.prompt.trim()) {
@@ -513,6 +560,10 @@ export class AgentsManager {
 					workspacePath: msg.data.cwd,
 					configOptions: result.response.configOptions ?? undefined,
 				};
+				const runtimeState = this.rememberSessionRuntimeMetadata(
+					msg.data.backend,
+					session,
+				);
 				this.rememberSessionClient(
 					msg.data.backend,
 					msg.data.sessionId,
@@ -530,6 +581,7 @@ export class AgentsManager {
 							models: result.response.models,
 							modes: result.response.modes,
 						},
+						runtimeState,
 						messages: result.messages,
 						updates: result.updates,
 					},
@@ -561,6 +613,10 @@ export class AgentsManager {
 					msg.data.sessionId,
 					msg.clientId,
 				);
+				const runtimeState = this.rememberSessionRuntimeMetadata(
+					msg.data.backend,
+					result.session,
+				);
 				conn.send({
 					type: MsgType.AI_SESSION_RESUME_RESULT,
 					clientId: msg.clientId,
@@ -573,6 +629,7 @@ export class AgentsManager {
 							models: result.response.models,
 							modes: result.response.modes,
 						},
+						runtimeState,
 					},
 				});
 			} catch (err) {
@@ -604,6 +661,10 @@ export class AgentsManager {
 						msg.clientId,
 					);
 				}
+				const runtimeState = this.rememberSessionRuntimeMetadata(
+					msg.data.backend,
+					result.session,
+				);
 				conn.send({
 					type: MsgType.AI_SESSION_FORK_RESULT,
 					clientId: msg.clientId,
@@ -616,6 +677,7 @@ export class AgentsManager {
 							models: result.response.models,
 							modes: result.response.modes,
 						},
+						runtimeState,
 					},
 				});
 			} catch (err) {
@@ -709,7 +771,15 @@ export class AgentsManager {
 					msg.data.backend,
 					msg.data.sessionId,
 					msg.data.content ?? msg.data.text,
-				);
+				).catch((err) => {
+					this.emit(msg.clientId, msg.data.backend, {
+						type: "error",
+						properties: {
+							sessionId: msg.data.sessionId,
+							error: getErrorMessage(err),
+						},
+					});
+				});
 				conn.send({
 					type: MsgType.AI_PROMPT_ACK,
 					clientId: msg.clientId,
@@ -881,6 +951,17 @@ export class AgentsManager {
 					msg.data.permissionId,
 					"optionId" in msg.data ? msg.data.optionId : undefined,
 				);
+				this.setSessionRuntimeState(msg.data.backend, msg.data.sessionId, {
+					status: "running",
+					message: "Working",
+				});
+				this.emit(msg.clientId, msg.data.backend, {
+					type: "session.status",
+					properties: {
+						sessionId: msg.data.sessionId,
+						message: "Working",
+					},
+				});
 				conn.send({
 					type: MsgType.AI_PERMISSION_REPLY_ACK,
 					clientId: msg.clientId,
@@ -928,8 +1009,10 @@ export class AgentsManager {
 	}
 
 	private emit(clientId: string, backend: AiBackend, event: AiEvent) {
+		const state = this.applyEventRuntimeState(backend, event);
+		const enrichedEvent = state ? { ...event, state } : event;
 		for (const subscriber of this.subscribers) {
-			subscriber(clientId, backend, event);
+			subscriber(clientId, backend, enrichedEvent);
 		}
 	}
 
@@ -939,6 +1022,121 @@ export class AgentsManager {
 
 	private permissionListenerKey(agentId: string, clientId: string) {
 		return `${agentId}:${clientId}`;
+	}
+
+	private getSessionRuntimeState(agentId: string, sessionId: string) {
+		return this.sessionRuntimeStates.get(this.sessionKey(agentId, sessionId));
+	}
+
+	private setSessionRuntimeState(
+		agentId: AiBackend,
+		sessionId: string,
+		patch: RuntimePatch,
+	): AiSessionRuntimeState {
+		const key = this.sessionKey(agentId, sessionId);
+		const previous = this.sessionRuntimeStates.get(key);
+		const next: AiSessionRuntimeState = {
+			status: previous?.status ?? "stopped",
+			...(previous?.title ? { title: previous.title } : {}),
+			...(previous?.workspacePath
+				? { workspacePath: previous.workspacePath }
+				: {}),
+			...(previous?.model ? { model: previous.model } : {}),
+			...(previous?.message ? { message: previous.message } : {}),
+			...(previous?.stopReason ? { stopReason: previous.stopReason } : {}),
+			...(previous?.error ? { error: previous.error } : {}),
+			...(previous?.pendingPermission
+				? { pendingPermission: previous.pendingPermission }
+				: {}),
+			...patch,
+			agentId,
+			sessionId,
+			updatedAt: patch.updatedAt ?? Date.now(),
+		};
+		if (
+			next.status !== "waiting_for_permission" &&
+			patch.pendingPermission === undefined
+		) {
+			delete next.pendingPermission;
+		}
+		if (next.status !== "error" && patch.error === undefined) {
+			delete next.error;
+		}
+		if (
+			next.status !== "finished" &&
+			next.status !== "cancelled" &&
+			patch.stopReason === undefined
+		) {
+			delete next.stopReason;
+		}
+		this.sessionRuntimeStates.set(key, next);
+		return next;
+	}
+
+	private rememberSessionRuntimeMetadata(
+		agentId: AiBackend,
+		session: AiSession,
+	): AiSessionRuntimeState | undefined {
+		if (!session.id) return undefined;
+		return this.setSessionRuntimeState(agentId, session.id, {
+			title: session.title,
+			workspacePath: session.workspacePath,
+			model: session.model,
+			updatedAt:
+				this.getSessionRuntimeState(agentId, session.id)?.updatedAt ??
+				session.updatedAt ??
+				Date.now(),
+		});
+	}
+
+	private applyEventRuntimeState(
+		agentId: AiBackend,
+		event: AiEvent,
+	): AiSessionRuntimeState | undefined {
+		const sessionId = event.properties.sessionId;
+		if (typeof sessionId !== "string") return undefined;
+
+		switch (event.type) {
+			case "token":
+			case "message":
+				return this.setSessionRuntimeState(agentId, sessionId, {
+					status: "running",
+					message: "Working",
+				});
+			case "permission.updated":
+				return this.setSessionRuntimeState(agentId, sessionId, {
+					status: "waiting_for_permission",
+					message: "Waiting for permission",
+					pendingPermission: event.properties,
+				});
+			case "cancelled":
+				return this.setSessionRuntimeState(agentId, sessionId, {
+					status: "cancelled",
+					message: "Cancelled",
+					stopReason: "cancelled",
+				});
+			case "end": {
+				const stopReason = event.properties.stopReason;
+				const status = stopReason === "cancelled" ? "cancelled" : "finished";
+				return this.setSessionRuntimeState(agentId, sessionId, {
+					status,
+					message: status === "cancelled" ? "Cancelled" : "Finished",
+					stopReason:
+						typeof stopReason === "string" ? stopReason : undefined,
+				});
+			}
+			case "error":
+			case "prompt_error": {
+				const error = event.properties.error;
+				return this.setSessionRuntimeState(agentId, sessionId, {
+					status: "error",
+					message: "Error",
+					error: typeof error === "string" ? error : undefined,
+				});
+			}
+			default:
+				return this.getSessionRuntimeState(agentId, sessionId);
+		}
 	}
 
 	private registerPermissionListener(

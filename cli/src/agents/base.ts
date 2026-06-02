@@ -73,6 +73,7 @@ export class ACP {
 	private transcripts = new Map<string, AcpTranscript>();
 	private sessions = new Map<string, StoredSession>();
 	private loadingSessions = new Map<string, Promise<void>>();
+	private activePromptSessionIds = new Set<string>();
 	private stderrBuffer = "";
 	private state: AgentConnectionState = "unavailable";
 	private stateError: string | undefined;
@@ -203,6 +204,9 @@ export class ACP {
 		if (!this.capabilities?.sessionCapabilities?.list) {
 			throw new UnsupportedCapabilityError(this.id, "session/list");
 		}
+		if (this.hasActivePrompt()) {
+			return this.cachedSessionInfos(params);
+		}
 
 		const all: acp.SessionInfo[] = [];
 		let cursor = params.cursor;
@@ -222,6 +226,12 @@ export class ACP {
 		if (!this.capabilities?.sessionCapabilities?.list) {
 			throw new UnsupportedCapabilityError(this.id, "session/list");
 		}
+		if (this.hasActivePrompt()) {
+			return {
+				sessions: params.cursor ? [] : this.cachedSessionInfos(params),
+				nextCursor: undefined,
+			};
+		}
 
 		const raw = await this.requireConnection().listSessions(params);
 		const response = this.safeParse("session/list", zListSessionsResponse, raw);
@@ -238,6 +248,9 @@ export class ACP {
 	}
 
 	async listAiSessions(cwd?: string) {
+		if (this.hasActivePrompt()) {
+			return this.cachedAiSessions(cwd);
+		}
 		const sessions = await this.listSessions(
 			cwd ? { cwd: path.resolve(cwd) } : {},
 		);
@@ -245,6 +258,12 @@ export class ACP {
 	}
 
 	async listAiSessionsPage(cwd?: string, cursor?: string) {
+		if (this.hasActivePrompt()) {
+			return {
+				sessions: cursor ? [] : this.cachedAiSessions(cwd),
+				nextCursor: undefined,
+			};
+		}
 		const response = await this.listSessionPage({
 			...(cwd ? { cwd: path.resolve(cwd) } : {}),
 			...(cursor ? { cursor } : {}),
@@ -367,6 +386,9 @@ export class ACP {
 		if (!this.capabilities?.loadSession) {
 			throw new UnsupportedCapabilityError(this.id, "session/load");
 		}
+		if (this.hasActivePrompt()) {
+			return this.cachedLoadSession(params, clientId);
+		}
 
 		const sessionId = params.sessionId;
 		const transcript = this.createTranscript(sessionId);
@@ -444,6 +466,7 @@ export class ACP {
 		const transcript = this.getTranscript(params.sessionId);
 		let permissionRequested = false;
 		const updateTasks = new Set<Promise<void>>();
+		this.activePromptSessionIds.add(params.sessionId);
 		transcript.beginTurn(params.prompt);
 		const listener = async (notification: acp.SessionNotification) => {
 			if (!permissionRequested) {
@@ -506,6 +529,7 @@ export class ACP {
 			throw err;
 		} finally {
 			this.client.removeSessionUpdateListener(params.sessionId, listener);
+			this.activePromptSessionIds.delete(params.sessionId);
 		}
 	}
 
@@ -600,6 +624,70 @@ export class ACP {
 		this.sessions.set(sessionId, stored);
 	}
 
+	protected hasActivePrompt() {
+		return this.activePromptSessionIds.size > 0;
+	}
+
+	private cachedLoadSession(
+		params: acp.LoadSessionRequest,
+		clientId?: string,
+	): LoadSessionResult {
+		const sessionId = params.sessionId;
+		const existing = this.sessions.get(sessionId);
+		const session =
+			existing?.session ??
+			newAiSessionFromResponse(
+				{
+					sessionId,
+				},
+				path.resolve(params.cwd),
+				sessionId,
+			);
+		const messages = this.getMessages(sessionId);
+		if (!existing) {
+			this.sessions.set(sessionId, { session, messages });
+		}
+		this.client.requestPendingPermission(sessionId, clientId);
+		return {
+			response: {
+				configOptions: session.configOptions ?? [],
+			},
+			updates: [],
+			messages,
+		};
+	}
+
+	private cachedAiSessions(cwd?: string) {
+		return this.cachedSessionInfos(cwd ? { cwd: path.resolve(cwd) } : {}).map(
+			acpSessionToAiSession,
+		);
+	}
+
+	private cachedSessionInfos(params: acp.ListSessionsRequest = {}) {
+		const cwd = params.cwd ? path.resolve(params.cwd) : undefined;
+		return [...this.sessions.values()]
+			.map(({ session }) => this.sessionInfoFromStoredSession(session))
+			.filter((session): session is acp.SessionInfo => Boolean(session))
+			.filter((session) => !cwd || path.resolve(session.cwd) === cwd)
+			.sort((a, b) => timestampMs(b.updatedAt) - timestampMs(a.updatedAt));
+	}
+
+	private sessionInfoFromStoredSession(
+		session: StoredSession["session"],
+	): acp.SessionInfo | null {
+		if (!session.id) return null;
+		const cwd = session.workspacePath ? path.resolve(session.workspacePath) : "";
+		if (!cwd) return null;
+		return {
+			sessionId: session.id,
+			cwd,
+			title: session.title,
+			updatedAt: session.updatedAt
+				? new Date(session.updatedAt).toISOString()
+				: undefined,
+		};
+	}
+
 	private isCommandAvailable() {
 		return commandExists(
 			this.descriptor.agentExecutable ?? this.descriptor.spawn.command,
@@ -683,4 +771,10 @@ export class ACP {
 
 		return spawnedAgent;
 	}
+}
+
+function timestampMs(value: string | null | undefined) {
+	if (!value) return 0;
+	const parsed = Date.parse(value);
+	return Number.isFinite(parsed) ? parsed : 0;
 }
