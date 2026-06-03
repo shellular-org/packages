@@ -676,7 +676,9 @@ export class ACP {
 		session: StoredSession["session"],
 	): acp.SessionInfo | null {
 		if (!session.id) return null;
-		const cwd = session.workspacePath ? path.resolve(session.workspacePath) : "";
+		const cwd = session.workspacePath
+			? path.resolve(session.workspacePath)
+			: "";
 		if (!cwd) return null;
 		return {
 			sessionId: session.id,

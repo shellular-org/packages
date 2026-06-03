@@ -23,9 +23,9 @@ import {
 import { z } from "zod";
 import {
 	AiBackendSchema,
-	AiSessionRuntimeStateSchema,
 	AiMessagePartSchema,
 	AiMessageSchema,
+	AiSessionRuntimeStateSchema,
 	AiSessionSchema,
 } from "@/ai-legacy";
 import { MsgType } from "@/base";

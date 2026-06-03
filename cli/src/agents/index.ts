@@ -1121,8 +1121,7 @@ export class AgentsManager {
 				return this.setSessionRuntimeState(agentId, sessionId, {
 					status,
 					message: status === "cancelled" ? "Cancelled" : "Finished",
-					stopReason:
-						typeof stopReason === "string" ? stopReason : undefined,
+					stopReason: typeof stopReason === "string" ? stopReason : undefined,
 				});
 			}
 			case "error":

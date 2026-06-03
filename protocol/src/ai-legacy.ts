@@ -186,9 +186,7 @@ export const AiSessionRuntimeStateSchema = z.object({
 	error: z.string().optional(),
 	pendingPermission: z.record(z.string(), z.unknown()).optional(),
 });
-export type AiSessionRuntimeState = z.infer<
-	typeof AiSessionRuntimeStateSchema
->;
+export type AiSessionRuntimeState = z.infer<typeof AiSessionRuntimeStateSchema>;
 
 export const AiEventSchema = z.object({
 	type: z.string(),
