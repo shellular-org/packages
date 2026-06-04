@@ -1,5 +1,11 @@
 # @shellular/protocol
 
+## 0.0.13
+
+### Patch Changes
+
+- f5f5baf: feat: make CLI the source of truth for keep track of agent state, and enable Cursor
+
 ## 0.0.12
 
 ### Patch Changes
