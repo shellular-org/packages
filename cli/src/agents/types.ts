@@ -30,6 +30,12 @@ export interface AgentDescriptor {
 	disabled?: boolean;
 	description?: string;
 	/**
+	 * Optional informational note about the agent, surfaced in the app (e.g.
+	 * behind an info icon on the sessions page). Use for caveats like which
+	 * sessions are listed or minimum required versions.
+	 */
+	note?: string;
+	/**
 	 * Command to check if an agent is available.
 	 *
 	 * Example:
@@ -57,6 +63,7 @@ export interface AgentInfo {
 	title: string;
 	version?: string;
 	description?: string;
+	note?: string;
 	icon?: string;
 	state: AgentConnectionState;
 	available: boolean;

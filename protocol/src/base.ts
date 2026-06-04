@@ -133,6 +133,8 @@ export const MsgType = {
 	AI_EVENT: "ai:event",
 	AI_AGENTS_LIST: "ai:agents:list",
 	AI_AGENTS_LIST_RESULT: "ai:agents:list:result",
+	AI_ACTIVITY_LIST: "ai:activity:list",
+	AI_ACTIVITY_LIST_RESULT: "ai:activity:list:result",
 	AI_PROVIDERS_LIST: "ai:providers:list",
 	AI_PROVIDERS_LIST_RESULT: "ai:providers:list:result",
 	AI_AUTH_SET: "ai:auth:set",

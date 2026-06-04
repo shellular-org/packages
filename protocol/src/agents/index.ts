@@ -25,6 +25,7 @@ import {
 	AiBackendSchema,
 	AiMessagePartSchema,
 	AiMessageSchema,
+	AiSessionRuntimeStateSchema,
 	AiSessionSchema,
 } from "@/ai-legacy";
 import { MsgType } from "@/base";
@@ -265,6 +266,7 @@ export const AiSessionLoadResultMsgSchema = z.object({
 			backend: AiBackendSchema,
 			session: AcpAiSessionSchema,
 			state: AiSessionStateSchema.optional(),
+			runtimeState: AiSessionRuntimeStateSchema.optional(),
 			messages: z.array(AcpMessageSchema),
 			updates: z.array(z.unknown()).optional(),
 		})
@@ -285,6 +287,7 @@ export const AiSessionResumeResultMsgSchema = z.object({
 			backend: AiBackendSchema,
 			session: AcpAiSessionSchema,
 			state: AiSessionStateSchema.optional(),
+			runtimeState: AiSessionRuntimeStateSchema.optional(),
 		})
 		.optional(),
 });
@@ -303,6 +306,7 @@ export const AiSessionForkResultMsgSchema = z.object({
 			backend: AiBackendSchema,
 			session: AcpAiSessionSchema,
 			state: AiSessionStateSchema.optional(),
+			runtimeState: AiSessionRuntimeStateSchema.optional(),
 		})
 		.optional(),
 });
