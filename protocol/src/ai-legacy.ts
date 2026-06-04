@@ -318,6 +318,18 @@ export const AiAgentsListMsgSchema = z.object({
 });
 export type AiAgentsListMsg = z.infer<typeof AiAgentsListMsgSchema>;
 
+export const AiActivityListMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_ACTIVITY_LIST),
+	clientId: z.string(),
+	data: z
+		.object({
+			backend: AiBackendSchema.optional(),
+		})
+		.optional(),
+});
+export type AiActivityListMsg = z.infer<typeof AiActivityListMsgSchema>;
+
 export const AiProvidersListMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_PROVIDERS_LIST),
@@ -593,6 +605,22 @@ export const AiAgentsListResultMsgSchema = z.object({
 		.optional(),
 });
 export type AiAgentsListResultMsg = z.infer<typeof AiAgentsListResultMsgSchema>;
+
+export const AiActivityListResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_ACTIVITY_LIST_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			activities: z.array(AiSessionRuntimeStateSchema),
+		})
+		.optional(),
+});
+export type AiActivityListResultMsg = z.infer<
+	typeof AiActivityListResultMsgSchema
+>;
 
 export const AiProvidersListResultMsgSchema = z.object({
 	id: z.string().optional(),

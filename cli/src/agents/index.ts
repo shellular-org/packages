@@ -28,6 +28,7 @@ import { Pi } from "./pi";
 import type { AgentDescriptor, AgentInfo } from "./types";
 
 const MAX_AGENT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const RECENT_SESSION_ACTIVITY_MS = 10 * 60 * 1000;
 type RuntimePatch = Partial<
 	Omit<AiSessionRuntimeState, "agentId" | "sessionId" | "updatedAt">
 > & {
@@ -44,6 +45,31 @@ function safeAttachmentSegment(value: string) {
 	return (
 		value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "unknown"
 	);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function parseIsoTimestamp(value: unknown): number | undefined {
+	if (typeof value !== "string") return undefined;
+	const timestamp = Date.parse(value);
+	return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function runtimeMetadataFromStatus(
+	properties: Record<string, unknown>,
+): RuntimePatch | undefined {
+	const status = properties.status;
+	if (!isRecord(status) || status.sessionUpdate !== "session_info_update") {
+		return undefined;
+	}
+	const patch: RuntimePatch = {};
+	if (typeof status.title === "string") patch.title = status.title;
+	if (status.title === null) patch.title = undefined;
+	const updatedAt = parseIsoTimestamp(status.updatedAt);
+	if (updatedAt !== undefined) patch.updatedAt = updatedAt;
+	return Object.keys(patch).length > 0 ? patch : undefined;
 }
 
 function decodeBase64Attachment(content: string): Buffer {
@@ -138,6 +164,18 @@ export class AgentsManager {
 		}) satisfies AgentInfo[];
 	}
 
+	listActivities(agentId?: AiBackend) {
+		const now = Date.now();
+		return [...this.sessionRuntimeStates.values()]
+			.filter((activity) => !agentId || activity.agentId === agentId)
+			.filter(
+				(activity) =>
+					isLiveRuntimeStatus(activity.status) ||
+					now - activity.updatedAt <= RECENT_SESSION_ACTIVITY_MS,
+			)
+			.sort((a, b) => b.updatedAt - a.updatedAt);
+	}
+
 	notifyClient(clientId: string) {
 		for (const [agentId, agent] of this.agents.entries()) {
 			this.registerPermissionListener(agentId, clientId, agent);
@@ -179,7 +217,11 @@ export class AgentsManager {
 		cursor?: string,
 	): Promise<{ sessions: AiSession[]; nextCursor?: string }> {
 		const agent = await this.connectAgent(clientId, agentId);
-		return agent.listAiSessionsPage(cwd, cursor);
+		const result = await agent.listAiSessionsPage(cwd, cursor);
+		for (const session of result.sessions) {
+			this.rememberSessionRuntimeMetadata(agentId, session);
+		}
+		return result;
 	}
 
 	async createSession(
@@ -471,6 +513,17 @@ export class AgentsManager {
 				clientId: msg.clientId,
 				respTo: msg.id,
 				data: { agents },
+			});
+		});
+
+		conn.on(MsgType.AI_ACTIVITY_LIST, (msg) => {
+			conn.send({
+				type: MsgType.AI_ACTIVITY_LIST_RESULT,
+				clientId: msg.clientId,
+				respTo: msg.id,
+				data: {
+					activities: this.listActivities(msg.data?.backend),
+				},
 			});
 		});
 
@@ -996,15 +1049,24 @@ export class AgentsManager {
 			Object.values(BUILTIN_AGENT_DESCRIPTORS).flatMap((descriptor) =>
 				descriptor.id
 					? [
-							this.connectAgent(clientId, descriptor.id).then((agent) =>
-								agent.listAiSessions(workspace),
+							this.connectAgent(clientId, descriptor.id).then(async (agent) =>
+								({
+									agentId: descriptor.id,
+									sessions: await agent.listAiSessions(workspace),
+								}),
 							),
 						]
 					: [],
 			),
 		);
 		return results
-			.flatMap((result) => (result.status === "fulfilled" ? result.value : []))
+			.flatMap((result) => {
+				if (result.status !== "fulfilled") return [];
+				for (const session of result.value.sessions) {
+					this.rememberSessionRuntimeMetadata(result.value.agentId, session);
+				}
+				return result.value.sessions;
+			})
 			.sort((a, b) => b.updatedAt - a.updatedAt);
 	}
 
@@ -1078,15 +1140,16 @@ export class AgentsManager {
 		session: AiSession,
 	): AiSessionRuntimeState | undefined {
 		if (!session.id) return undefined;
-		return this.setSessionRuntimeState(agentId, session.id, {
-			title: session.title,
-			workspacePath: session.workspacePath,
-			model: session.model,
+		const patch: RuntimePatch = {
 			updatedAt:
 				this.getSessionRuntimeState(agentId, session.id)?.updatedAt ??
 				session.updatedAt ??
 				Date.now(),
-		});
+		};
+		if (session.title) patch.title = session.title;
+		if (session.workspacePath) patch.workspacePath = session.workspacePath;
+		if (session.model) patch.model = session.model;
+		return this.setSessionRuntimeState(agentId, session.id, patch);
 	}
 
 	private applyEventRuntimeState(
@@ -1132,6 +1195,13 @@ export class AgentsManager {
 					message: "Error",
 					error: typeof error === "string" ? error : undefined,
 				});
+			}
+			case "session.status": {
+				const metadata = runtimeMetadataFromStatus(event.properties);
+				if (metadata) {
+					return this.setSessionRuntimeState(agentId, sessionId, metadata);
+				}
+				return this.getSessionRuntimeState(agentId, sessionId);
 			}
 			default:
 				return this.getSessionRuntimeState(agentId, sessionId);
@@ -1285,4 +1355,13 @@ function sessionStatusEvent(
 		default:
 			return null;
 	}
+}
+
+function isLiveRuntimeStatus(status: AiSessionRuntimeState["status"]) {
+	return (
+		status === "starting" ||
+		status === "running" ||
+		status === "waiting_for_permission" ||
+		status === "stopping"
+	);
 }
