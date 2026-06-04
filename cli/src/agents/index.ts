@@ -1049,8 +1049,8 @@ export class AgentsManager {
 			Object.values(BUILTIN_AGENT_DESCRIPTORS).flatMap((descriptor) =>
 				descriptor.id
 					? [
-							this.connectAgent(clientId, descriptor.id).then(async (agent) =>
-								({
+							this.connectAgent(clientId, descriptor.id).then(
+								async (agent) => ({
 									agentId: descriptor.id,
 									sessions: await agent.listAiSessions(workspace),
 								}),
