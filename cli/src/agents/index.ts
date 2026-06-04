@@ -157,6 +157,7 @@ export class AgentsManager {
 					title: descriptor.title,
 					version: descriptor.version,
 					description: descriptor.description,
+					note: descriptor.note,
 					available: isAgentAvailable(descriptor),
 					installationCommands: descriptor.installationCommands,
 				}

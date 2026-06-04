@@ -121,6 +121,7 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		id: "cursor",
 		name: "Cursor",
 		title: "Cursor",
+		note: "Sessions created in the Cursor desktop app aren't listed here — only sessions started with the Cursor CLI (cursor-agent) will show up.\n\nThis requires cursor-agent version 2026.06.03-0bbb28e or newer.",
 		agentExecutable: "cursor-agent",
 		// disabled for now because cursor's ACP is buggy
 		// it doesn't return session notifications for session/load, due to which

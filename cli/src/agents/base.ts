@@ -105,6 +105,7 @@ export class ACP {
 			capabilities: this.capabilities,
 			available: this.isCommandAvailable(),
 			description: this.descriptor.description,
+			note: this.descriptor.note,
 			version: this.descriptor.version ?? this.initResult?.agentInfo?.version,
 		};
 	}
