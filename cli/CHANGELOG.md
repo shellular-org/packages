@@ -1,5 +1,13 @@
 # shellular
 
+## 0.0.28
+
+### Patch Changes
+
+- f5f5baf: feat: make CLI the source of truth for keep track of agent state, and enable Cursor
+- Updated dependencies [f5f5baf]
+  - @shellular/protocol@0.0.13
+
 ## 0.0.27
 
 ### Patch Changes
