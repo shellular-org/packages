@@ -170,6 +170,27 @@ export const AiSessionLoadMsgSchema = z.object({
 });
 export type AiSessionLoadMsg = z.infer<typeof AiSessionLoadMsgSchema>;
 
+export const AiSessionAttachMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_ATTACH),
+	clientId: z.string(),
+	data: AiSessionSetupSchema.extend({
+		sessionId: z.string(),
+	}),
+});
+export type AiSessionAttachMsg = z.infer<typeof AiSessionAttachMsgSchema>;
+
+export const AiSessionDetachMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_DETACH),
+	clientId: z.string(),
+	data: z.object({
+		backend: AiBackendSchema,
+		sessionId: z.string(),
+	}),
+});
+export type AiSessionDetachMsg = z.infer<typeof AiSessionDetachMsgSchema>;
+
 export const AiSessionResumeMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_SESSION_RESUME),
@@ -274,6 +295,47 @@ export const AiSessionLoadResultMsgSchema = z.object({
 });
 export type AiSessionLoadResultMsg = z.infer<
 	typeof AiSessionLoadResultMsgSchema
+>;
+
+export const AiSessionAttachResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_ATTACH_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			backend: AiBackendSchema,
+			session: AcpAiSessionSchema,
+			state: AiSessionStateSchema.optional(),
+			runtimeState: AiSessionRuntimeStateSchema.optional(),
+			messages: z.array(AcpMessageSchema),
+			updates: z.array(z.unknown()).optional(),
+			revision: z.number().int().nonnegative(),
+			syncing: z.boolean().optional(),
+		})
+		.optional(),
+});
+export type AiSessionAttachResultMsg = z.infer<
+	typeof AiSessionAttachResultMsgSchema
+>;
+
+export const AiSessionDetachResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_DETACH_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			backend: AiBackendSchema,
+			sessionId: z.string(),
+			ok: z.literal(true),
+		})
+		.optional(),
+});
+export type AiSessionDetachResultMsg = z.infer<
+	typeof AiSessionDetachResultMsgSchema
 >;
 
 export const AiSessionResumeResultMsgSchema = z.object({

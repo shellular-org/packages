@@ -192,6 +192,7 @@ export const AiEventSchema = z.object({
 	type: z.string(),
 	properties: z.record(z.string(), z.unknown()),
 	state: AiSessionRuntimeStateSchema.optional(),
+	revision: z.number().int().nonnegative().optional(),
 });
 export type AiEvent = z.infer<typeof AiEventSchema>;
 
@@ -551,6 +552,7 @@ export const AiEventMsgSchema = z.object({
 		.object({
 			backend: AiBackendSchema,
 			type: z.string(),
+			revision: z.number().int().nonnegative().optional(),
 			state: AiSessionRuntimeStateSchema.optional(),
 			properties: z
 				.object({
