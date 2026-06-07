@@ -37,7 +37,13 @@ import { searchProjectFiles } from "./project-search";
  */
 function safePath(rootDir: string, requestedPath: string): string | null {
 	const resolved = path.resolve(rootDir, requestedPath);
-	if (!resolved.startsWith(rootDir + path.sep) && resolved !== rootDir) {
+	const normalizedRoot = path.resolve(rootDir);
+	const rootPrefix =
+		normalizedRoot === path.parse(normalizedRoot).root
+			? normalizedRoot
+			: normalizedRoot + path.sep;
+
+	if (!resolved.startsWith(rootPrefix) && resolved !== normalizedRoot) {
 		return null;
 	}
 	return resolved;
