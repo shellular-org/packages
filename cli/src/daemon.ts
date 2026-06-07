@@ -13,6 +13,7 @@ import {
 } from "@/boot-lock";
 import { config } from "@/config";
 import { logger } from "@/logger";
+import { preStart } from "@/pre-start";
 
 type DaemonOptions = {
 	server: string;
@@ -371,6 +372,8 @@ export async function startDaemon(options: DaemonOptions): Promise<void> {
 		}
 		return;
 	}
+
+	await preStart(options);
 
 	const logs = getLogPaths();
 	const offsets = {

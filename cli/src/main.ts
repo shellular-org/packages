@@ -28,7 +28,7 @@ import {
 	upsertClient,
 	writeKnownClients,
 } from "@/clients";
-import { config, ensureConfig, getOrRegisterHostId } from "@/config";
+import { config, ensureConfig } from "@/config";
 import { connectWithReconnect } from "@/connection";
 import {
 	restartDaemon,
@@ -42,6 +42,7 @@ import { initFilesystemHandler } from "@/filesystem";
 import { logger } from "@/logger";
 import { notify } from "@/notify";
 import { initPortsHandler } from "@/ports";
+import { preStart } from "@/pre-start";
 import { cleanupProxy, initProxyHandler } from "@/proxy";
 import { ServerUrl } from "@/server-url";
 import { initBatteryStream, initSysmonHandler } from "@/sysmon";
@@ -294,16 +295,7 @@ async function runCli({
 		workDir,
 	});
 
-	let hostId: string;
-	try {
-		hostId = await getOrRegisterHostId(serverUrl);
-	} catch (err) {
-		logger.error(
-			"Error with host registration:",
-			err instanceof Error ? err.message : String(err),
-		);
-		process.exit(1);
-	}
+	const { hostId } = await preStart({ server });
 
 	await initEncryption();
 
