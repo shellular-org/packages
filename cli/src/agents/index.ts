@@ -217,6 +217,10 @@ export class AgentsManager {
 		}
 
 		let agent = this.agents.get(agentId);
+		if (agent && !agent.canReuse()) {
+			this.agents.delete(agentId);
+			agent = undefined;
+		}
 		if (!agent) {
 			agent = this.createManagedRuntime(agentId);
 			this.agents.set(agentId, agent);
@@ -234,6 +238,10 @@ export class AgentsManager {
 	) {
 		const key = this.sessionKey(agentId, sessionId);
 		let agent = this.sessionRuntimes.get(key);
+		if (agent && !agent.canReuse()) {
+			this.sessionRuntimes.delete(key);
+			agent = undefined;
+		}
 		if (!agent) {
 			agent = this.createManagedRuntime(agentId);
 			this.sessionRuntimes.set(key, agent);
@@ -317,12 +325,20 @@ export class AgentsManager {
 		const key = this.sessionKey(agentId, sessionId);
 		const cached = this.sessionSnapshots.get(key);
 		if (cached && !agent.hasActivePrompt()) {
+			if (!agent.getSession(sessionId)) {
+				setTimeout(() => {
+					this.refreshSessionSnapshot(clientId, agentId, sessionId, cwd, options, {
+						emitSnapshot: true,
+					});
+				}, 0);
+			}
 			return {
 				...cached,
 				runtimeState:
 					this.getSessionRuntimeState(agentId, sessionId) ??
 					cached.runtimeState,
 				revision: this.getSessionRevision(agentId, sessionId),
+				syncing: !agent.getSession(sessionId),
 			};
 		}
 		const result = agent.snapshotSession(loadParams, clientId);
@@ -433,6 +449,9 @@ export class AgentsManager {
 				message: "Working",
 			},
 		});
+		if (!agent.getSession(sessionId)) {
+			await this.ensureSessionRuntimeLoaded(clientId, agentId, sessionId);
+		}
 		const prompt = normalizePromptContent(content);
 		const result = await agent.prompt(
 			{
@@ -455,6 +474,31 @@ export class AgentsManager {
 			});
 		}
 		return result;
+	}
+
+	private async ensureSessionRuntimeLoaded(
+		clientId: string,
+		agentId: AiBackend,
+		sessionId: string,
+	) {
+		const key = this.sessionKey(agentId, sessionId);
+		const existingLoad = this.sessionLoadTasks.get(key);
+		if (existingLoad) {
+			await existingLoad;
+			return;
+		}
+		const snapshot = this.sessionSnapshots.get(key);
+		if (!snapshot?.session.workspacePath) return;
+		this.refreshSessionSnapshot(
+			clientId,
+			agentId,
+			sessionId,
+			snapshot.session.workspacePath,
+			{},
+			{ emitSnapshot: true },
+		);
+		const load = this.sessionLoadTasks.get(key);
+		if (load) await load;
 	}
 
 	async cancel(clientId: string, agentId: AiBackend, sessionId: string) {

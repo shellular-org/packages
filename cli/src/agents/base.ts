@@ -95,6 +95,10 @@ export class ACP {
 		return this.state;
 	}
 
+	canReuse(): boolean {
+		return this.state !== "exited" && this.state !== "failed";
+	}
+
 	getInfo(): AgentInfo {
 		return {
 			state: this.state,
