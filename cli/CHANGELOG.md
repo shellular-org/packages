@@ -1,5 +1,13 @@
 # shellular
 
+## 0.0.29
+
+### Patch Changes
+
+- 6e8bd00: fix: prevent daemon startup failures from repeatedly registering hosts.
+
+  the daemon now runs host registration as a startup preflight before launching the PM2-managed process, and PM2 restarts are capped to avoid infinite restart loops on rapid failures.
+
 ## 0.0.28
 
 ### Patch Changes
