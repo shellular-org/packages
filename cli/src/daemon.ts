@@ -28,6 +28,9 @@ type LogOffsets = {
 	err: number;
 };
 
+const DAEMON_MAX_RESTARTS = 5;
+const DAEMON_MIN_UPTIME_MS = 10_000;
+
 function getLogPaths(): { out: string; err: string } {
 	const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 	return {
@@ -192,6 +195,8 @@ function startDaemonProcess(
 				exec_mode: "fork",
 				instances: 1,
 				autorestart: true,
+				max_restarts: DAEMON_MAX_RESTARTS,
+				min_uptime: DAEMON_MIN_UPTIME_MS,
 				force: false,
 				merge_logs: true,
 				time: false,
