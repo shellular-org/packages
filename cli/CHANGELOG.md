@@ -1,5 +1,20 @@
 # shellular
 
+## 0.0.30
+
+### Patch Changes
+
+- abef551: fix: session attach/detach with multi-client support, lazy session snapshots, and runtime cleanup
+
+  - Add AI_SESSION_ATTACH and AI_SESSION_DETACH for explicit session lifecycle management
+  - Implement session snapshots with revision tracking for efficient state sync
+  - Add runtime cleanup timers to prevent memory leaks from idle sessions
+  - Fix race condition preventing reuse of destroyed ACP runtimes
+  - Fix root path resolution to not inadvertently form double-slash paths
+
+- Updated dependencies [abef551]
+  - @shellular/protocol@0.0.14
+
 ## 0.0.29
 
 ### Patch Changes
