@@ -95,6 +95,10 @@ export class ACP {
 		return this.state;
 	}
 
+	canReuse(): boolean {
+		return this.state !== "exited" && this.state !== "failed";
+	}
+
 	getInfo(): AgentInfo {
 		return {
 			state: this.state,
@@ -582,14 +586,21 @@ export class ACP {
 
 	getMessages(sessionId: string) {
 		return (
-			this.sessions.get(sessionId)?.messages ??
 			this.transcripts.get(sessionId)?.getMessages() ??
+			this.sessions.get(sessionId)?.messages ??
 			[]
 		);
 	}
 
 	getSession(sessionId: string) {
 		return this.sessions.get(sessionId)?.session ?? null;
+	}
+
+	snapshotSession(
+		params: acp.LoadSessionRequest,
+		clientId?: string,
+	): LoadSessionResult {
+		return this.cachedLoadSession(params, clientId);
 	}
 
 	destroy() {
@@ -625,7 +636,7 @@ export class ACP {
 		this.sessions.set(sessionId, stored);
 	}
 
-	protected hasActivePrompt() {
+	hasActivePrompt() {
 		return this.activePromptSessionIds.size > 0;
 	}
 

@@ -16,10 +16,12 @@ import {
 	type AiQuestionRejectMsg,
 	type AiQuestionReplyMsg,
 	type AiRevertMsg,
+	type AiSessionAttachMsg,
 	type AiSessionCloseMsg,
 	type AiSessionConfigSetMsg,
 	type AiSessionCreateMsg,
 	type AiSessionDeleteMsg,
+	type AiSessionDetachMsg,
 	type AiSessionForkMsg,
 	type AiSessionGetMsg,
 	type AiSessionListMsg,
@@ -239,6 +241,14 @@ export class Connection extends EventEmitter {
 	on(
 		eventName: typeof MsgType.AI_SESSION_LOAD,
 		listener: (msg: AiSessionLoadMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_SESSION_ATTACH,
+		listener: (msg: AiSessionAttachMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_SESSION_DETACH,
+		listener: (msg: AiSessionDetachMsg) => void,
 	): this;
 	on(
 		eventName: typeof MsgType.AI_SESSION_RESUME,

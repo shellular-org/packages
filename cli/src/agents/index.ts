@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
 import type {
+	AcpAiSession,
+	AcpMessage,
 	AcpPromptRequest,
 	AiAttachmentWriteMsg,
 	AiAttachmentWriteResultMsg,
@@ -10,6 +12,7 @@ import type {
 	AiSession,
 	AiSessionCreateMsg,
 	AiSessionRuntimeState,
+	AiSessionState,
 } from "@shellular/protocol";
 import { AcpContentBlockSchema, MsgType } from "@shellular/protocol";
 
@@ -29,10 +32,21 @@ import type { AgentDescriptor, AgentInfo } from "./types";
 
 const MAX_AGENT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const RECENT_SESSION_ACTIVITY_MS = 10 * 60 * 1000;
+const SESSION_RUNTIME_IDLE_MS = 2 * 60 * 1000;
 type RuntimePatch = Partial<
 	Omit<AiSessionRuntimeState, "agentId" | "sessionId" | "updatedAt">
 > & {
 	updatedAt?: number;
+};
+type AttachedSessionSnapshot = {
+	backend: AiBackend;
+	session: AcpAiSession;
+	state: AiSessionState;
+	runtimeState?: AiSessionRuntimeState;
+	messages: AcpMessage[];
+	updates: unknown[];
+	revision: number;
+	syncing?: boolean;
 };
 
 function getErrorMessage(err: unknown): string {
@@ -134,6 +148,15 @@ function eventClientId(event: AiEvent, fallbackClientId: string): string {
 export class AgentsManager {
 	private descriptors = new Map<string, AgentDescriptor>();
 	private agents = new Map<string, ACP>();
+	private sessionRuntimes = new Map<string, ACP>();
+	private sessionSnapshots = new Map<string, AttachedSessionSnapshot>();
+	private sessionLoadTasks = new Map<string, Promise<void>>();
+	private runtimeIds = new WeakMap<ACP, string>();
+	private nextRuntimeId = 0;
+	private sessionRuntimeCleanupTimers = new Map<
+		string,
+		ReturnType<typeof setTimeout>
+	>();
 	private sessionAgents = new Map<string, string>();
 
 	constructor() {
@@ -182,6 +205,12 @@ export class AgentsManager {
 			this.registerPermissionListener(agentId, clientId, agent);
 			agent.requestPendingPermissions(clientId);
 		}
+		for (const [key, agent] of this.sessionRuntimes.entries()) {
+			const [agentId] = this.parseSessionKey(key);
+			if (!agentId) continue;
+			this.registerPermissionListener(agentId, clientId, agent);
+			agent.requestPendingPermissions(clientId);
+		}
 	}
 
 	async connectAgent(clientId: string, agentId: AiBackend) {
@@ -191,21 +220,36 @@ export class AgentsManager {
 		}
 
 		let agent = this.agents.get(agentId);
+		if (agent && !agent.canReuse()) {
+			this.agents.delete(agentId);
+			agent = undefined;
+		}
 		if (!agent) {
-			agent = createAgentRuntime(agentId);
+			agent = this.createManagedRuntime(agentId);
 			this.agents.set(agentId, agent);
-			agent.onSessionUpdate((notification) => {
-				const backend = descriptor.id;
-				const clientId =
-					this.sessionClientIds.get(
-						this.sessionKey(descriptor.id, notification.sessionId),
-					) ?? "";
-				if (!clientId) return;
-				const status = sessionStatusEvent(notification);
-				if (status) this.emit(clientId, backend, status);
-			});
 		}
 
+		this.registerPermissionListener(agentId, clientId, agent);
+		await agent.init();
+		return agent;
+	}
+
+	private async connectSessionAgent(
+		clientId: string,
+		agentId: AiBackend,
+		sessionId: string,
+	) {
+		const key = this.sessionKey(agentId, sessionId);
+		let agent = this.sessionRuntimes.get(key);
+		if (agent && !agent.canReuse()) {
+			this.sessionRuntimes.delete(key);
+			agent = undefined;
+		}
+		if (!agent) {
+			agent = this.createManagedRuntime(agentId);
+			this.sessionRuntimes.set(key, agent);
+		}
+		this.cancelSessionRuntimeCleanup(agentId, sessionId);
 		this.registerPermissionListener(agentId, clientId, agent);
 		await agent.init();
 		return agent;
@@ -231,12 +275,13 @@ export class AgentsManager {
 		cwd: string,
 		options: Parameters<ACP["createSession"]>[1] = {},
 	) {
-		const agent = await this.connectAgent(clientId, agentId);
+		const agent = this.createManagedRuntime(agentId);
+		this.registerPermissionListener(agentId, clientId, agent);
+		await agent.init();
 		const result = await agent.createSession(cwd, options);
-		this.sessionAgents.set(
-			result.session.id ?? result.response.sessionId,
-			agentId,
-		);
+		const sessionId = result.session.id ?? result.response.sessionId;
+		this.sessionRuntimes.set(this.sessionKey(agentId, sessionId), agent);
+		this.sessionAgents.set(sessionId, agentId);
 		return result;
 	}
 
@@ -249,7 +294,7 @@ export class AgentsManager {
 			Omit<Parameters<ACP["loadSession"]>[0], "sessionId" | "cwd">
 		> = {},
 	) {
-		const agent = await this.connectAgent(clientId, agentId);
+		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
 		this.rememberSessionClient(agentId, sessionId, clientId);
 		return agent.loadSession(
 			{
@@ -262,6 +307,95 @@ export class AgentsManager {
 		);
 	}
 
+	async attachSession(
+		clientId: string,
+		agentId: AiBackend,
+		sessionId: string,
+		cwd: string,
+		options: Partial<
+			Omit<Parameters<ACP["loadSession"]>[0], "sessionId" | "cwd">
+		> = {},
+	) {
+		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
+		this.attachSessionClient(agentId, sessionId, clientId);
+		this.rememberSessionClient(agentId, sessionId, clientId);
+		const loadParams = {
+			...options,
+			sessionId,
+			cwd,
+			mcpServers: options.mcpServers ?? [],
+		};
+		const key = this.sessionKey(agentId, sessionId);
+		const cached = this.sessionSnapshots.get(key);
+		if (cached && !agent.hasActivePrompt()) {
+			if (!agent.getSession(sessionId)) {
+				setTimeout(() => {
+					this.refreshSessionSnapshot(
+						clientId,
+						agentId,
+						sessionId,
+						cwd,
+						options,
+						{
+							emitSnapshot: true,
+						},
+					);
+				}, 0);
+			}
+			return {
+				...cached,
+				runtimeState:
+					this.getSessionRuntimeState(agentId, sessionId) ??
+					cached.runtimeState,
+				revision: this.getSessionRevision(agentId, sessionId),
+				syncing: !agent.getSession(sessionId),
+			};
+		}
+		const result = agent.snapshotSession(loadParams, clientId);
+		if (!agent.hasActivePrompt()) {
+			setTimeout(() => {
+				this.refreshSessionSnapshot(
+					clientId,
+					agentId,
+					sessionId,
+					cwd,
+					options,
+					{
+						emitSnapshot: true,
+					},
+				);
+			}, 0);
+		}
+		const session = agent.getSession(sessionId) ?? {
+			id: sessionId,
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+			workspacePath: cwd,
+			configOptions: result.response.configOptions ?? undefined,
+		};
+		const runtimeState = this.rememberSessionRuntimeMetadata(agentId, session);
+		return this.setSessionSnapshot(agentId, sessionId, {
+			backend: agentId,
+			session,
+			state: {
+				configOptions: result.response.configOptions ?? undefined,
+				models: result.response.models,
+				modes: result.response.modes,
+				availableCommands: latestAvailableCommands(result.updates),
+			},
+			runtimeState,
+			messages: result.messages,
+			updates: result.updates,
+			revision: this.getSessionRevision(agentId, sessionId),
+			syncing: !agent.hasActivePrompt(),
+		});
+	}
+
+	detachSession(clientId: string, agentId: AiBackend, sessionId: string) {
+		this.detachSessionClient(agentId, sessionId, clientId);
+		this.scheduleSessionRuntimeCleanup(agentId, sessionId);
+	}
+
 	async resumeSession(
 		clientId: string,
 		agentId: AiBackend,
@@ -271,7 +405,7 @@ export class AgentsManager {
 			Omit<Parameters<ACP["resumeSession"]>[0], "sessionId" | "cwd">
 		> = {},
 	) {
-		const agent = await this.connectAgent(clientId, agentId);
+		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
 		this.rememberSessionClient(agentId, sessionId, clientId);
 		return agent.resumeSession({
 			...options,
@@ -290,7 +424,7 @@ export class AgentsManager {
 			Omit<Parameters<ACP["forkSession"]>[0], "sessionId" | "cwd">
 		> = {},
 	) {
-		const agent = await this.connectAgent(clientId, agentId);
+		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
 		const result = await agent.forkSession({
 			...options,
 			sessionId,
@@ -302,9 +436,13 @@ export class AgentsManager {
 	}
 
 	async closeSession(clientId: string, agentId: AiBackend, sessionId: string) {
-		const agent = await this.connectAgent(clientId, agentId);
+		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
 		const response = await agent.closeSession({ sessionId });
 		this.sessionAgents.delete(sessionId);
+		this.attachedSessionClients.delete(this.sessionKey(agentId, sessionId));
+		this.sessionRevisions.delete(this.sessionKey(agentId, sessionId));
+		this.sessionLoadTasks.delete(this.sessionKey(agentId, sessionId));
+		this.destroySessionRuntime(agentId, sessionId);
 		return response;
 	}
 
@@ -314,7 +452,8 @@ export class AgentsManager {
 		sessionId: string,
 		content: string | unknown[],
 	) {
-		const agent = await this.connectAgent(clientId, agentId);
+		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
+		this.attachSessionClient(agentId, sessionId, clientId);
 		this.rememberSessionClient(agentId, sessionId, clientId);
 		this.setSessionRuntimeState(agentId, sessionId, {
 			status: "running",
@@ -327,8 +466,11 @@ export class AgentsManager {
 				message: "Working",
 			},
 		});
+		if (!agent.getSession(sessionId)) {
+			await this.ensureSessionRuntimeLoaded(clientId, agentId, sessionId);
+		}
 		const prompt = normalizePromptContent(content);
-		return agent.prompt(
+		const result = await agent.prompt(
 			{
 				sessionId,
 				prompt,
@@ -340,10 +482,46 @@ export class AgentsManager {
 			},
 			clientId,
 		);
+		const snapshot = this.sessionSnapshots.get(
+			this.sessionKey(agentId, sessionId),
+		);
+		if (snapshot) {
+			this.sessionSnapshots.set(this.sessionKey(agentId, sessionId), {
+				...snapshot,
+				messages: result.messages,
+				revision: this.getSessionRevision(agentId, sessionId),
+			});
+		}
+		return result;
+	}
+
+	private async ensureSessionRuntimeLoaded(
+		clientId: string,
+		agentId: AiBackend,
+		sessionId: string,
+	) {
+		const key = this.sessionKey(agentId, sessionId);
+		const existingLoad = this.sessionLoadTasks.get(key);
+		if (existingLoad) {
+			await existingLoad;
+			return;
+		}
+		const snapshot = this.sessionSnapshots.get(key);
+		if (!snapshot?.session.workspacePath) return;
+		this.refreshSessionSnapshot(
+			clientId,
+			agentId,
+			sessionId,
+			snapshot.session.workspacePath,
+			{},
+			{ emitSnapshot: true },
+		);
+		const load = this.sessionLoadTasks.get(key);
+		if (load) await load;
 	}
 
 	async cancel(clientId: string, agentId: AiBackend, sessionId: string) {
-		const agent = await this.connectAgent(clientId, agentId);
+		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
 		this.setSessionRuntimeState(agentId, sessionId, {
 			status: "stopping",
 			message: "Stopping",
@@ -367,20 +545,21 @@ export class AgentsManager {
 				message: "Stopped",
 			},
 		});
+		this.scheduleSessionRuntimeCleanup(agentId, sessionId);
 		return result;
 	}
 
 	async replyPermission(
 		clientId: string,
 		agentId: AiBackend,
-		_sessionId: string,
+		sessionId: string,
 		permissionId: string,
 		optionId: string | undefined,
 	) {
 		if (!optionId) {
 			throw new Error("ACP permission reply requires an optionId");
 		}
-		const agent = await this.connectAgent(clientId, agentId);
+		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
 		return agent.replyPermission(permissionId, optionId);
 	}
 
@@ -391,7 +570,7 @@ export class AgentsManager {
 		configId: string,
 		value: string | boolean,
 	) {
-		const agent = await this.connectAgent(clientId, agentId);
+		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
 		return agent.setSessionConfigOption({
 			sessionId,
 			configId,
@@ -405,7 +584,7 @@ export class AgentsManager {
 		sessionId: string,
 		modeId: string,
 	) {
-		const agent = await this.connectAgent(clientId, agentId);
+		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
 		return agent.setSessionMode({ sessionId, modeId });
 	}
 
@@ -415,7 +594,7 @@ export class AgentsManager {
 		sessionId: string,
 		modelId: string,
 	) {
-		const agent = await this.connectAgent(clientId, agentId);
+		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
 		return agent.setSessionModel({ sessionId, modelId });
 	}
 
@@ -423,7 +602,15 @@ export class AgentsManager {
 		for (const agent of this.agents.values()) {
 			agent.destroy();
 		}
+		for (const agent of this.sessionRuntimes.values()) {
+			agent.destroy();
+		}
+		for (const timer of this.sessionRuntimeCleanupTimers.values()) {
+			clearTimeout(timer);
+		}
 		this.agents.clear();
+		this.sessionRuntimes.clear();
+		this.sessionRuntimeCleanupTimers.clear();
 		this.sessionAgents.clear();
 	}
 
@@ -437,6 +624,8 @@ export class AgentsManager {
 		(clientId: string, backend: AiBackend, event: AiEvent) => void
 	>();
 	private sessionClientIds = new Map<string, string>();
+	private attachedSessionClients = new Map<string, Set<string>>();
+	private sessionRevisions = new Map<string, number>();
 	private sessionRuntimeStates = new Map<string, AiSessionRuntimeState>();
 	private permissionListenerCleanups = new Map<string, () => void>();
 
@@ -459,6 +648,7 @@ export class AgentsManager {
 				data: {
 					backend,
 					...event,
+					revision: event.revision,
 					state: "state" in event ? event.state : undefined,
 					properties: {
 						...event.properties,
@@ -606,7 +796,11 @@ export class AgentsManager {
 						mcpServers: msg.data.mcpServers as never,
 					},
 				);
-				const agent = await this.connectAgent(msg.clientId, msg.data.backend);
+				const agent = await this.connectSessionAgent(
+					msg.clientId,
+					msg.data.backend,
+					msg.data.sessionId,
+				);
 				const session = agent.getSession(msg.data.sessionId) ?? {
 					id: msg.data.sessionId,
 					createdAt: Date.now(),
@@ -643,6 +837,57 @@ export class AgentsManager {
 			} catch (err) {
 				conn.send({
 					type: MsgType.AI_SESSION_LOAD_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(err),
+				});
+			}
+		});
+
+		conn.on(MsgType.AI_SESSION_ATTACH, async (msg) => {
+			try {
+				const result = await this.attachSession(
+					msg.clientId,
+					msg.data.backend,
+					msg.data.sessionId,
+					msg.data.cwd,
+					{
+						additionalDirectories: msg.data.additionalDirectories,
+						mcpServers: msg.data.mcpServers as never,
+					},
+				);
+				conn.send({
+					type: MsgType.AI_SESSION_ATTACH_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: result,
+				});
+			} catch (err) {
+				conn.send({
+					type: MsgType.AI_SESSION_ATTACH_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(err),
+				});
+			}
+		});
+
+		conn.on(MsgType.AI_SESSION_DETACH, (msg) => {
+			try {
+				this.detachSession(msg.clientId, msg.data.backend, msg.data.sessionId);
+				conn.send({
+					type: MsgType.AI_SESSION_DETACH_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: {
+						backend: msg.data.backend,
+						sessionId: msg.data.sessionId,
+						ok: true,
+					},
+				});
+			} catch (err) {
+				conn.send({
+					type: MsgType.AI_SESSION_DETACH_RESULT,
 					clientId: msg.clientId,
 					respTo: msg.id,
 					error: getErrorMessage(err),
@@ -773,7 +1018,11 @@ export class AgentsManager {
 
 		conn.on(MsgType.AI_SESSION_GET, async (msg) => {
 			try {
-				const agent = await this.connectAgent(msg.clientId, msg.data.backend);
+				const agent = await this.connectSessionAgent(
+					msg.clientId,
+					msg.data.backend,
+					msg.data.sessionId,
+				);
 				const session = agent.getSession(msg.data.sessionId);
 				conn.send({
 					type: MsgType.AI_SESSION_GET_RESULT,
@@ -793,7 +1042,11 @@ export class AgentsManager {
 
 		conn.on(MsgType.AI_MESSAGES_LIST, async (msg) => {
 			try {
-				const agent = await this.connectAgent(msg.clientId, msg.data.backend);
+				const agent = await this.connectSessionAgent(
+					msg.clientId,
+					msg.data.backend,
+					msg.data.sessionId,
+				);
 				conn.send({
 					type: MsgType.AI_MESSAGES_LIST_RESULT,
 					clientId: msg.clientId,
@@ -1033,6 +1286,7 @@ export class AgentsManager {
 		});
 
 		conn.on(MsgType.SESSION_CLIENT_LEFT, (msg) => {
+			this.detachClientFromAllSessions(msg.data.clientId);
 			this.removeClientPermissionListeners(msg.data.clientId);
 		});
 
@@ -1073,9 +1327,37 @@ export class AgentsManager {
 
 	private emit(clientId: string, backend: AiBackend, event: AiEvent) {
 		const state = this.applyEventRuntimeState(backend, event);
-		const enrichedEvent = state ? { ...event, state } : event;
+		const sessionId = event.properties.sessionId;
+		const revision =
+			typeof sessionId === "string"
+				? this.nextSessionRevision(backend, sessionId)
+				: undefined;
+		const enrichedEvent = {
+			...event,
+			...(state ? { state } : {}),
+			...(revision !== undefined ? { revision } : {}),
+		};
+		if (typeof sessionId === "string" && event.type === "message") {
+			const message = event.properties.message;
+			if (isRecord(message)) {
+				this.upsertSnapshotMessage(backend, sessionId, message as AcpMessage);
+			}
+		}
+		const targets =
+			typeof sessionId === "string"
+				? this.getEventTargetClientIds(backend, sessionId, clientId)
+				: [clientId];
 		for (const subscriber of this.subscribers) {
-			subscriber(clientId, backend, enrichedEvent);
+			for (const targetClientId of targets) {
+				subscriber(targetClientId, backend, enrichedEvent);
+			}
+		}
+		if (
+			typeof sessionId === "string" &&
+			state &&
+			!isLiveRuntimeStatus(state.status)
+		) {
+			this.scheduleSessionRuntimeCleanup(backend, sessionId);
 		}
 	}
 
@@ -1083,8 +1365,266 @@ export class AgentsManager {
 		return `${agentId}:${sessionId}`;
 	}
 
-	private permissionListenerKey(agentId: string, clientId: string) {
-		return `${agentId}:${clientId}`;
+	private setSessionSnapshot(
+		agentId: AiBackend,
+		sessionId: string,
+		snapshot: AttachedSessionSnapshot,
+	) {
+		this.sessionSnapshots.set(this.sessionKey(agentId, sessionId), snapshot);
+		return snapshot;
+	}
+
+	private upsertSnapshotMessage(
+		agentId: AiBackend,
+		sessionId: string,
+		message: AcpMessage,
+	) {
+		const key = this.sessionKey(agentId, sessionId);
+		const snapshot = this.sessionSnapshots.get(key);
+		if (!snapshot) return;
+		const existingIndex = message.id
+			? snapshot.messages.findIndex((item) => item.id === message.id)
+			: -1;
+		const messages =
+			existingIndex >= 0
+				? snapshot.messages.map((item, index) =>
+						index === existingIndex ? message : item,
+					)
+				: [...snapshot.messages, message];
+		this.sessionSnapshots.set(key, {
+			...snapshot,
+			messages,
+			revision: this.getSessionRevision(agentId, sessionId),
+		});
+	}
+
+	private refreshSessionSnapshot(
+		clientId: string,
+		agentId: AiBackend,
+		sessionId: string,
+		cwd: string,
+		options: Partial<
+			Omit<Parameters<ACP["loadSession"]>[0], "sessionId" | "cwd">
+		>,
+		behavior: { emitSnapshot?: boolean } = {},
+	) {
+		const key = this.sessionKey(agentId, sessionId);
+		const agent = this.sessionRuntimes.get(key);
+		if (!agent || agent.hasActivePrompt()) return;
+		if (this.sessionLoadTasks.has(key)) return;
+		if (behavior.emitSnapshot) {
+			this.emit(this.sessionClientIds.get(key) ?? "", agentId, {
+				type: "session.status",
+				properties: { sessionId, syncing: "messages" },
+			});
+		}
+		const task = agent
+			.loadSession(
+				{
+					...options,
+					sessionId,
+					cwd,
+					mcpServers: options.mcpServers ?? [],
+				},
+				clientId,
+			)
+			.then((result) => {
+				const session = agent.getSession(sessionId);
+				if (!session) return;
+				const runtimeState = this.rememberSessionRuntimeMetadata(
+					agentId,
+					session,
+				);
+				this.setSessionSnapshot(agentId, sessionId, {
+					backend: agentId,
+					session,
+					state: {
+						configOptions: result.response.configOptions ?? undefined,
+						models: result.response.models,
+						modes: result.response.modes,
+						availableCommands: latestAvailableCommands(result.updates),
+					},
+					runtimeState,
+					messages: result.messages,
+					updates: result.updates,
+					revision: this.getSessionRevision(agentId, sessionId),
+				});
+				if (behavior.emitSnapshot) {
+					this.emitSessionSnapshot(agentId, sessionId, {
+						messages: result.messages,
+						state: {
+							configOptions: result.response.configOptions ?? undefined,
+							models: result.response.models,
+							modes: result.response.modes,
+							availableCommands: latestAvailableCommands(result.updates),
+						},
+						runtimeState,
+					});
+				}
+			})
+			.catch(() => {})
+			.finally(() => {
+				if (behavior.emitSnapshot) {
+					this.emit(this.sessionClientIds.get(key) ?? "", agentId, {
+						type: "session.status",
+						properties: { sessionId, syncing: false },
+					});
+				}
+				if (this.sessionLoadTasks.get(key) === task) {
+					this.sessionLoadTasks.delete(key);
+				}
+			});
+		this.sessionLoadTasks.set(key, task);
+	}
+
+	private emitSessionSnapshot(
+		agentId: AiBackend,
+		sessionId: string,
+		snapshot: {
+			messages: AcpMessage[];
+			state: AiSessionState;
+			runtimeState?: AiSessionRuntimeState;
+		},
+	) {
+		this.emit(
+			this.sessionClientIds.get(this.sessionKey(agentId, sessionId)) ?? "",
+			agentId,
+			{
+				type: "session.snapshot",
+				properties: {
+					sessionId,
+					messages: snapshot.messages,
+					state: snapshot.state,
+					runtimeState: snapshot.runtimeState,
+				},
+			},
+		);
+	}
+
+	private createManagedRuntime(agentId: AiBackend): ACP {
+		const descriptor = this.descriptors.get(agentId);
+		if (!descriptor) {
+			throw new AgentUnavailableError(agentId, "unknown agent");
+		}
+		const agent = createAgentRuntime(agentId);
+		this.runtimeIds.set(agent, `runtime_${++this.nextRuntimeId}`);
+		agent.onSessionUpdate((notification) => {
+			const backend = descriptor.id;
+			const key = this.sessionKey(descriptor.id, notification.sessionId);
+			const clientId =
+				this.sessionClientIds.get(key) ??
+				this.attachedSessionClients.get(key)?.values().next().value ??
+				"";
+			if (!clientId) return;
+			const status = sessionStatusEvent(notification);
+			if (status) this.emit(clientId, backend, status);
+		});
+		return agent;
+	}
+
+	private attachSessionClient(
+		agentId: AiBackend,
+		sessionId: string,
+		clientId: string,
+	) {
+		const key = this.sessionKey(agentId, sessionId);
+		let clients = this.attachedSessionClients.get(key);
+		if (!clients) {
+			clients = new Set();
+			this.attachedSessionClients.set(key, clients);
+		}
+		clients.add(clientId);
+	}
+
+	private detachSessionClient(
+		agentId: AiBackend,
+		sessionId: string,
+		clientId: string,
+	) {
+		const key = this.sessionKey(agentId, sessionId);
+		const clients = this.attachedSessionClients.get(key);
+		if (!clients) return;
+		clients.delete(clientId);
+		if (!clients.size) this.attachedSessionClients.delete(key);
+	}
+
+	private detachClientFromAllSessions(clientId: string) {
+		if (!clientId) return;
+		for (const [key, clients] of this.attachedSessionClients.entries()) {
+			clients.delete(clientId);
+			if (!clients.size) {
+				this.attachedSessionClients.delete(key);
+				const [agentId, sessionId] = this.parseSessionKey(key);
+				if (agentId && sessionId) {
+					this.scheduleSessionRuntimeCleanup(agentId as AiBackend, sessionId);
+				}
+			}
+		}
+	}
+
+	private parseSessionKey(key: string): [string, string] {
+		const index = key.indexOf(":");
+		return index < 0 ? ["", ""] : [key.slice(0, index), key.slice(index + 1)];
+	}
+
+	private cancelSessionRuntimeCleanup(agentId: AiBackend, sessionId: string) {
+		const key = this.sessionKey(agentId, sessionId);
+		const timer = this.sessionRuntimeCleanupTimers.get(key);
+		if (!timer) return;
+		clearTimeout(timer);
+		this.sessionRuntimeCleanupTimers.delete(key);
+	}
+
+	private scheduleSessionRuntimeCleanup(agentId: AiBackend, sessionId: string) {
+		const key = this.sessionKey(agentId, sessionId);
+		if (!this.sessionRuntimes.has(key)) return;
+		if (this.attachedSessionClients.get(key)?.size) return;
+		const activity = this.getSessionRuntimeState(agentId, sessionId);
+		if (activity && isLiveRuntimeStatus(activity.status)) return;
+		this.cancelSessionRuntimeCleanup(agentId, sessionId);
+		const timer = setTimeout(() => {
+			const current = this.getSessionRuntimeState(agentId, sessionId);
+			if (this.attachedSessionClients.get(key)?.size) return;
+			if (current && isLiveRuntimeStatus(current.status)) return;
+			this.destroySessionRuntime(agentId, sessionId);
+		}, SESSION_RUNTIME_IDLE_MS);
+		this.sessionRuntimeCleanupTimers.set(key, timer);
+	}
+
+	private destroySessionRuntime(agentId: AiBackend, sessionId: string) {
+		const key = this.sessionKey(agentId, sessionId);
+		this.cancelSessionRuntimeCleanup(agentId, sessionId);
+		const agent = this.sessionRuntimes.get(key);
+		if (!agent) return;
+		agent.destroy();
+		this.sessionRuntimes.delete(key);
+	}
+
+	private getEventTargetClientIds(
+		agentId: AiBackend,
+		sessionId: string,
+		fallbackClientId: string,
+	): string[] {
+		const attached = this.attachedSessionClients.get(
+			this.sessionKey(agentId, sessionId),
+		);
+		if (attached?.size) return [...attached];
+		return fallbackClientId ? [fallbackClientId] : [];
+	}
+
+	private getSessionRevision(agentId: AiBackend, sessionId: string) {
+		return this.sessionRevisions.get(this.sessionKey(agentId, sessionId)) ?? 0;
+	}
+
+	private nextSessionRevision(agentId: AiBackend, sessionId: string) {
+		const key = this.sessionKey(agentId, sessionId);
+		const next = (this.sessionRevisions.get(key) ?? 0) + 1;
+		this.sessionRevisions.set(key, next);
+		return next;
+	}
+
+	private permissionListenerKey(agentId: string, clientId: string, agent: ACP) {
+		return `${agentId}\0${clientId}\0${this.runtimeIds.get(agent) ?? "default"}`;
 	}
 
 	private getSessionRuntimeState(agentId: string, sessionId: string) {
@@ -1214,7 +1754,7 @@ export class AgentsManager {
 		clientId: string,
 		agent: ACP,
 	) {
-		const key = this.permissionListenerKey(agentId, clientId);
+		const key = this.permissionListenerKey(agentId, clientId, agent);
 		if (this.permissionListenerCleanups.has(key)) return;
 		const descriptor = this.descriptors.get(agentId);
 		if (!descriptor) return;
@@ -1222,9 +1762,14 @@ export class AgentsManager {
 		// ACP permission requests are client-side JSON-RPC calls. Convert them
 		// into the existing Shellular event stream so the mobile app can decide.
 		const cleanup = agent.onPermission(clientId, (permission) => {
-			const targetClientId = this.sessionClientIds.get(
-				this.sessionKey(agentId, permission.sessionId),
-			);
+			const key = this.sessionKey(agentId, permission.sessionId);
+			const attached = this.attachedSessionClients.get(key);
+			const attachedTargets = attached ? [...attached] : [];
+			if (attachedTargets.length > 0 && attachedTargets[0] !== clientId) {
+				return;
+			}
+			const targetClientId =
+				attachedTargets[0] ?? this.sessionClientIds.get(key);
 			if (targetClientId !== clientId) return;
 			this.emit(targetClientId, descriptor.id, {
 				type: "permission.updated",
@@ -1243,10 +1788,9 @@ export class AgentsManager {
 	}
 
 	private removeClientPermissionListeners(clientId: string) {
-		for (const agentId of this.agents.keys()) {
-			const key = this.permissionListenerKey(agentId, clientId);
-			const cleanup = this.permissionListenerCleanups.get(key);
-			if (!cleanup) continue;
+		for (const [key, cleanup] of this.permissionListenerCleanups.entries()) {
+			const [, keyClientId] = key.split("\0");
+			if (keyClientId !== clientId) continue;
 			cleanup();
 			this.permissionListenerCleanups.delete(key);
 		}
