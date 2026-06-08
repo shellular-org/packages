@@ -10,9 +10,9 @@ import type {
 	AiBackend,
 	AiEvent,
 	AiSession,
-	AiSessionState,
 	AiSessionCreateMsg,
 	AiSessionRuntimeState,
+	AiSessionState,
 } from "@shellular/protocol";
 import { AcpContentBlockSchema, MsgType } from "@shellular/protocol";
 
@@ -153,7 +153,10 @@ export class AgentsManager {
 	private sessionLoadTasks = new Map<string, Promise<void>>();
 	private runtimeIds = new WeakMap<ACP, string>();
 	private nextRuntimeId = 0;
-	private sessionRuntimeCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	private sessionRuntimeCleanupTimers = new Map<
+		string,
+		ReturnType<typeof setTimeout>
+	>();
 	private sessionAgents = new Map<string, string>();
 
 	constructor() {
@@ -327,9 +330,16 @@ export class AgentsManager {
 		if (cached && !agent.hasActivePrompt()) {
 			if (!agent.getSession(sessionId)) {
 				setTimeout(() => {
-					this.refreshSessionSnapshot(clientId, agentId, sessionId, cwd, options, {
-						emitSnapshot: true,
-					});
+					this.refreshSessionSnapshot(
+						clientId,
+						agentId,
+						sessionId,
+						cwd,
+						options,
+						{
+							emitSnapshot: true,
+						},
+					);
 				}, 0);
 			}
 			return {
@@ -344,9 +354,16 @@ export class AgentsManager {
 		const result = agent.snapshotSession(loadParams, clientId);
 		if (!agent.hasActivePrompt()) {
 			setTimeout(() => {
-				this.refreshSessionSnapshot(clientId, agentId, sessionId, cwd, options, {
-					emitSnapshot: true,
-				});
+				this.refreshSessionSnapshot(
+					clientId,
+					agentId,
+					sessionId,
+					cwd,
+					options,
+					{
+						emitSnapshot: true,
+					},
+				);
 			}, 0);
 		}
 		const session = agent.getSession(sessionId) ?? {
@@ -465,7 +482,9 @@ export class AgentsManager {
 			},
 			clientId,
 		);
-		const snapshot = this.sessionSnapshots.get(this.sessionKey(agentId, sessionId));
+		const snapshot = this.sessionSnapshots.get(
+			this.sessionKey(agentId, sessionId),
+		);
 		if (snapshot) {
 			this.sessionSnapshots.set(this.sessionKey(agentId, sessionId), {
 				...snapshot,
@@ -855,11 +874,7 @@ export class AgentsManager {
 
 		conn.on(MsgType.AI_SESSION_DETACH, (msg) => {
 			try {
-				this.detachSession(
-					msg.clientId,
-					msg.data.backend,
-					msg.data.sessionId,
-				);
+				this.detachSession(msg.clientId, msg.data.backend, msg.data.sessionId);
 				conn.send({
 					type: MsgType.AI_SESSION_DETACH_RESULT,
 					clientId: msg.clientId,
@@ -1398,14 +1413,10 @@ export class AgentsManager {
 		if (!agent || agent.hasActivePrompt()) return;
 		if (this.sessionLoadTasks.has(key)) return;
 		if (behavior.emitSnapshot) {
-			this.emit(
-				this.sessionClientIds.get(key) ?? "",
-				agentId,
-				{
-					type: "session.status",
-					properties: { sessionId, syncing: "messages" },
-				},
-			);
+			this.emit(this.sessionClientIds.get(key) ?? "", agentId, {
+				type: "session.status",
+				properties: { sessionId, syncing: "messages" },
+			});
 		}
 		const task = agent
 			.loadSession(
@@ -1454,14 +1465,10 @@ export class AgentsManager {
 			.catch(() => {})
 			.finally(() => {
 				if (behavior.emitSnapshot) {
-					this.emit(
-						this.sessionClientIds.get(key) ?? "",
-						agentId,
-						{
-							type: "session.status",
-							properties: { sessionId, syncing: false },
-						},
-					);
+					this.emit(this.sessionClientIds.get(key) ?? "", agentId, {
+						type: "session.status",
+						properties: { sessionId, syncing: false },
+					});
 				}
 				if (this.sessionLoadTasks.get(key) === task) {
 					this.sessionLoadTasks.delete(key);
