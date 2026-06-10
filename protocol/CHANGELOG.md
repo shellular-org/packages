@@ -1,5 +1,11 @@
 # @shellular/protocol
 
+## 0.0.15
+
+### Patch Changes
+
+- 150f2c8: feat: a flag to show hidden files
+
 ## 0.0.14
 
 ### Patch Changes
