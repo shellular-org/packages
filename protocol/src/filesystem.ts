@@ -23,6 +23,7 @@ export const FsListMsgSchema = z.object({
 	clientId: z.string(),
 	data: z.object({
 		path: z.string(),
+		showHidden: z.boolean().optional(),
 	}),
 });
 export type FsListMsg = z.infer<typeof FsListMsgSchema>;
