@@ -84,8 +84,9 @@ export function initFilesystemHandler(conn: Connection, rootDir: string) {
 
 		try {
 			const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+			const showHidden = msg.data.showHidden ?? false;
 			const result: NonNullable<FsListResultMsg["data"]>["entries"] = entries
-				.filter((e) => !e.name.startsWith("."))
+				.filter((e) => showHidden || !e.name.startsWith("."))
 				.map((entry) => {
 					const fullPath = path.join(dirPath, entry.name);
 					let size = 0;
