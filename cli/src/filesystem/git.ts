@@ -7,12 +7,14 @@ import type { GitStatus } from "@shellular/protocol";
 const execFileAsync = promisify(execFile);
 
 function normalizeGitPath(filePath: string): string {
-	return filePath.split("/").join(path.sep);
+	return filePath.replace(/\\/g, "/");
 }
 
 async function execGit(args: string[], cwd: string): Promise<string> {
 	const { stdout } = await execFileAsync("git", args, { cwd });
-	return stdout.trim();
+	// Only strip the trailing newline(s); do NOT trim leading whitespace, since
+	// porcelain status lines begin with a significant space (e.g. " M path").
+	return stdout.replace(/\n+$/, "");
 }
 
 export async function findGitRoot(dir: string): Promise<string | null> {
@@ -41,7 +43,7 @@ export async function getFileGitStatuses(
 				"-u",
 				"--ignored=matching",
 				"--",
-				`${targetPathSpec}${path.sep}`,
+				`${targetPathSpec}/`,
 			],
 			repoRoot,
 		);
@@ -112,17 +114,25 @@ export function computeEntryGitStatus(
 	entryAbsPath: string,
 	entryType: "file" | "directory",
 ): GitStatus | null {
-	const relPath = path.normalize(path.relative(repoRoot, entryAbsPath));
+	const relPath = path
+		.normalize(path.relative(repoRoot, entryAbsPath))
+		.replace(/\\/g, "/");
 
 	if (entryType === "file") {
 		return statuses.get(relPath) ?? null;
 	}
 
-	// For directories: collect statuses of all files under this prefix
-	const prefix = relPath + path.sep;
+	// For directories: collect statuses of all files under this prefix.
+	// Use forward slashes (git's format) for consistent cross-platform matching.
+	// Exclude "ignored" status since a single ignored file like .DS_Store
+	// should not cause an entire directory to appear greyed out.
+	const prefix = relPath.endsWith("/") ? relPath : `${relPath}/`;
 	const found = new Set<GitStatus>();
 	for (const [filePath, status] of statuses) {
-		if (filePath.startsWith(prefix) || filePath === relPath) {
+		if (
+			status !== "ignored" &&
+			(filePath.startsWith(prefix) || filePath === relPath)
+		) {
 			found.add(status);
 		}
 	}
