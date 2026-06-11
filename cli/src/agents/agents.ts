@@ -8,6 +8,7 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		id: "codex",
 		name: "Codex",
 		title: "Codex",
+		registryId: "codex-acp",
 		agentExecutable: "codex",
 		installationCommands: {
 			npm: {
@@ -28,6 +29,7 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		id: "opencode",
 		name: "OpenCode",
 		title: "OpenCode",
+		registryId: "opencode",
 		agentExecutable: "opencode",
 		installationCommands: {
 			Shell: {
@@ -60,6 +62,7 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		id: "claude-code",
 		name: "Claude Code",
 		title: "Claude Code",
+		registryId: "claude-acp",
 		agentExecutable: "claude",
 		installationCommands: {
 			Shell: {
@@ -93,6 +96,7 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		id: "copilot",
 		name: "GitHub Copilot",
 		title: "GitHub Copilot",
+		registryId: "github-copilot-cli",
 		agentExecutable: "copilot",
 		installationCommands: {
 			Shell: {
@@ -121,6 +125,7 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		id: "cursor",
 		name: "Cursor",
 		title: "Cursor",
+		registryId: "cursor",
 		note: "Sessions created in the Cursor desktop app aren't listed here — only sessions started with the Cursor CLI (cursor-agent) will show up.\n\nThis requires cursor-agent version 2026.06.03-0bbb28e or newer.",
 		agentExecutable: "cursor-agent",
 		// disabled for now because cursor's ACP is buggy
@@ -147,6 +152,7 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 		id: "pi",
 		name: "Pi",
 		title: "Pi",
+		registryId: "pi-acp",
 		agentExecutable: "pi",
 		installationCommands: {
 			npm: {

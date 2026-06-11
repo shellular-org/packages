@@ -28,7 +28,10 @@ export interface AgentDescriptor {
 	title: string;
 	version?: string;
 	disabled?: boolean;
+	source?: "builtin" | "custom";
+	registryId?: string;
 	description?: string;
+	icon?: string;
 	/**
 	 * Optional informational note about the agent, surfaced in the app (e.g.
 	 * behind an info icon on the sessions page). Use for caveats like which
@@ -65,10 +68,15 @@ export interface AgentInfo {
 	description?: string;
 	note?: string;
 	icon?: string;
+	source?: "builtin" | "custom";
 	state: AgentConnectionState;
+	enabled?: boolean;
+	installed?: boolean;
 	available: boolean;
 	error?: string;
 	capabilities?: acp.AgentCapabilities;
+	installationCommands?: AgentDescriptor["installationCommands"];
+	adapter?: { command: string; available: boolean };
 }
 
 export interface PromptCallbacks {

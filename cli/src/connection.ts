@@ -5,6 +5,11 @@ import {
 	type AiAbortMsg,
 	type AiActivityListMsg,
 	type AiAgentsListMsg,
+	type AiAgentsCustomAddMsg,
+	type AiAgentsCustomRemoveMsg,
+	type AiAgentsCustomUpdateMsg,
+	type AiAgentsEnableSetMsg,
+	type AiAgentsManageListMsg,
 	type AiAttachmentWriteMsg,
 	type AiAuthSetMsg,
 	type AiAvailabilityMsg,
@@ -311,6 +316,26 @@ export class Connection extends EventEmitter {
 	on(
 		eventName: typeof MsgType.AI_AGENTS_LIST,
 		listener: (msg: AiAgentsListMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_AGENTS_MANAGE_LIST,
+		listener: (msg: AiAgentsManageListMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_AGENTS_ENABLE_SET,
+		listener: (msg: AiAgentsEnableSetMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_AGENTS_CUSTOM_ADD,
+		listener: (msg: AiAgentsCustomAddMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_AGENTS_CUSTOM_UPDATE,
+		listener: (msg: AiAgentsCustomUpdateMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_AGENTS_CUSTOM_REMOVE,
+		listener: (msg: AiAgentsCustomRemoveMsg) => void,
 	): this;
 	on(
 		eventName: typeof MsgType.AI_ACTIVITY_LIST,
