@@ -13,13 +13,15 @@ import type {
 	AiSessionCreateMsg,
 	AiSessionRuntimeState,
 	AiSessionState,
+	CustomAcpAgentInput,
+	ManagedAcpAgentInfo,
 } from "@shellular/protocol";
 import { AcpContentBlockSchema, MsgType } from "@shellular/protocol";
 
 import { config } from "@/config";
 import type { Connection } from "@/connection";
 import { BUILTIN_AGENT_DESCRIPTORS, isAgentAvailable } from "./agents";
-import type { ACP } from "./base";
+import { ACP } from "./base";
 import { ClaudeCode } from "./claude-code";
 import { Codex } from "./codex";
 import { Copilot } from "./copilot";
@@ -28,6 +30,12 @@ import { AgentUnavailableError } from "./errors";
 import { Hermes } from "./hermes";
 import { OpenCode } from "./opencode";
 import { Pi } from "./pi";
+import {
+	normalizeCustomAgentInput,
+	readAgentsConfig,
+	toCustomDescriptor,
+	writeAgentsConfig,
+} from "./store";
 import type { AgentDescriptor, AgentInfo } from "./types";
 
 const MAX_AGENT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
@@ -147,6 +155,8 @@ function eventClientId(event: AiEvent, fallbackClientId: string): string {
 
 export class AgentsManager {
 	private descriptors = new Map<string, AgentDescriptor>();
+	private disabledAgents = new Set<string>();
+	// private customAgentIds = new Set<string>();
 	private agents = new Map<string, ACP>();
 	private sessionRuntimes = new Map<string, ACP>();
 	private sessionSnapshots = new Map<string, AttachedSessionSnapshot>();
@@ -160,38 +170,193 @@ export class AgentsManager {
 	private sessionAgents = new Map<string, string>();
 
 	constructor() {
-		for (const agent of Object.values(BUILTIN_AGENT_DESCRIPTORS)) {
-			if (agent.disabled) {
-				continue;
-			}
-
-			this.descriptors.set(agent.id, agent);
-		}
+		this.reloadDescriptors();
 	}
 
 	listAgents() {
-		return [...this.descriptors.values()].map((descriptor) => {
-			const runtime = this.agents.get(descriptor.id);
-			return (
-				runtime?.getInfo() ?? {
-					state: "exited",
-					id: descriptor.id,
-					name: descriptor.name,
-					title: descriptor.title,
-					version: descriptor.version,
-					description: descriptor.description,
-					note: descriptor.note,
-					available: isAgentAvailable(descriptor),
-					installationCommands: descriptor.installationCommands,
-				}
-			);
-		}) satisfies AgentInfo[];
+		this.reloadDescriptors();
+		return [...this.descriptors.values()]
+			.filter(
+				(descriptor) =>
+					this.isAgentEnabled(descriptor.id) && isAgentAvailable(descriptor),
+			)
+			.map((descriptor) => this.getManagedAgentInfo(descriptor));
+	}
+
+	listManagedAgents() {
+		this.reloadDescriptors();
+		return [...this.descriptors.values()].map((descriptor) =>
+			this.getManagedAgentInfo(descriptor),
+		);
+	}
+
+	setAgentEnabled(agentId: AiBackend, enabled: boolean) {
+		const descriptor = this.descriptors.get(agentId);
+		if (!descriptor) throw new AgentUnavailableError(agentId, "unknown agent");
+		const config = readAgentsConfig();
+		const disabled = new Set(config.disabled);
+		if (enabled) {
+			disabled.delete(agentId);
+		} else {
+			disabled.add(agentId);
+			this.destroyAgentRuntimes(agentId);
+		}
+		writeAgentsConfig({ ...config, disabled: [...disabled].sort() });
+		this.reloadDescriptors();
+		const updated = this.descriptors.get(agentId);
+		if (!updated) throw new AgentUnavailableError(agentId, "unknown agent");
+		return this.getManagedAgentInfo(updated);
+	}
+
+	addCustomAgent(input: CustomAcpAgentInput) {
+		const config = readAgentsConfig();
+		const existingIds = new Set([
+			...Object.keys(BUILTIN_AGENT_DESCRIPTORS),
+			...config.custom.map((agent) => agent.id),
+		]);
+		const normalized = normalizeCustomAgentInput(input, existingIds);
+		writeAgentsConfig({
+			...config,
+			custom: [...config.custom, normalized],
+		});
+		this.reloadDescriptors();
+		const descriptor = this.descriptors.get(normalized.id);
+		if (!descriptor)
+			throw new AgentUnavailableError(normalized.id, "unknown agent");
+		return this.getManagedAgentInfo(descriptor);
+	}
+
+	updateCustomAgent(input: CustomAcpAgentInput) {
+		const config = readAgentsConfig();
+		const currentIndex = config.custom.findIndex(
+			(agent) => agent.id === input.id,
+		);
+		if (currentIndex < 0) {
+			throw new Error("Only custom agents can be edited.");
+		}
+		const existingIds = new Set([
+			...Object.keys(BUILTIN_AGENT_DESCRIPTORS),
+			...config.custom
+				.filter((agent) => agent.id !== input.id)
+				.map((agent) => agent.id),
+		]);
+		const normalized = normalizeCustomAgentInput(input, existingIds, {
+			allowExistingId: input.id,
+		});
+		const custom = [...config.custom];
+		custom[currentIndex] = normalized;
+		writeAgentsConfig({ ...config, custom });
+		this.destroyAgentRuntimes(normalized.id);
+		this.reloadDescriptors();
+		const descriptor = this.descriptors.get(normalized.id);
+		if (!descriptor)
+			throw new AgentUnavailableError(normalized.id, "unknown agent");
+		return this.getManagedAgentInfo(descriptor);
+	}
+
+	removeCustomAgent(agentId: AiBackend) {
+		const config = readAgentsConfig();
+		const custom = config.custom.filter((agent) => agent.id !== agentId);
+		if (custom.length === config.custom.length) {
+			throw new Error("Only custom agents can be removed.");
+		}
+		writeAgentsConfig({
+			disabled: config.disabled.filter((id) => id !== agentId),
+			custom,
+		});
+		this.destroyAgentRuntimes(agentId);
+		this.reloadDescriptors();
+	}
+
+	private reloadDescriptors() {
+		const config = readAgentsConfig();
+		this.disabledAgents = new Set(config.disabled);
+		// this.customAgentIds = new Set(config.custom.map((agent) => agent.id));
+		this.descriptors.clear();
+		for (const agent of Object.values(BUILTIN_AGENT_DESCRIPTORS)) {
+			this.descriptors.set(agent.id, {
+				...agent,
+				source: "builtin",
+			});
+		}
+		for (const agent of config.custom) {
+			this.descriptors.set(agent.id, toCustomDescriptor(agent));
+		}
+	}
+
+	private isAgentEnabled(agentId: string) {
+		const descriptor = this.descriptors.get(agentId);
+		return Boolean(
+			descriptor && !descriptor.disabled && !this.disabledAgents.has(agentId),
+		);
+	}
+
+	private getManagedAgentInfo(
+		descriptor: AgentDescriptor,
+	): ManagedAcpAgentInfo {
+		const runtime = this.agents.get(descriptor.id);
+		const runtimeInfo = runtime?.getInfo();
+		const installed = isAgentAvailable(descriptor);
+		const enabled = this.isAgentEnabled(descriptor.id);
+		const state = installed
+			? (runtimeInfo?.state ?? "exited")
+			: ("unavailable" as const);
+		return {
+			...runtimeInfo,
+			id: descriptor.id,
+			backend: descriptor.id,
+			name: descriptor.name,
+			title: descriptor.title,
+			version: runtimeInfo?.version ?? descriptor.version,
+			description: descriptor.description,
+			note: descriptor.note,
+			icon: descriptor.icon,
+			source: descriptor.source ?? "builtin",
+			state,
+			enabled,
+			installed,
+			available:
+				enabled && installed && state !== "unavailable" && state !== "failed",
+			installationCommands: descriptor.installationCommands,
+			custom:
+				descriptor.source === "custom"
+					? {
+							id: descriptor.id,
+							name: descriptor.name,
+							title: descriptor.title,
+							description: descriptor.description,
+							icon: descriptor.icon,
+							command: descriptor.spawn.command,
+							args: descriptor.spawn.args,
+							env: descriptor.spawn.env,
+							cwd: descriptor.spawn.cwd,
+						}
+					: undefined,
+			adapter: {
+				command: [descriptor.spawn.command, ...descriptor.spawn.args].join(" "),
+				available: installed,
+			},
+		};
+	}
+
+	private destroyAgentRuntimes(agentId: string) {
+		const shared = this.agents.get(agentId);
+		shared?.destroy();
+		this.agents.delete(agentId);
+		for (const [key, agent] of this.sessionRuntimes.entries()) {
+			const [backend] = this.parseSessionKey(key);
+			if (backend !== agentId) continue;
+			agent.destroy();
+			this.sessionRuntimes.delete(key);
+			this.sessionRuntimeCleanupTimers.delete(key);
+		}
 	}
 
 	listActivities(agentId?: AiBackend) {
 		const now = Date.now();
 		return [...this.sessionRuntimeStates.values()]
 			.filter((activity) => !agentId || activity.agentId === agentId)
+			.filter((activity) => this.isAgentEnabled(activity.agentId))
 			.filter(
 				(activity) =>
 					isLiveRuntimeStatus(activity.status) ||
@@ -218,6 +383,9 @@ export class AgentsManager {
 		if (!descriptor) {
 			throw new AgentUnavailableError(agentId, "unknown agent");
 		}
+		if (!this.isAgentEnabled(agentId)) {
+			throw new AgentUnavailableError(agentId, "agent is disabled");
+		}
 
 		let agent = this.agents.get(agentId);
 		if (agent && !agent.canReuse()) {
@@ -240,6 +408,9 @@ export class AgentsManager {
 		sessionId: string,
 	) {
 		const key = this.sessionKey(agentId, sessionId);
+		if (!this.isAgentEnabled(agentId)) {
+			throw new AgentUnavailableError(agentId, "agent is disabled");
+		}
 		let agent = this.sessionRuntimes.get(key);
 		if (agent && !agent.canReuse()) {
 			this.sessionRuntimes.delete(key);
@@ -275,6 +446,9 @@ export class AgentsManager {
 		cwd: string,
 		options: Parameters<ACP["createSession"]>[1] = {},
 	) {
+		if (!this.isAgentEnabled(agentId)) {
+			throw new AgentUnavailableError(agentId, "agent is disabled");
+		}
 		const agent = this.createManagedRuntime(agentId);
 		this.registerPermissionListener(agentId, clientId, agent);
 		await agent.init();
@@ -615,8 +789,11 @@ export class AgentsManager {
 	}
 
 	getAvailableAgents(): AiBackend[] {
-		return Object.values(BUILTIN_AGENT_DESCRIPTORS).flatMap((descriptor) =>
-			descriptor.id && isAgentAvailable(descriptor) ? [descriptor.id] : [],
+		this.reloadDescriptors();
+		return [...this.descriptors.values()].flatMap((descriptor) =>
+			this.isAgentEnabled(descriptor.id) && isAgentAvailable(descriptor)
+				? [descriptor.id]
+				: [],
 		);
 	}
 
@@ -705,6 +882,95 @@ export class AgentsManager {
 				respTo: msg.id,
 				data: { agents },
 			});
+		});
+
+		conn.on(MsgType.AI_AGENTS_MANAGE_LIST, (msg) => {
+			conn.send({
+				type: MsgType.AI_AGENTS_MANAGE_LIST_RESULT,
+				clientId: msg.clientId,
+				respTo: msg.id,
+				data: { ok: true, agents: this.listManagedAgents() },
+			});
+		});
+
+		conn.on(MsgType.AI_AGENTS_ENABLE_SET, (msg) => {
+			try {
+				const agent = this.setAgentEnabled(msg.data.backend, msg.data.enabled);
+				conn.send({
+					type: MsgType.AI_AGENTS_ENABLE_SET_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: { ok: true, agent },
+				});
+			} catch (err) {
+				conn.send({
+					type: MsgType.AI_AGENTS_ENABLE_SET_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(err),
+					data: { ok: false },
+				});
+			}
+		});
+
+		conn.on(MsgType.AI_AGENTS_CUSTOM_ADD, (msg) => {
+			try {
+				const agent = this.addCustomAgent(msg.data);
+				conn.send({
+					type: MsgType.AI_AGENTS_CUSTOM_ADD_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: { ok: true, agent },
+				});
+			} catch (err) {
+				conn.send({
+					type: MsgType.AI_AGENTS_CUSTOM_ADD_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(err),
+					data: { ok: false },
+				});
+			}
+		});
+
+		conn.on(MsgType.AI_AGENTS_CUSTOM_UPDATE, (msg) => {
+			try {
+				const agent = this.updateCustomAgent(msg.data);
+				conn.send({
+					type: MsgType.AI_AGENTS_CUSTOM_UPDATE_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: { ok: true, agent },
+				});
+			} catch (err) {
+				conn.send({
+					type: MsgType.AI_AGENTS_CUSTOM_UPDATE_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(err),
+					data: { ok: false },
+				});
+			}
+		});
+
+		conn.on(MsgType.AI_AGENTS_CUSTOM_REMOVE, (msg) => {
+			try {
+				this.removeCustomAgent(msg.data.backend);
+				conn.send({
+					type: MsgType.AI_AGENTS_CUSTOM_REMOVE_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: { ok: true, agents: this.listManagedAgents() },
+				});
+			} catch (err) {
+				conn.send({
+					type: MsgType.AI_AGENTS_CUSTOM_REMOVE_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(err),
+					data: { ok: false },
+				});
+			}
 		});
 
 		conn.on(MsgType.AI_ACTIVITY_LIST, (msg) => {
@@ -1301,8 +1567,8 @@ export class AgentsManager {
 		workspace?: string,
 	): Promise<AiSession[]> {
 		const results = await Promise.allSettled(
-			Object.values(BUILTIN_AGENT_DESCRIPTORS).flatMap((descriptor) =>
-				descriptor.id
+			[...this.descriptors.values()].flatMap((descriptor) =>
+				this.isAgentEnabled(descriptor.id) && isAgentAvailable(descriptor)
 					? [
 							this.connectAgent(clientId, descriptor.id).then(
 								async (agent) => ({
@@ -1506,7 +1772,10 @@ export class AgentsManager {
 		if (!descriptor) {
 			throw new AgentUnavailableError(agentId, "unknown agent");
 		}
-		const agent = createAgentRuntime(agentId);
+		if (!this.isAgentEnabled(agentId)) {
+			throw new AgentUnavailableError(agentId, "agent is disabled");
+		}
+		const agent = createAgentRuntime(agentId, descriptor);
 		this.runtimeIds.set(agent, `runtime_${++this.nextRuntimeId}`);
 		agent.onSessionUpdate((notification) => {
 			const backend = descriptor.id;
@@ -1828,7 +2097,10 @@ function normalizePromptContent(
 	return parsed.length ? parsed : [{ type: "text", text: "" }];
 }
 
-function createAgentRuntime(agentId: AiBackend): ACP {
+function createAgentRuntime(
+	agentId: AiBackend,
+	descriptor: AgentDescriptor,
+): ACP {
 	switch (agentId) {
 		case "codex":
 			return Codex.create();
@@ -1845,6 +2117,9 @@ function createAgentRuntime(agentId: AiBackend): ACP {
 		case "hermes":
 			return Hermes.create();
 		default:
+			if (descriptor.source === "custom") {
+				return new ACP(descriptor);
+			}
 			throw new AgentUnavailableError(agentId, "unknown agent");
 	}
 }

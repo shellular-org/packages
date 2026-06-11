@@ -73,6 +73,67 @@ export type AiSessionConfigOption = z.infer<typeof AiSessionConfigOptionSchema>;
 export const AiMcpServerSchema = z.record(z.string(), z.unknown());
 export type AiMcpServer = z.infer<typeof AiMcpServerSchema>;
 
+export const AgentInstallCommandSchema = z.object({
+	command: z.string(),
+	os: z.array(z.string()),
+});
+export type AgentInstallCommand = z.infer<typeof AgentInstallCommandSchema>;
+
+export const CustomAcpAgentInputSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	title: z.string().optional(),
+	description: z.string().optional(),
+	icon: z.string().optional(),
+	command: z.string(),
+	args: z.array(z.string()).optional(),
+	env: z.record(z.string(), z.string()).optional(),
+	cwd: z.string().optional(),
+});
+export type CustomAcpAgentInput = z.infer<typeof CustomAcpAgentInputSchema>;
+
+export const ManagedAcpAgentInfoSchema = z
+	.object({
+		id: AiBackendSchema,
+		backend: AiBackendSchema.optional(),
+		name: z.string(),
+		title: z.string(),
+		version: z.string().optional(),
+		description: z.string().optional(),
+		note: z.string().optional(),
+		icon: z.string().optional(),
+		source: z.enum(["builtin", "custom"]),
+		state: z.enum(AcpAgentConnectionStates),
+		enabled: z.boolean(),
+		installed: z.boolean(),
+		available: z.boolean(),
+		error: z.string().optional(),
+		capabilities: z.record(z.string(), z.unknown()).optional(),
+		custom: CustomAcpAgentInputSchema.optional(),
+		installationCommands: z
+			.record(z.string(), AgentInstallCommandSchema)
+			.optional(),
+		adapter: z
+			.object({
+				command: z.string(),
+				available: z.boolean(),
+			})
+			.optional(),
+	})
+	.catchall(z.unknown());
+export type ManagedAcpAgentInfo = z.infer<typeof ManagedAcpAgentInfoSchema>;
+
+export const AgentManagementResultDataSchema = z
+	.object({
+		ok: z.boolean(),
+		agent: ManagedAcpAgentInfoSchema.optional(),
+		agents: z.array(ManagedAcpAgentInfoSchema).optional(),
+	})
+	.catchall(z.unknown());
+export type AgentManagementResultData = z.infer<
+	typeof AgentManagementResultDataSchema
+>;
+
 export const AiSessionStateSchema = z.object({
 	availableCommands: z.array(AcpAvailableCommandSchema).optional(),
 	configOptions: z.array(AiSessionConfigOptionSchema).optional(),
@@ -274,6 +335,55 @@ export const AiAttachmentWriteMsgSchema = z.object({
 });
 export type AiAttachmentWriteMsg = z.infer<typeof AiAttachmentWriteMsgSchema>;
 
+export const AiAgentsManageListMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_AGENTS_MANAGE_LIST),
+	clientId: z.string(),
+	data: z.object({}).optional(),
+});
+export type AiAgentsManageListMsg = z.infer<typeof AiAgentsManageListMsgSchema>;
+
+export const AiAgentsEnableSetMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_AGENTS_ENABLE_SET),
+	clientId: z.string(),
+	data: z.object({
+		backend: AiBackendSchema,
+		enabled: z.boolean(),
+	}),
+});
+export type AiAgentsEnableSetMsg = z.infer<typeof AiAgentsEnableSetMsgSchema>;
+
+export const AiAgentsCustomAddMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_AGENTS_CUSTOM_ADD),
+	clientId: z.string(),
+	data: CustomAcpAgentInputSchema,
+});
+export type AiAgentsCustomAddMsg = z.infer<typeof AiAgentsCustomAddMsgSchema>;
+
+export const AiAgentsCustomUpdateMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_AGENTS_CUSTOM_UPDATE),
+	clientId: z.string(),
+	data: CustomAcpAgentInputSchema,
+});
+export type AiAgentsCustomUpdateMsg = z.infer<
+	typeof AiAgentsCustomUpdateMsgSchema
+>;
+
+export const AiAgentsCustomRemoveMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_AGENTS_CUSTOM_REMOVE),
+	clientId: z.string(),
+	data: z.object({
+		backend: AiBackendSchema,
+	}),
+});
+export type AiAgentsCustomRemoveMsg = z.infer<
+	typeof AiAgentsCustomRemoveMsgSchema
+>;
+
 // ── Result messages (CLI → app) ──────────────────────────────────────────────
 
 export const AiSessionLoadResultMsgSchema = z.object({
@@ -295,6 +405,52 @@ export const AiSessionLoadResultMsgSchema = z.object({
 });
 export type AiSessionLoadResultMsg = z.infer<
 	typeof AiSessionLoadResultMsgSchema
+>;
+
+function agentManagementResultSchema<TType extends string>(type: TType) {
+	return z.object({
+		id: z.string().optional(),
+		type: z.literal(type),
+		clientId: z.string().optional(),
+		respTo: z.string().optional(),
+		error: z.string().optional(),
+		data: AgentManagementResultDataSchema.optional(),
+	});
+}
+
+export const AiAgentsManageListResultMsgSchema = agentManagementResultSchema(
+	MsgType.AI_AGENTS_MANAGE_LIST_RESULT,
+);
+export type AiAgentsManageListResultMsg = z.infer<
+	typeof AiAgentsManageListResultMsgSchema
+>;
+
+export const AiAgentsEnableSetResultMsgSchema = agentManagementResultSchema(
+	MsgType.AI_AGENTS_ENABLE_SET_RESULT,
+);
+export type AiAgentsEnableSetResultMsg = z.infer<
+	typeof AiAgentsEnableSetResultMsgSchema
+>;
+
+export const AiAgentsCustomAddResultMsgSchema = agentManagementResultSchema(
+	MsgType.AI_AGENTS_CUSTOM_ADD_RESULT,
+);
+export type AiAgentsCustomAddResultMsg = z.infer<
+	typeof AiAgentsCustomAddResultMsgSchema
+>;
+
+export const AiAgentsCustomUpdateResultMsgSchema = agentManagementResultSchema(
+	MsgType.AI_AGENTS_CUSTOM_UPDATE_RESULT,
+);
+export type AiAgentsCustomUpdateResultMsg = z.infer<
+	typeof AiAgentsCustomUpdateResultMsgSchema
+>;
+
+export const AiAgentsCustomRemoveResultMsgSchema = agentManagementResultSchema(
+	MsgType.AI_AGENTS_CUSTOM_REMOVE_RESULT,
+);
+export type AiAgentsCustomRemoveResultMsg = z.infer<
+	typeof AiAgentsCustomRemoveResultMsgSchema
 >;
 
 export const AiSessionAttachResultMsgSchema = z.object({
