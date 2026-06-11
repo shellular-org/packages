@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import type { GitStatus } from "@shellular/protocol";
+import type { GitCommit, GitCommitFile, GitStatus } from "@shellular/protocol";
 
 const execFileAsync = promisify(execFile);
 
@@ -205,4 +205,161 @@ export async function getProjectGitInfo(
 	} catch {
 		return { hasGit: false };
 	}
+}
+
+// ─── Commit history ──────────────────────────────────────────────────────────
+
+// Field separator (unit separator, 0x1f) used inside each --pretty record so we
+// can split fields safely even when commit subjects contain spaces or arrows.
+const GIT_LOG_FIELD_SEP = "\x1f";
+const DEFAULT_LOG_LIMIT = 30;
+const MAX_LOG_LIMIT = 100;
+
+export interface GitLogPage {
+	commits: GitCommit[];
+	hasMore: boolean;
+	total: number;
+}
+
+/**
+ * Return a page of commits from HEAD's history, newest first.
+ * Records are NUL-delimited and fields are 0x1f-delimited so that commit
+ * subjects with arbitrary characters (newlines, quotes, " -> ") parse cleanly.
+ */
+export async function getGitLog(
+	projectPath: string,
+	options: { skip?: number; limit?: number } = {},
+): Promise<GitLogPage> {
+	const root = await findGitRoot(projectPath);
+	if (!root) return { commits: [], hasMore: false, total: 0 };
+
+	const skip = Math.max(0, Math.floor(options.skip ?? 0));
+	const limit = Math.min(
+		MAX_LOG_LIMIT,
+		Math.max(1, Math.floor(options.limit ?? DEFAULT_LOG_LIMIT)),
+	);
+
+	// Total commit count; an empty repo (no commits) makes this fail → 0.
+	const totalStr = await execGit(
+		["rev-list", "--count", "HEAD"],
+		projectPath,
+	).catch(() => "0");
+	const total = Number(totalStr) || 0;
+	if (total === 0) return { commits: [], hasMore: false, total: 0 };
+
+	const format = ["%H", "%h", "%an", "%ae", "%at", "%s"].join(
+		GIT_LOG_FIELD_SEP,
+	);
+
+	let output: string;
+	try {
+		output = await execGit(
+			[
+				"-c",
+				"log.showSignature=false",
+				"log",
+				`--pretty=format:${format}`,
+				"-z",
+				`--skip=${skip}`,
+				`--max-count=${limit}`,
+			],
+			projectPath,
+		);
+	} catch {
+		return { commits: [], hasMore: false, total };
+	}
+
+	const commits: GitCommit[] = [];
+	for (const record of output.split("\0")) {
+		if (!record) continue;
+		const fields = record.split(GIT_LOG_FIELD_SEP);
+		if (fields.length < 6) continue;
+		const [hash, shortHash, author, email, atStr, ...rest] = fields;
+		commits.push({
+			hash,
+			shortHash,
+			author,
+			email,
+			timestamp: Number(atStr) || 0,
+			// Re-join in case a subject ever contained the separator byte.
+			subject: rest.join(GIT_LOG_FIELD_SEP),
+		});
+	}
+
+	return {
+		commits,
+		hasMore: skip + commits.length < total,
+		total,
+	};
+}
+
+function diffStatusToGitStatus(statusCode: string): GitStatus {
+	// diff-tree status is a single letter, optionally followed by a score
+	// (e.g. "R100"). We only care about the leading letter.
+	switch (statusCode[0]) {
+		case "A":
+			return "added";
+		case "D":
+			return "deleted";
+		case "R":
+			return "renamed";
+		default:
+			return "modified";
+	}
+}
+
+/**
+ * Return the files changed in a single commit. The hash is validated against a
+ * strict pattern to avoid passing arbitrary tokens to git.
+ */
+export async function getCommitFiles(
+	projectPath: string,
+	hash: string,
+): Promise<GitCommitFile[]> {
+	if (!/^[0-9a-f]{7,40}$/i.test(hash)) return [];
+
+	const root = await findGitRoot(projectPath);
+	if (!root) return [];
+
+	let output: string;
+	try {
+		output = await execGit(
+			["diff-tree", "--no-commit-id", "--name-status", "-r", "-z", hash],
+			projectPath,
+		);
+	} catch {
+		return [];
+	}
+
+	// NUL-delimited stream of alternating <status> <path> tokens. For renames
+	// (R<score>) git emits <status> <oldPath> <newPath>; we keep the new path.
+	const tokens = output.split("\0").filter((t) => t.length > 0);
+	const files: GitCommitFile[] = [];
+	let i = 0;
+	while (i < tokens.length) {
+		const statusCode = tokens[i];
+		const isRename = statusCode[0] === "R" || statusCode[0] === "C";
+		if (isRename) {
+			// status, oldPath, newPath
+			const newPath = tokens[i + 2];
+			if (newPath) {
+				files.push({
+					path: normalizeGitPath(newPath),
+					status: diffStatusToGitStatus(statusCode),
+				});
+			}
+			i += 3;
+		} else {
+			const filePath = tokens[i + 1];
+			if (filePath) {
+				files.push({
+					path: normalizeGitPath(filePath),
+					status: diffStatusToGitStatus(statusCode),
+				});
+			}
+			i += 2;
+		}
+	}
+
+	return files;
 }

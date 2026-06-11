@@ -40,6 +40,8 @@ import {
 	type FsRenameMsg,
 	type FsStatMsg,
 	type FsWriteMsg,
+	type GitCommitFilesMsg,
+	type GitLogMsg,
 	type GitReadMsg,
 	type HostHandshakeMsg,
 	HostHandshakeRespMsgSchema,
@@ -201,6 +203,14 @@ export class Connection extends EventEmitter {
 	on(
 		eventName: typeof MsgType.GIT_READ,
 		listener: (msg: GitReadMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.GIT_LOG,
+		listener: (msg: GitLogMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.GIT_COMMIT_FILES,
+		listener: (msg: GitCommitFilesMsg) => void,
 	): this;
 	on(
 		eventName: typeof MsgType.PORTS_LIST,
@@ -443,6 +453,14 @@ export class Connection extends EventEmitter {
 		listener: (msg: GitReadMsg) => void,
 	): this;
 	once(
+		eventName: typeof MsgType.GIT_LOG,
+		listener: (msg: GitLogMsg) => void,
+	): this;
+	once(
+		eventName: typeof MsgType.GIT_COMMIT_FILES,
+		listener: (msg: GitCommitFilesMsg) => void,
+	): this;
+	once(
 		eventName: typeof MsgType.PORTS_LIST,
 		listener: (msg: PortsListMsg) => void,
 	): this;
@@ -530,6 +548,11 @@ export class Connection extends EventEmitter {
 		msg: ProjectFileSearchMsg,
 	): boolean;
 	emit(eventName: typeof MsgType.GIT_READ, msg: GitReadMsg): boolean;
+	emit(eventName: typeof MsgType.GIT_LOG, msg: GitLogMsg): boolean;
+	emit(
+		eventName: typeof MsgType.GIT_COMMIT_FILES,
+		msg: GitCommitFilesMsg,
+	): boolean;
 	emit(eventName: typeof MsgType.PORTS_LIST, msg: PortsListMsg): boolean;
 	emit(eventName: typeof MsgType.PORTS_KILL, msg: PortsKillMsg): boolean;
 	emit(eventName: typeof MsgType.HTTP_REQUEST, msg: HttpRequestMsg): boolean;

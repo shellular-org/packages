@@ -15,6 +15,23 @@ export const GitStatusSchema = z.enum([
 ]);
 export type GitStatus = z.infer<typeof GitStatusSchema>;
 
+export const GitCommitSchema = z.object({
+	hash: z.string(),
+	shortHash: z.string(),
+	author: z.string(),
+	email: z.string(),
+	/** Commit time as a unix timestamp in seconds. */
+	timestamp: z.number(),
+	subject: z.string(),
+});
+export type GitCommit = z.infer<typeof GitCommitSchema>;
+
+export const GitCommitFileSchema = z.object({
+	path: z.string(),
+	status: GitStatusSchema,
+});
+export type GitCommitFile = z.infer<typeof GitCommitFileSchema>;
+
 // ─── Incoming (client → CLI) ──────────────────────────────────────────────────
 
 export const FsListMsgSchema = z.object({
@@ -100,6 +117,29 @@ export const GitReadMsgSchema = z.object({
 	}),
 });
 export type GitReadMsg = z.infer<typeof GitReadMsgSchema>;
+
+export const GitLogMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.GIT_LOG),
+	clientId: z.string(),
+	data: z.object({
+		path: z.string(),
+		skip: z.number().optional(),
+		limit: z.number().optional(),
+	}),
+});
+export type GitLogMsg = z.infer<typeof GitLogMsgSchema>;
+
+export const GitCommitFilesMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.GIT_COMMIT_FILES),
+	clientId: z.string(),
+	data: z.object({
+		path: z.string(),
+		hash: z.string(),
+	}),
+});
+export type GitCommitFilesMsg = z.infer<typeof GitCommitFilesMsgSchema>;
 
 export const ProjectInfoMsgSchema = z.object({
 	id: z.string().optional(),
@@ -216,6 +256,38 @@ export const GitReadResultMsgSchema = z.object({
 		.optional(),
 });
 export type GitReadResultMsg = z.infer<typeof GitReadResultMsgSchema>;
+
+export const GitLogResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.GIT_LOG_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			commits: z.array(GitCommitSchema),
+			hasMore: z.boolean(),
+			total: z.number(),
+		})
+		.optional(),
+});
+export type GitLogResultMsg = z.infer<typeof GitLogResultMsgSchema>;
+
+export const GitCommitFilesResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.GIT_COMMIT_FILES_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			files: z.array(GitCommitFileSchema),
+		})
+		.optional(),
+});
+export type GitCommitFilesResultMsg = z.infer<
+	typeof GitCommitFilesResultMsgSchema
+>;
 
 export const ProjectInfoResultMsgSchema = z.object({
 	id: z.string().optional(),
