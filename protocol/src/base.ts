@@ -104,6 +104,10 @@ export const MsgType = {
 	GIT_COMMIT_FILES: "git:commit-files",
 	/** Response with the files changed in a specific commit */
 	GIT_COMMIT_FILES_RESULT: "git:commit-files:result",
+	/** Request for a single file's before/after contents in a commit */
+	GIT_COMMIT_FILE_DIFF: "git:commit-file-diff",
+	/** Response with a single file's before/after contents in a commit */
+	GIT_COMMIT_FILE_DIFF_RESULT: "git:commit-file-diff:result",
 	AI_AVAILABILITY: "ai:availability",
 	AI_AVAILABILITY_RESULT: "ai:availability:result",
 	AI_SESSION_LIST: "ai:session:list",
