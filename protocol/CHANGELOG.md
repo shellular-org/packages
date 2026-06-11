@@ -1,5 +1,11 @@
 # @shellular/protocol
 
+## 0.0.18
+
+### Patch Changes
+
+- 1415220: feat: allow users to add custom ACP agents
+
 ## 0.0.17
 
 ### Patch Changes
