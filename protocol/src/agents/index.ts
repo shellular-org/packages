@@ -341,9 +341,7 @@ export const AiAgentsManageListMsgSchema = z.object({
 	clientId: z.string(),
 	data: z.object({}).optional(),
 });
-export type AiAgentsManageListMsg = z.infer<
-	typeof AiAgentsManageListMsgSchema
->;
+export type AiAgentsManageListMsg = z.infer<typeof AiAgentsManageListMsgSchema>;
 
 export const AiAgentsEnableSetMsgSchema = z.object({
 	id: z.string().optional(),
@@ -354,9 +352,7 @@ export const AiAgentsEnableSetMsgSchema = z.object({
 		enabled: z.boolean(),
 	}),
 });
-export type AiAgentsEnableSetMsg = z.infer<
-	typeof AiAgentsEnableSetMsgSchema
->;
+export type AiAgentsEnableSetMsg = z.infer<typeof AiAgentsEnableSetMsgSchema>;
 
 export const AiAgentsCustomAddMsgSchema = z.object({
 	id: z.string().optional(),
@@ -364,9 +360,7 @@ export const AiAgentsCustomAddMsgSchema = z.object({
 	clientId: z.string(),
 	data: CustomAcpAgentInputSchema,
 });
-export type AiAgentsCustomAddMsg = z.infer<
-	typeof AiAgentsCustomAddMsgSchema
->;
+export type AiAgentsCustomAddMsg = z.infer<typeof AiAgentsCustomAddMsgSchema>;
 
 export const AiAgentsCustomUpdateMsgSchema = z.object({
 	id: z.string().optional(),
@@ -424,32 +418,37 @@ function agentManagementResultSchema<TType extends string>(type: TType) {
 	});
 }
 
-export const AiAgentsManageListResultMsgSchema =
-	agentManagementResultSchema(MsgType.AI_AGENTS_MANAGE_LIST_RESULT);
+export const AiAgentsManageListResultMsgSchema = agentManagementResultSchema(
+	MsgType.AI_AGENTS_MANAGE_LIST_RESULT,
+);
 export type AiAgentsManageListResultMsg = z.infer<
 	typeof AiAgentsManageListResultMsgSchema
 >;
 
-export const AiAgentsEnableSetResultMsgSchema =
-	agentManagementResultSchema(MsgType.AI_AGENTS_ENABLE_SET_RESULT);
+export const AiAgentsEnableSetResultMsgSchema = agentManagementResultSchema(
+	MsgType.AI_AGENTS_ENABLE_SET_RESULT,
+);
 export type AiAgentsEnableSetResultMsg = z.infer<
 	typeof AiAgentsEnableSetResultMsgSchema
 >;
 
-export const AiAgentsCustomAddResultMsgSchema =
-	agentManagementResultSchema(MsgType.AI_AGENTS_CUSTOM_ADD_RESULT);
+export const AiAgentsCustomAddResultMsgSchema = agentManagementResultSchema(
+	MsgType.AI_AGENTS_CUSTOM_ADD_RESULT,
+);
 export type AiAgentsCustomAddResultMsg = z.infer<
 	typeof AiAgentsCustomAddResultMsgSchema
 >;
 
-export const AiAgentsCustomUpdateResultMsgSchema =
-	agentManagementResultSchema(MsgType.AI_AGENTS_CUSTOM_UPDATE_RESULT);
+export const AiAgentsCustomUpdateResultMsgSchema = agentManagementResultSchema(
+	MsgType.AI_AGENTS_CUSTOM_UPDATE_RESULT,
+);
 export type AiAgentsCustomUpdateResultMsg = z.infer<
 	typeof AiAgentsCustomUpdateResultMsgSchema
 >;
 
-export const AiAgentsCustomRemoveResultMsgSchema =
-	agentManagementResultSchema(MsgType.AI_AGENTS_CUSTOM_REMOVE_RESULT);
+export const AiAgentsCustomRemoveResultMsgSchema = agentManagementResultSchema(
+	MsgType.AI_AGENTS_CUSTOM_REMOVE_RESULT,
+);
 export type AiAgentsCustomRemoveResultMsg = z.infer<
 	typeof AiAgentsCustomRemoveResultMsgSchema
 >;

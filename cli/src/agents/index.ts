@@ -5,7 +5,6 @@ import type {
 	AcpAiSession,
 	AcpMessage,
 	AcpPromptRequest,
-	CustomAcpAgentInput,
 	AiAttachmentWriteMsg,
 	AiAttachmentWriteResultMsg,
 	AiBackend,
@@ -14,6 +13,7 @@ import type {
 	AiSessionCreateMsg,
 	AiSessionRuntimeState,
 	AiSessionState,
+	CustomAcpAgentInput,
 	ManagedAcpAgentInfo,
 } from "@shellular/protocol";
 import { AcpContentBlockSchema, MsgType } from "@shellular/protocol";
@@ -221,13 +221,16 @@ export class AgentsManager {
 		});
 		this.reloadDescriptors();
 		const descriptor = this.descriptors.get(normalized.id);
-		if (!descriptor) throw new AgentUnavailableError(normalized.id, "unknown agent");
+		if (!descriptor)
+			throw new AgentUnavailableError(normalized.id, "unknown agent");
 		return this.getManagedAgentInfo(descriptor);
 	}
 
 	updateCustomAgent(input: CustomAcpAgentInput) {
 		const config = readAgentsConfig();
-		const currentIndex = config.custom.findIndex((agent) => agent.id === input.id);
+		const currentIndex = config.custom.findIndex(
+			(agent) => agent.id === input.id,
+		);
 		if (currentIndex < 0) {
 			throw new Error("Only custom agents can be edited.");
 		}
@@ -246,7 +249,8 @@ export class AgentsManager {
 		this.destroyAgentRuntimes(normalized.id);
 		this.reloadDescriptors();
 		const descriptor = this.descriptors.get(normalized.id);
-		if (!descriptor) throw new AgentUnavailableError(normalized.id, "unknown agent");
+		if (!descriptor)
+			throw new AgentUnavailableError(normalized.id, "unknown agent");
 		return this.getManagedAgentInfo(descriptor);
 	}
 
@@ -282,10 +286,14 @@ export class AgentsManager {
 
 	private isAgentEnabled(agentId: string) {
 		const descriptor = this.descriptors.get(agentId);
-		return Boolean(descriptor && !descriptor.disabled && !this.disabledAgents.has(agentId));
+		return Boolean(
+			descriptor && !descriptor.disabled && !this.disabledAgents.has(agentId),
+		);
 	}
 
-	private getManagedAgentInfo(descriptor: AgentDescriptor): ManagedAcpAgentInfo {
+	private getManagedAgentInfo(
+		descriptor: AgentDescriptor,
+	): ManagedAcpAgentInfo {
 		const runtime = this.agents.get(descriptor.id);
 		const runtimeInfo = runtime?.getInfo();
 		const installed = isAgentAvailable(descriptor);
@@ -308,10 +316,7 @@ export class AgentsManager {
 			enabled,
 			installed,
 			available:
-				enabled &&
-				installed &&
-				state !== "unavailable" &&
-				state !== "failed",
+				enabled && installed && state !== "unavailable" && state !== "failed",
 			installationCommands: descriptor.installationCommands,
 			custom:
 				descriptor.source === "custom"
@@ -328,10 +333,7 @@ export class AgentsManager {
 						}
 					: undefined,
 			adapter: {
-				command: [
-					descriptor.spawn.command,
-					...descriptor.spawn.args,
-				].join(" "),
+				command: [descriptor.spawn.command, ...descriptor.spawn.args].join(" "),
 				available: installed,
 			},
 		};
@@ -893,10 +895,7 @@ export class AgentsManager {
 
 		conn.on(MsgType.AI_AGENTS_ENABLE_SET, (msg) => {
 			try {
-				const agent = this.setAgentEnabled(
-					msg.data.backend,
-					msg.data.enabled,
-				);
+				const agent = this.setAgentEnabled(msg.data.backend, msg.data.enabled);
 				conn.send({
 					type: MsgType.AI_AGENTS_ENABLE_SET_RESULT,
 					clientId: msg.clientId,
@@ -2098,7 +2097,10 @@ function normalizePromptContent(
 	return parsed.length ? parsed : [{ type: "text", text: "" }];
 }
 
-function createAgentRuntime(agentId: AiBackend, descriptor: AgentDescriptor): ACP {
+function createAgentRuntime(
+	agentId: AiBackend,
+	descriptor: AgentDescriptor,
+): ACP {
 	switch (agentId) {
 		case "codex":
 			return Codex.create();

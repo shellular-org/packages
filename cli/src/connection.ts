@@ -4,11 +4,11 @@ import type { HostInfo } from "@shellular/protocol";
 import {
 	type AiAbortMsg,
 	type AiActivityListMsg,
-	type AiAgentsListMsg,
 	type AiAgentsCustomAddMsg,
 	type AiAgentsCustomRemoveMsg,
 	type AiAgentsCustomUpdateMsg,
 	type AiAgentsEnableSetMsg,
+	type AiAgentsListMsg,
 	type AiAgentsManageListMsg,
 	type AiAttachmentWriteMsg,
 	type AiAuthSetMsg,

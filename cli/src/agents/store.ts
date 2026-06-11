@@ -5,7 +5,10 @@ import { config } from "@/config";
 import { isErrnoException } from "@/utils";
 import type { AgentDescriptor } from "./types";
 
-export const AGENTS_CONFIG_FILE = path.join(config.SHELLULAR_DIR, "agents.json");
+export const AGENTS_CONFIG_FILE = path.join(
+	config.SHELLULAR_DIR,
+	"agents.json",
+);
 
 const customAgentSchema = z.object({
 	id: z.string(),
