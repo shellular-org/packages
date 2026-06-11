@@ -156,7 +156,7 @@ function eventClientId(event: AiEvent, fallbackClientId: string): string {
 export class AgentsManager {
 	private descriptors = new Map<string, AgentDescriptor>();
 	private disabledAgents = new Set<string>();
-	private customAgentIds = new Set<string>();
+	// private customAgentIds = new Set<string>();
 	private agents = new Map<string, ACP>();
 	private sessionRuntimes = new Map<string, ACP>();
 	private sessionSnapshots = new Map<string, AttachedSessionSnapshot>();
@@ -271,7 +271,7 @@ export class AgentsManager {
 	private reloadDescriptors() {
 		const config = readAgentsConfig();
 		this.disabledAgents = new Set(config.disabled);
-		this.customAgentIds = new Set(config.custom.map((agent) => agent.id));
+		// this.customAgentIds = new Set(config.custom.map((agent) => agent.id));
 		this.descriptors.clear();
 		for (const agent of Object.values(BUILTIN_AGENT_DESCRIPTORS)) {
 			this.descriptors.set(agent.id, {
