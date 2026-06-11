@@ -1,5 +1,11 @@
 # @shellular/protocol
 
+## 0.0.17
+
+### Patch Changes
+
+- d71b927: feat: implement git commit file diff functionality with message schemas
+
 ## 0.0.16
 
 ### Patch Changes
