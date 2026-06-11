@@ -363,3 +363,70 @@ export async function getCommitFiles(
 
 	return files;
 }
+
+const MAX_DIFF_FILE_BYTES = 2 * 1024 * 1024;
+
+export interface GitCommitFileDiff {
+	oldText: string;
+	newText: string;
+	/** True when either side looks binary; the texts are then empty. */
+	binary: boolean;
+}
+
+/**
+ * Read a single file's contents before and after a commit so the client can
+ * render a diff. `rev:path` resolves the blob at that revision; the parent
+ * revision (`rev^`) gives the "before" side. A missing blob on either side
+ * (added/deleted file, or root commit with no parent) is treated as empty.
+ */
+export async function getCommitFileDiff(
+	projectPath: string,
+	hash: string,
+	filePath: string,
+): Promise<GitCommitFileDiff | null> {
+	if (!/^[0-9a-f]{7,40}$/i.test(hash)) return null;
+
+	const root = await findGitRoot(projectPath);
+	if (!root) return null;
+
+	const relPath = normalizeGitPath(filePath);
+
+	const showBlob = async (rev: string): Promise<Buffer> => {
+		try {
+			const { stdout } = await execFileAsync(
+				"git",
+				["show", `${rev}:${relPath}`],
+				{
+					cwd: projectPath,
+					encoding: "buffer",
+					maxBuffer: MAX_DIFF_FILE_BYTES,
+				},
+			);
+			return stdout;
+		} catch {
+			// Blob absent at this revision (added/deleted file or no parent).
+			return Buffer.alloc(0);
+		}
+	};
+
+	const [oldBuf, newBuf] = await Promise.all([
+		showBlob(`${hash}^`),
+		showBlob(hash),
+	]);
+
+	if (isBinaryBuffer(oldBuf) || isBinaryBuffer(newBuf)) {
+		return { oldText: "", newText: "", binary: true };
+	}
+
+	return {
+		oldText: oldBuf.toString("utf-8"),
+		newText: newBuf.toString("utf-8"),
+		binary: false,
+	};
+}
+
+function isBinaryBuffer(buf: Buffer): boolean {
+	// A NUL byte in the first 8KB is git's own heuristic for "binary".
+	const sample = buf.subarray(0, Math.min(buf.length, 8000));
+	return sample.includes(0);
+}

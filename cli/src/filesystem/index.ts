@@ -13,6 +13,8 @@ import {
 	type FsStatResultMsg,
 	type FsWriteMsg,
 	type FsWriteResultMsg,
+	type GitCommitFileDiffMsg,
+	type GitCommitFileDiffResultMsg,
 	type GitCommitFilesMsg,
 	type GitCommitFilesResultMsg,
 	type GitLogMsg,
@@ -30,6 +32,7 @@ import type { Connection } from "@/connection";
 import {
 	computeEntryGitStatus,
 	findGitRoot,
+	getCommitFileDiff,
 	getCommitFiles,
 	getFileGitStatuses,
 	getGitLog,
@@ -499,6 +502,54 @@ export function initFilesystemHandler(conn: Connection, rootDir: string) {
 		} catch (err) {
 			const respMsg: GitCommitFilesResultMsg = {
 				type: MsgType.GIT_COMMIT_FILES_RESULT,
+				clientId,
+				respTo: msg.id,
+				error: (err as Error).message,
+			};
+			conn.send(respMsg);
+		}
+	});
+
+	conn.on(MsgType.GIT_COMMIT_FILE_DIFF, async (msg: GitCommitFileDiffMsg) => {
+		const { clientId } = msg;
+		const projectPath = safePath(rootDir, msg.data.path);
+		if (!projectPath) {
+			const respMsg: GitCommitFileDiffResultMsg = {
+				type: MsgType.GIT_COMMIT_FILE_DIFF_RESULT,
+				clientId,
+				respTo: msg.id,
+				error: "Access denied: path outside workspace",
+			};
+			conn.send(respMsg);
+			return;
+		}
+
+		try {
+			const diff = await getCommitFileDiff(
+				projectPath,
+				msg.data.hash,
+				msg.data.file,
+			);
+			if (!diff) {
+				const respMsg: GitCommitFileDiffResultMsg = {
+					type: MsgType.GIT_COMMIT_FILE_DIFF_RESULT,
+					clientId,
+					respTo: msg.id,
+					error: "Unable to load file diff",
+				};
+				conn.send(respMsg);
+				return;
+			}
+			const respMsg: GitCommitFileDiffResultMsg = {
+				type: MsgType.GIT_COMMIT_FILE_DIFF_RESULT,
+				clientId,
+				respTo: msg.id,
+				data: diff,
+			};
+			conn.send(respMsg);
+		} catch (err) {
+			const respMsg: GitCommitFileDiffResultMsg = {
+				type: MsgType.GIT_COMMIT_FILE_DIFF_RESULT,
 				clientId,
 				respTo: msg.id,
 				error: (err as Error).message,

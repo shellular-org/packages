@@ -141,6 +141,18 @@ export const GitCommitFilesMsgSchema = z.object({
 });
 export type GitCommitFilesMsg = z.infer<typeof GitCommitFilesMsgSchema>;
 
+export const GitCommitFileDiffMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.GIT_COMMIT_FILE_DIFF),
+	clientId: z.string(),
+	data: z.object({
+		path: z.string(),
+		hash: z.string(),
+		file: z.string(),
+	}),
+});
+export type GitCommitFileDiffMsg = z.infer<typeof GitCommitFileDiffMsgSchema>;
+
 export const ProjectInfoMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.PROJECT_INFO),
@@ -287,6 +299,24 @@ export const GitCommitFilesResultMsgSchema = z.object({
 });
 export type GitCommitFilesResultMsg = z.infer<
 	typeof GitCommitFilesResultMsgSchema
+>;
+
+export const GitCommitFileDiffResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.GIT_COMMIT_FILE_DIFF_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			oldText: z.string(),
+			newText: z.string(),
+			binary: z.boolean(),
+		})
+		.optional(),
+});
+export type GitCommitFileDiffResultMsg = z.infer<
+	typeof GitCommitFileDiffResultMsgSchema
 >;
 
 export const ProjectInfoResultMsgSchema = z.object({
