@@ -1,5 +1,11 @@
 # @shellular/protocol
 
+## 0.0.16
+
+### Patch Changes
+
+- a55f9a3: feat: add git log and commit files functionality with message schemas
+
 ## 0.0.15
 
 ### Patch Changes
