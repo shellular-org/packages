@@ -96,6 +96,14 @@ export const MsgType = {
 	GIT_READ: "git:read",
 	/** Response with original file content from git */
 	GIT_READ_RESULT: "git:read:result",
+	/** Request for a paginated git commit log */
+	GIT_LOG: "git:log",
+	/** Response with a page of git commits */
+	GIT_LOG_RESULT: "git:log:result",
+	/** Request for the files changed in a specific commit */
+	GIT_COMMIT_FILES: "git:commit-files",
+	/** Response with the files changed in a specific commit */
+	GIT_COMMIT_FILES_RESULT: "git:commit-files:result",
 	AI_AVAILABILITY: "ai:availability",
 	AI_AVAILABILITY_RESULT: "ai:availability:result",
 	AI_SESSION_LIST: "ai:session:list",

@@ -13,6 +13,10 @@ import {
 	type FsStatResultMsg,
 	type FsWriteMsg,
 	type FsWriteResultMsg,
+	type GitCommitFilesMsg,
+	type GitCommitFilesResultMsg,
+	type GitLogMsg,
+	type GitLogResultMsg,
 	type GitReadMsg,
 	type GitReadResultMsg,
 	MsgType,
@@ -26,7 +30,9 @@ import type { Connection } from "@/connection";
 import {
 	computeEntryGitStatus,
 	findGitRoot,
+	getCommitFiles,
 	getFileGitStatuses,
+	getGitLog,
 	getProjectGitInfo,
 } from "./git";
 import { searchProjectFiles } from "./project-search";
@@ -422,6 +428,77 @@ export function initFilesystemHandler(conn: Connection, rootDir: string) {
 		} catch (err) {
 			const respMsg: ProjectInfoResultMsg = {
 				type: MsgType.PROJECT_INFO_RESULT,
+				clientId,
+				respTo: msg.id,
+				error: (err as Error).message,
+			};
+			conn.send(respMsg);
+		}
+	});
+
+	conn.on(MsgType.GIT_LOG, async (msg: GitLogMsg) => {
+		const { clientId } = msg;
+		const projectPath = safePath(rootDir, msg.data.path);
+		if (!projectPath) {
+			const respMsg: GitLogResultMsg = {
+				type: MsgType.GIT_LOG_RESULT,
+				clientId,
+				respTo: msg.id,
+				error: "Access denied: path outside workspace",
+			};
+			conn.send(respMsg);
+			return;
+		}
+
+		try {
+			const page = await getGitLog(projectPath, {
+				skip: msg.data.skip,
+				limit: msg.data.limit,
+			});
+			const respMsg: GitLogResultMsg = {
+				type: MsgType.GIT_LOG_RESULT,
+				clientId,
+				respTo: msg.id,
+				data: page,
+			};
+			conn.send(respMsg);
+		} catch (err) {
+			const respMsg: GitLogResultMsg = {
+				type: MsgType.GIT_LOG_RESULT,
+				clientId,
+				respTo: msg.id,
+				error: (err as Error).message,
+			};
+			conn.send(respMsg);
+		}
+	});
+
+	conn.on(MsgType.GIT_COMMIT_FILES, async (msg: GitCommitFilesMsg) => {
+		const { clientId } = msg;
+		const projectPath = safePath(rootDir, msg.data.path);
+		if (!projectPath) {
+			const respMsg: GitCommitFilesResultMsg = {
+				type: MsgType.GIT_COMMIT_FILES_RESULT,
+				clientId,
+				respTo: msg.id,
+				error: "Access denied: path outside workspace",
+			};
+			conn.send(respMsg);
+			return;
+		}
+
+		try {
+			const files = await getCommitFiles(projectPath, msg.data.hash);
+			const respMsg: GitCommitFilesResultMsg = {
+				type: MsgType.GIT_COMMIT_FILES_RESULT,
+				clientId,
+				respTo: msg.id,
+				data: { files },
+			};
+			conn.send(respMsg);
+		} catch (err) {
+			const respMsg: GitCommitFilesResultMsg = {
+				type: MsgType.GIT_COMMIT_FILES_RESULT,
 				clientId,
 				respTo: msg.id,
 				error: (err as Error).message,
