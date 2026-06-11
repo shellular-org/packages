@@ -101,4 +101,4 @@ pnpm run format
 
 ## License
 
-Source-Available License
+AGPL-3.0-only

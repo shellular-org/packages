@@ -26,8 +26,8 @@
     "access": "public"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Shellular <team@shellular.dev>",
+  "license": "AGPL-3.0-only",
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.22.1",
     "zod": "^4.3.6"

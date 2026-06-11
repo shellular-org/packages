@@ -22,7 +22,7 @@
 		"development",
 		"cli"
 	],
-	"license": "MIT",
+	"license": "AGPL-3.0-only",
 	"type": "module",
 	"files": [
 		"dist",
