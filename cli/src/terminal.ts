@@ -39,6 +39,30 @@ const shellArgs = config.PLATFORM === "win32" ? ["-NoLogo"] : ["-l"];
 const terminals = new Map<string, Map<string, TerminalEntry>>();
 const MAX_REPLAY_SCROLLBACK = 2000;
 
+// Environment variables stripped from a spawned terminal's environment.
+//
+// The daemon inherits its environment from whatever shell ran `shellular start`
+// (copied verbatim by getPm2Env in daemon.ts), so shell/version-manager state can
+// leak in and then get re-inherited by every login shell we spawn. A login shell
+// (`-l`) rebuilds this state from the user's rc files anyway, so the inherited
+// copies are at best redundant and at worst make tools complain — e.g. nvm prints
+// "not compatible with npm_config_prefix" before every prompt when it sees a
+// pre-set npm_config_prefix. Dropping these lets nvm's init script start clean.
+//
+// Scoped to the nvm family deliberately: NVM_DIR/NVM_BIN/NVM_INC are *outputs* of
+// sourcing nvm.sh (which the rc file does on every login-shell spawn), not inputs
+// nvm needs to find itself, so removing them does not break `nvm` in the terminal.
+// We intentionally do NOT strip VIRTUAL_ENV/CONDA_* — those don't error out, and a
+// user may rely on a pre-activated env; they can re-activate per-terminal or via
+// their rc file if they prefer.
+const STRIPPED_ENV_VARS = [
+	"npm_config_prefix", // nvm refuses to load when this is pre-set
+	"NVM_DIR", // re-exported and re-sourced by the rc file on login
+	"NVM_BIN", // derived by nvm.sh
+	"NVM_INC", // derived by nvm.sh
+	"NVM_CD_FLAGS",
+];
+
 let terminalCounter = 0;
 
 // Active WebSocket connection to relay server — updated on every (re)connect, nulled on disconnect.
@@ -73,11 +97,20 @@ function createTerminal({
 	cols,
 	cwd,
 }: CreateTerminalOptions): TerminalEntry {
+	// Strip leaked shell/version-manager state (see STRIPPED_ENV_VARS) so the
+	// spawned login shell rebuilds it cleanly from the user's rc files instead of
+	// inheriting a stale copy from the daemon's environment.
+	const cleanEnv: NodeJS.ProcessEnv = { ...process.env };
+	for (const key of STRIPPED_ENV_VARS) {
+		delete cleanEnv[key];
+	}
+
 	const pty = nodePty.spawn(shellPath, shellArgs, {
 		name: "xterm-256color",
 		cols,
 		rows,
 		cwd,
+		env: cleanEnv,
 	});
 
 	const headless = new HeadlessTerminal({
