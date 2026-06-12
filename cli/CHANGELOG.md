@@ -1,5 +1,11 @@
 # shellular
 
+## 0.0.35
+
+### Patch Changes
+
+- 36258a6: fix: no TTL for terminals. previously, if a terminal had been active for 7 days, it used to get killed & cleaned up, even if the user didn't want it to happen.
+
 ## 0.0.34
 
 ### Patch Changes
