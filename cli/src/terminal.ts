@@ -8,7 +8,6 @@ import {
 } from "@shellular/protocol";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import XtermHeadless, { type Terminal } from "@xterm/headless";
-import chalk from "chalk";
 import nodePty from "node-pty";
 
 import { config } from "./config";
@@ -47,37 +46,11 @@ let terminalCounter = 0;
 // the current connection rather than the one captured at spawn time.
 let activeConn: Connection | null = null;
 
-// Tracks when a client disconnected so orphaned PTYs can be GC-ed after a TTL.
-const orphanedSince = new Map<string, number>(); // clientId → timestamp (ms)
-const ORPHAN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-
-// Hourly GC: kill PTYs whose client has been absent for longer than ORPHAN_TTL_MS.
-const _orphanGcInterval = setInterval(
-	() => {
-		const now = Date.now();
-		for (const [clientId, since] of orphanedSince) {
-			if (now - since > ORPHAN_TTL_MS) {
-				const clientTerminals = terminals.get(clientId);
-				if (clientTerminals) {
-					for (const [, entry] of clientTerminals) {
-						try {
-							entry.pty.kill();
-						} catch {}
-					}
-					terminals.delete(clientId);
-				}
-				orphanedSince.delete(clientId);
-				logger.log(
-					chalk.red(
-						`✓ GC: removed orphaned PTYs for client ${clientId} (TTL exceeded)\n`,
-					),
-				);
-			}
-		}
-	},
-	60 * 60 * 1000,
-);
-_orphanGcInterval.unref();
+// PTYs persist like tmux sessions: once spawned they live until the shell exits,
+// the client explicitly closes them, or the daemon process restarts. There is no
+// idle/orphan TTL — a disconnected client's terminals are kept alive indefinitely
+// so they can be reattached later, matching tmux's "sessions live as long as the
+// server" semantics.
 
 function getClientTerminals(clientId: string): Map<string, TerminalEntry> {
 	return mapGetOrInsert(
@@ -226,9 +199,6 @@ export function initTerminalHandler(conn: Connection, workDir: string) {
 	conn.on(MsgType.TERMINAL_ATTACH, async (msg) => {
 		const { clientId } = msg;
 
-		// Reattaching means the client is back — cancel any pending orphan TTL.
-		orphanedSince.delete(clientId);
-
 		const clientTerminals = getClientTerminals(clientId);
 
 		const entry = clientTerminals.get(msg.data.terminalId);
@@ -308,34 +278,6 @@ export function initTerminalHandler(conn: Connection, workDir: string) {
 				data: { terminalId: msg.data.terminalId },
 			};
 			conn.send(respMsg);
-		}
-	});
-
-	// When a client disconnects, keep PTYs alive and start the orphan TTL.
-	// PTYs are only killed on explicit terminal:close or after ORPHAN_TTL_MS.
-	conn.on(MsgType.SESSION_CLIENT_LEFT, (msg) => {
-		const { clientId } = msg.data;
-		const termCount = terminals.get(clientId)?.size ?? 0;
-		if (termCount > 0) {
-			orphanedSince.set(clientId, Date.now());
-			logger.log(
-				chalk.yellow(
-					`⏳ Client ${clientId} disconnected — keeping ${termCount} PTY(s) alive (TTL: 7 days)`,
-				),
-			);
-		}
-	});
-
-	// When the app's client reconnects, cancel its orphan TTL.
-	conn.on(MsgType.SESSION_CLIENT_JOINED, (msg) => {
-		const { clientId } = msg.data;
-		if (orphanedSince.has(clientId)) {
-			orphanedSince.delete(clientId);
-			logger.log(
-				chalk.green(
-					`✓ Client ${clientId} reconnected — orphan TTL cancelled, PTYs restored\n`,
-				),
-			);
 		}
 	});
 
