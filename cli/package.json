@@ -1,6 +1,6 @@
 {
 	"name": "shellular",
-	"version": "0.0.34",
+	"version": "0.0.35",
 	"description": "Shellular CLI — host your dev environment for remote access from your phone.",
 	"main": "dist/main.js",
 	"scripts": {
