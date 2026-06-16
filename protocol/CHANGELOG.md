@@ -1,5 +1,11 @@
 # @shellular/protocol
 
+## 0.0.19
+
+### Patch Changes
+
+- c18c131: fix: make sure npx spawn for ACP work on windows, and pin ACP sdk version to 0.23.0 since the unstable model setting was removed
+
 ## 0.0.18
 
 ### Patch Changes
