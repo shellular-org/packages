@@ -34,6 +34,23 @@ import type {
 	StoredSession,
 } from "./types";
 
+/**
+ * Quote a command/argument for safe use with `cmd.exe` (Windows `shell: true`).
+ * Only quotes when needed (contains whitespace or shell metacharacters) and
+ * escapes embedded double quotes by doubling them.
+ */
+function quoteForCmd(value: string): string {
+	if (value === "") {
+		return '""';
+	}
+
+	if (!/[\s"&|<>^()%!]/.test(value)) {
+		return value;
+	}
+
+	return `"${value.replace(/"/g, '""')}"`;
+}
+
 /** Configuration for spawning an ACP agent subprocess. */
 export interface AgentProcessConfig {
 	name: string;
@@ -186,11 +203,25 @@ export class ACP {
 			);
 		}
 
-		const agentProcess = spawn(config.command, config.args ?? [], {
-			cwd: config.cwd,
-			env: { ...process.env, ...(config.env ?? {}) },
-			stdio: ["pipe", "pipe", "pipe"],
-		});
+		// On Windows, Node.js refuses to spawn .bat/.cmd files directly since the
+		// fix for CVE-2024-27980 (spawn EINVAL). Commands like `npx.cmd`, and the
+		// shims for `opencode`, `cursor-agent`, `hermes`, etc., are .cmd files, so
+		// they must be run through a shell. `shell: true` makes Node invoke cmd.exe,
+		// which can resolve and execute these script shims.
+		const useShell = process.platform === "win32";
+		const args = config.args ?? [];
+		const agentProcess = spawn(
+			useShell ? quoteForCmd(config.command) : config.command,
+			// With shell:true on Windows, args are concatenated into a command line,
+			// so anything containing spaces/special chars must be quoted.
+			useShell ? args.map(quoteForCmd) : args,
+			{
+				cwd: config.cwd,
+				env: { ...process.env, ...(config.env ?? {}) },
+				stdio: ["pipe", "pipe", "pipe"],
+				shell: useShell,
+			},
+		);
 
 		const input = Writable.toWeb(agentProcess.stdin);
 		const output = Readable.toWeb(
