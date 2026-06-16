@@ -18,8 +18,8 @@ importers:
   cli:
     dependencies:
       '@agentclientprotocol/sdk':
-        specifier: ^0.22.1
-        version: 0.22.1(zod@4.3.6)
+        specifier: 0.23.0
+        version: 0.23.0(zod@4.3.6)
       '@ff-labs/fff-node':
         specifier: ^0.6.4
         version: 0.6.4
@@ -109,8 +109,8 @@ importers:
   protocol:
     dependencies:
       '@agentclientprotocol/sdk':
-        specifier: ^0.22.1
-        version: 0.22.1(zod@4.3.6)
+        specifier: 0.23.0
+        version: 0.23.0(zod@4.3.6)
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -124,8 +124,8 @@ importers:
 
 packages:
 
-  '@agentclientprotocol/sdk@0.22.1':
-    resolution: {integrity: sha512-DfqXtl/8gO9NImq094MTaCXEU2vkhh6v7q/kT+9UjZxUqj8hYaya2OjLVIqn16MzNHcXEpShTR2RIauLSYeDQQ==}
+  '@agentclientprotocol/sdk@0.23.0':
+    resolution: {integrity: sha512-wIGDQMSXwhoSPNCJflSQvf4WeSU2Jq1bbPRAwwb49euo9qMcND5Pb80hD7hVfuAwz9ZvvDuzVrNTOZrvKPR9Eg==}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
@@ -1852,7 +1852,7 @@ packages:
 
 snapshots:
 
-  '@agentclientprotocol/sdk@0.22.1(zod@4.3.6)':
+  '@agentclientprotocol/sdk@0.23.0(zod@4.3.6)':
     dependencies:
       zod: 4.3.6
 
