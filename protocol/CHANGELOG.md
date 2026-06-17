@@ -1,5 +1,12 @@
 # @shellular/protocol
 
+## 0.0.20
+
+### Patch Changes
+
+- 7a6d943: Update ACP SDK usage to the latest session configuration API and remove the obsolete session model selector bridge.
+- 87ef273: feat: implement portless URL mapping in ports handler (https://portless.sh/)
+
 ## 0.0.19
 
 ### Patch Changes
