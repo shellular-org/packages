@@ -37,6 +37,9 @@ export const PortsListResultMsgSchema = z.object({
 					pid: z.number(),
 					process: z.string(),
 					address: z.string(),
+					// Set only when the port is mapped to a portless
+					// (https://portless.sh) `<name>.localhost` URL.
+					portlessUrl: z.string().optional(),
 				}),
 			),
 		})

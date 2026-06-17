@@ -1,4 +1,7 @@
 import { execSync, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
 	MsgType,
 	type PortsKillResultMsg,
@@ -7,8 +10,52 @@ import {
 
 import { config } from "./config";
 import type { Connection } from "./connection";
+import { logger } from "./logger";
 
 const { PLATFORM: platform } = config;
+
+/**
+ * Read portless's route registry and build a map of port → public URL.
+ *
+ * portless (https://portless.sh) assigns each dev server a `<name>.localhost`
+ * URL and records the mapping in `routes.json` inside its state directory
+ * (`~/.portless` by default, overridable via `PORTLESS_STATE_DIR`). Each entry
+ * is `{ hostname, port, pid, ... }`, where `hostname` is already the full
+ * `<name>.localhost` form, so we just prepend the scheme.
+ *
+ * Returns an empty map when portless isn't installed or the file is absent or
+ * malformed — its absence simply means no port gets a portless URL.
+ */
+function readPortlessUrls(): Map<number, string> {
+	const map = new Map<number, string>();
+	const stateDir =
+		process.env.PORTLESS_STATE_DIR || path.join(os.homedir(), ".portless");
+	const routesPath = path.join(stateDir, "routes.json");
+	if (!fs.existsSync(routesPath)) {
+		return map;
+	}
+
+	try {
+		const raw = fs.readFileSync(routesPath, "utf-8");
+		const routes = JSON.parse(raw);
+		if (!Array.isArray(routes)) {
+			return map;
+		}
+
+		for (const route of routes) {
+			if (
+				route &&
+				typeof route.hostname === "string" &&
+				typeof route.port === "number"
+			) {
+				map.set(route.port, `https://${route.hostname}`);
+			}
+		}
+	} catch (error) {
+		logger.error("Failed to read portless routes:", error);
+	}
+	return map;
+}
 
 export function initPortsHandler(conn: Connection) {
 	conn.on(MsgType.PORTS_LIST, (msg) => {
@@ -19,6 +66,7 @@ export function initPortsHandler(conn: Connection) {
 			pid: number;
 			process: string;
 			address: string;
+			portlessUrl?: string;
 		}> = [];
 
 		try {
@@ -93,6 +141,19 @@ export function initPortsHandler(conn: Connection) {
 				3389, // microsoft RDP
 				7265, // raycast
 			]);
+
+			// Attach portless URLs where the user has mapped a port to a
+			// `<name>.localhost` host. Only ports present in portless's registry
+			// get a URL; the rest are left untouched.
+			const portlessUrls = readPortlessUrls();
+			if (portlessUrls.size > 0) {
+				for (const p of ports) {
+					const url = portlessUrls.get(p.port);
+					if (url) {
+						p.portlessUrl = url;
+					}
+				}
+			}
 
 			const respMsg: PortsListResultMsg = {
 				type: MsgType.PORTS_LIST_RESULT,
