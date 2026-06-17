@@ -471,7 +471,6 @@ export class ACP {
 							...existing.session,
 							configOptions:
 								response.configOptions ?? existing.session.configOptions,
-							model: response.models?.currentModelId ?? existing.session.model,
 						}
 					: newAiSessionFromResponse(
 							{ sessionId, configOptions: response.configOptions },
@@ -600,11 +599,6 @@ export class ACP {
 	async setSessionMode(params: acp.SetSessionModeRequest) {
 		await this.ensureReady();
 		return this.requireConnection().setSessionMode(params);
-	}
-
-	async setSessionModel(params: acp.SetSessionModelRequest) {
-		await this.ensureReady();
-		return this.requireConnection().unstable_setSessionModel(params);
 	}
 
 	requestPendingPermissions(clientId: string) {

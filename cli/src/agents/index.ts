@@ -553,7 +553,6 @@ export class AgentsManager {
 			session,
 			state: {
 				configOptions: result.response.configOptions ?? undefined,
-				models: result.response.models,
 				modes: result.response.modes,
 				availableCommands: latestAvailableCommands(result.updates),
 			},
@@ -760,16 +759,6 @@ export class AgentsManager {
 	) {
 		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
 		return agent.setSessionMode({ sessionId, modeId });
-	}
-
-	async setSessionModel(
-		clientId: string,
-		agentId: AiBackend,
-		sessionId: string,
-		modelId: string,
-	) {
-		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
-		return agent.setSessionModel({ sessionId, modelId });
 	}
 
 	destroy() {
@@ -1018,7 +1007,6 @@ export class AgentsManager {
 						state: {
 							availableCommands: latestAvailableCommands(updates),
 							configOptions: response.configOptions ?? undefined,
-							models: response.models,
 							modes: response.modes,
 						},
 						runtimeState,
@@ -1092,7 +1080,6 @@ export class AgentsManager {
 						session,
 						state: {
 							configOptions: result.response.configOptions ?? undefined,
-							models: result.response.models,
 							modes: result.response.modes,
 						},
 						runtimeState,
@@ -1191,7 +1178,6 @@ export class AgentsManager {
 						session: result.session,
 						state: {
 							configOptions: result.response.configOptions ?? undefined,
-							models: result.response.models,
 							modes: result.response.modes,
 						},
 						runtimeState,
@@ -1239,7 +1225,6 @@ export class AgentsManager {
 						session: result.session,
 						state: {
 							configOptions: result.response.configOptions ?? undefined,
-							models: result.response.models,
 							modes: result.response.modes,
 						},
 						runtimeState,
@@ -1467,35 +1452,6 @@ export class AgentsManager {
 			}
 		});
 
-		conn.on(MsgType.AI_SESSION_MODEL_SET, async (msg) => {
-			try {
-				await this.setSessionModel(
-					msg.clientId,
-					msg.data.backend,
-					msg.data.sessionId,
-					msg.data.modelId,
-				);
-				conn.send({
-					type: MsgType.AI_SESSION_MODEL_SET_RESULT,
-					clientId: msg.clientId,
-					respTo: msg.id,
-					data: {
-						backend: msg.data.backend,
-						sessionId: msg.data.sessionId,
-						modelId: msg.data.modelId,
-						ok: true,
-					},
-				});
-			} catch (err) {
-				conn.send({
-					type: MsgType.AI_SESSION_MODEL_SET_RESULT,
-					clientId: msg.clientId,
-					respTo: msg.id,
-					error: getErrorMessage(err),
-				});
-			}
-		});
-
 		conn.on(MsgType.AI_ABORT, async (msg) => {
 			try {
 				await this.cancel(msg.clientId, msg.data.backend, msg.data.sessionId);
@@ -1706,7 +1662,6 @@ export class AgentsManager {
 					session,
 					state: {
 						configOptions: result.response.configOptions ?? undefined,
-						models: result.response.models,
 						modes: result.response.modes,
 						availableCommands: latestAvailableCommands(result.updates),
 					},
@@ -1720,7 +1675,6 @@ export class AgentsManager {
 						messages: result.messages,
 						state: {
 							configOptions: result.response.configOptions ?? undefined,
-							models: result.response.models,
 							modes: result.response.modes,
 							availableCommands: latestAvailableCommands(result.updates),
 						},
