@@ -681,7 +681,6 @@ export function newAiSessionFromResponse(
 		updatedAt: ts,
 		workspacePath: cwd,
 		configOptions: response.configOptions ?? undefined,
-		model: response.models?.currentModelId,
 	};
 }
 

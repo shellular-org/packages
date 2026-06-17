@@ -29,7 +29,7 @@
   "author": "Shellular <team@shellular.dev>",
   "license": "AGPL-3.0-only",
   "dependencies": {
-    "@agentclientprotocol/sdk": "0.23.0",
+    "@agentclientprotocol/sdk": "0.26.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

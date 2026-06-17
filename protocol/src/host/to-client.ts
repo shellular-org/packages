@@ -12,7 +12,6 @@ import {
 	AiSessionDetachResultMsgSchema,
 	AiSessionForkResultMsgSchema,
 	AiSessionLoadResultMsgSchema,
-	AiSessionModelSetResultMsgSchema,
 	AiSessionModeSetResultMsgSchema,
 	AiSessionResumeResultMsgSchema,
 } from "@/agents";
@@ -114,7 +113,6 @@ export const HostToClientSchema = z.discriminatedUnion("type", [
 	AiAttachmentWriteResultMsgSchema,
 	AiSessionConfigSetResultMsgSchema,
 	AiSessionModeSetResultMsgSchema,
-	AiSessionModelSetResultMsgSchema,
 	AiAbortAckMsgSchema,
 	AiActivityListResultMsgSchema,
 	AiAgentsListResultMsgSchema,

@@ -31,7 +31,6 @@ import {
 	type AiSessionGetMsg,
 	type AiSessionListMsg,
 	type AiSessionLoadMsg,
-	type AiSessionModelSetMsg,
 	type AiSessionModeSetMsg,
 	type AiSessionResumeMsg,
 	type AiShareMsg,
@@ -309,10 +308,6 @@ export class Connection extends EventEmitter {
 	on(
 		eventName: typeof MsgType.AI_SESSION_MODE_SET,
 		listener: (msg: AiSessionModeSetMsg) => void,
-	): this;
-	on(
-		eventName: typeof MsgType.AI_SESSION_MODEL_SET,
-		listener: (msg: AiSessionModelSetMsg) => void,
 	): this;
 	on(
 		eventName: typeof MsgType.AI_ABORT,

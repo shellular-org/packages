@@ -128,8 +128,6 @@ export const MsgType = {
 	AI_SESSION_CLOSE_RESULT: "ai:session:close:result",
 	AI_SESSION_MODE_SET: "ai:session:mode:set",
 	AI_SESSION_MODE_SET_RESULT: "ai:session:mode:set:result",
-	AI_SESSION_MODEL_SET: "ai:session:model:set",
-	AI_SESSION_MODEL_SET_RESULT: "ai:session:model:set:result",
 	AI_SESSION_GET: "ai:session:get",
 	AI_SESSION_GET_RESULT: "ai:session:get:result",
 	AI_SESSION_DELETE: "ai:session:delete",

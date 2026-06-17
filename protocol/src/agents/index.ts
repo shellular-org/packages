@@ -137,7 +137,6 @@ export type AgentManagementResultData = z.infer<
 export const AiSessionStateSchema = z.object({
 	availableCommands: z.array(AcpAvailableCommandSchema).optional(),
 	configOptions: z.array(AiSessionConfigOptionSchema).optional(),
-	models: z.unknown().optional(),
 	modes: z.unknown().optional(),
 });
 export type AiSessionState = z.infer<typeof AiSessionStateSchema>;
@@ -307,18 +306,6 @@ export const AiSessionModeSetMsgSchema = z.object({
 	}),
 });
 export type AiSessionModeSetMsg = z.infer<typeof AiSessionModeSetMsgSchema>;
-
-export const AiSessionModelSetMsgSchema = z.object({
-	id: z.string().optional(),
-	type: z.literal(MsgType.AI_SESSION_MODEL_SET),
-	clientId: z.string(),
-	data: z.object({
-		backend: AiBackendSchema,
-		sessionId: z.string(),
-		modelId: z.string(),
-	}),
-});
-export type AiSessionModelSetMsg = z.infer<typeof AiSessionModelSetMsgSchema>;
 
 export const AiAttachmentWriteMsgSchema = z.object({
 	id: z.string().optional(),
@@ -585,25 +572,6 @@ export const AiSessionModeSetResultMsgSchema = z.object({
 });
 export type AiSessionModeSetResultMsg = z.infer<
 	typeof AiSessionModeSetResultMsgSchema
->;
-
-export const AiSessionModelSetResultMsgSchema = z.object({
-	id: z.string().optional(),
-	type: z.literal(MsgType.AI_SESSION_MODEL_SET_RESULT),
-	clientId: z.string().optional(),
-	respTo: z.string().optional(),
-	error: z.string().optional(),
-	data: z
-		.object({
-			backend: AiBackendSchema,
-			sessionId: z.string(),
-			modelId: z.string(),
-			ok: z.literal(true),
-		})
-		.optional(),
-});
-export type AiSessionModelSetResultMsg = z.infer<
-	typeof AiSessionModelSetResultMsgSchema
 >;
 
 export const AiAttachmentWriteResultMsgSchema = z.object({
