@@ -185,6 +185,18 @@ export const AiSessionRuntimeStateSchema = z.object({
 	stopReason: z.string().optional(),
 	error: z.string().optional(),
 	pendingPermission: z.record(z.string(), z.unknown()).optional(),
+	/**
+	 * True when this state was observed from a session Shellular did not start
+	 * (e.g. the user running claude/codex directly), via on-disk watching.
+	 */
+	external: z.boolean().optional(),
+	/**
+	 * When true, the activity should remain visible until the user explicitly
+	 * dismisses it, rather than expiring after a recency window. Used so a
+	 * session that finished while the user was away is still shown when they
+	 * next open the app.
+	 */
+	persistent: z.boolean().optional(),
 });
 export type AiSessionRuntimeState = z.infer<typeof AiSessionRuntimeStateSchema>;
 
@@ -330,6 +342,17 @@ export const AiActivityListMsgSchema = z.object({
 		.optional(),
 });
 export type AiActivityListMsg = z.infer<typeof AiActivityListMsgSchema>;
+
+export const AiActivityDismissMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_ACTIVITY_DISMISS),
+	clientId: z.string(),
+	data: z.object({
+		backend: AiBackendSchema,
+		sessionId: z.string(),
+	}),
+});
+export type AiActivityDismissMsg = z.infer<typeof AiActivityDismissMsgSchema>;
 
 export const AiProvidersListMsgSchema = z.object({
 	id: z.string().optional(),
@@ -622,6 +645,24 @@ export const AiActivityListResultMsgSchema = z.object({
 });
 export type AiActivityListResultMsg = z.infer<
 	typeof AiActivityListResultMsgSchema
+>;
+
+export const AiActivityDismissResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_ACTIVITY_DISMISS_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			backend: AiBackendSchema,
+			sessionId: z.string(),
+			ok: z.boolean(),
+		})
+		.optional(),
+});
+export type AiActivityDismissResultMsg = z.infer<
+	typeof AiActivityDismissResultMsgSchema
 >;
 
 export const AiProvidersListResultMsgSchema = z.object({

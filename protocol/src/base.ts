@@ -159,6 +159,8 @@ export const MsgType = {
 	AI_AGENTS_CUSTOM_REMOVE_RESULT: "ai:agents:custom:remove:result",
 	AI_ACTIVITY_LIST: "ai:activity:list",
 	AI_ACTIVITY_LIST_RESULT: "ai:activity:list:result",
+	AI_ACTIVITY_DISMISS: "ai:activity:dismiss",
+	AI_ACTIVITY_DISMISS_RESULT: "ai:activity:dismiss:result",
 	AI_PROVIDERS_LIST: "ai:providers:list",
 	AI_PROVIDERS_LIST_RESULT: "ai:providers:list:result",
 	AI_AUTH_SET: "ai:auth:set",

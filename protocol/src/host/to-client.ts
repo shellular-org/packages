@@ -17,6 +17,7 @@ import {
 } from "@/agents";
 import {
 	AiAbortAckMsgSchema,
+	AiActivityDismissResultMsgSchema,
 	AiActivityListResultMsgSchema,
 	AiAgentsListResultMsgSchema,
 	AiAuthSetAckMsgSchema,
@@ -114,6 +115,7 @@ export const HostToClientSchema = z.discriminatedUnion("type", [
 	AiSessionConfigSetResultMsgSchema,
 	AiSessionModeSetResultMsgSchema,
 	AiAbortAckMsgSchema,
+	AiActivityDismissResultMsgSchema,
 	AiActivityListResultMsgSchema,
 	AiAgentsListResultMsgSchema,
 	AiAgentsManageListResultMsgSchema,

@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import type { HostInfo } from "@shellular/protocol";
 import {
 	type AiAbortMsg,
+	type AiActivityDismissMsg,
 	type AiActivityListMsg,
 	type AiAgentsCustomAddMsg,
 	type AiAgentsCustomRemoveMsg,
@@ -342,6 +343,10 @@ export class Connection extends EventEmitter {
 		listener: (msg: AiActivityListMsg) => void,
 	): this;
 	on(
+		eventName: typeof MsgType.AI_ACTIVITY_DISMISS,
+		listener: (msg: AiActivityDismissMsg) => void,
+	): this;
+	on(
 		eventName: typeof MsgType.AI_PROVIDERS_LIST,
 		listener: (msg: AiProvidersListMsg) => void,
 	): this;
@@ -623,6 +628,10 @@ export class Connection extends EventEmitter {
 	emit(
 		eventName: typeof MsgType.AI_ACTIVITY_LIST,
 		msg: AiActivityListMsg,
+	): boolean;
+	emit(
+		eventName: typeof MsgType.AI_ACTIVITY_DISMISS,
+		msg: AiActivityDismissMsg,
 	): boolean;
 	emit(
 		eventName: typeof MsgType.AI_PROVIDERS_LIST,
