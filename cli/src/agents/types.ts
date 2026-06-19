@@ -101,6 +101,11 @@ export interface NativeSessionHistory {
 	messages: AcpMessage[];
 }
 
+export interface NativeSessionHistoryRequest extends acp.LoadSessionRequest {
+	cursor?: string;
+	limit?: number;
+}
+
 export interface PromptResult {
 	response: acp.PromptResponse;
 	messages: AcpMessage[];

@@ -38,35 +38,67 @@ export function normalizeCodexHistory(result: unknown): AcpMessage[] {
 	const thread = (result as CodexThreadReadResult | null)?.thread;
 	if (!thread?.turns)
 		throw new Error("Codex app-server returned no thread history");
-	return thread.turns.flatMap((turn) => {
-		const messages: AcpMessage[] = [];
-		let assistant: AcpMessage | null = null;
-		for (const item of turn.items ?? []) {
-			if (item.type === "userMessage") {
-				assistant = null;
-				messages.push({
-					id: item.id ?? `${turn.id}:user`,
-					role: "user",
-					timestamp: secondsToMs(turn.startedAt),
-					parts: codexUserParts(item.content),
-				});
-				continue;
-			}
-			const parts = codexAssistantParts(item);
-			if (!parts.length) continue;
-			if (!assistant) {
-				assistant = {
-					id: `${turn.id}:assistant`,
-					role: "assistant",
-					timestamp: secondsToMs(turn.startedAt),
-					parts: [],
-				};
-				messages.push(assistant);
-			}
-			appendNormalizedParts(assistant.parts, parts);
+	return thread.turns.flatMap(normalizeCodexTurn);
+}
+
+export function normalizeCodexHistoryPage(
+	result: unknown,
+	before: string | undefined,
+	limit: number,
+): AcpMessage[] {
+	const thread = (result as CodexThreadReadResult | null)?.thread;
+	if (!thread?.turns)
+		throw new Error("Codex app-server returned no thread history");
+	const page: AcpMessage[] = [];
+	let foundCursor = before === undefined;
+	for (let index = thread.turns.length - 1; index >= 0; index -= 1) {
+		let turnMessages = normalizeCodexTurn(thread.turns[index]);
+		if (!foundCursor) {
+			const cursorIndex = turnMessages.findIndex(
+				(message) => message.id === before,
+			);
+			if (cursorIndex < 0) continue;
+			foundCursor = true;
+			turnMessages = turnMessages.slice(0, cursorIndex);
 		}
-		return messages;
-	});
+		if (turnMessages.length > 0) page.unshift(...turnMessages);
+		if (page.length >= limit) return page.slice(-limit);
+	}
+	return foundCursor ? page : [];
+}
+
+function normalizeCodexTurn(
+	turn: NonNullable<
+		NonNullable<CodexThreadReadResult["thread"]>["turns"]
+	>[number],
+): AcpMessage[] {
+	const messages: AcpMessage[] = [];
+	let assistant: AcpMessage | null = null;
+	for (const item of turn.items ?? []) {
+		if (item.type === "userMessage") {
+			assistant = null;
+			messages.push({
+				id: item.id ?? `${turn.id}:user`,
+				role: "user",
+				timestamp: secondsToMs(turn.startedAt),
+				parts: codexUserParts(item.content),
+			});
+			continue;
+		}
+		const parts = codexAssistantParts(item);
+		if (!parts.length) continue;
+		if (!assistant) {
+			assistant = {
+				id: `${turn.id}:assistant`,
+				role: "assistant",
+				timestamp: secondsToMs(turn.startedAt),
+				parts: [],
+			};
+			messages.push(assistant);
+		}
+		appendNormalizedParts(assistant.parts, parts);
+	}
+	return messages;
 }
 
 function openCodePart(part: Part): AcpMessagePart[] {

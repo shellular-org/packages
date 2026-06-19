@@ -30,6 +30,10 @@ export class CodexAppServer {
 		return this.request("thread/read", { threadId, includeTurns: true });
 	}
 
+	async warmup(): Promise<void> {
+		await this.initialize();
+	}
+
 	destroy() {
 		this.failPending(new Error("Codex app-server stopped"));
 		this.process?.kill();

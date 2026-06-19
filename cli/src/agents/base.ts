@@ -30,6 +30,7 @@ import type {
 	AgentInfo,
 	LoadSessionResult,
 	NativeSessionHistory,
+	NativeSessionHistoryRequest,
 	PromptCallbacks,
 	PromptResult,
 	StoredSession,
@@ -632,7 +633,7 @@ export class ACP {
 	 * Implementations must not return a Shellular-maintained cache.
 	 */
 	async readNativeSessionHistory(
-		_params: acp.LoadSessionRequest,
+		_params: NativeSessionHistoryRequest,
 	): Promise<NativeSessionHistory> {
 		throw new UnsupportedCapabilityError(this.id, "native session history");
 	}
