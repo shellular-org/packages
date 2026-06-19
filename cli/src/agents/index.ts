@@ -20,6 +20,7 @@ import { AcpContentBlockSchema, MsgType } from "@shellular/protocol";
 
 import { config } from "@/config";
 import type { Connection } from "@/connection";
+import { logger } from "@/logger";
 import { BUILTIN_AGENT_DESCRIPTORS, isAgentAvailable } from "./agents";
 import { ACP } from "./base";
 import { ClaudeCode } from "./claude-code";
@@ -500,6 +501,45 @@ export class AgentsManager {
 			mcpServers: options.mcpServers ?? [],
 		};
 		const key = this.sessionKey(agentId, sessionId);
+		if (agent.hasNativeSessionHistory()) {
+			try {
+				const runtimeWasLoaded = Boolean(agent.getSession(sessionId));
+				const history = await agent.readNativeSessionHistory(loadParams);
+				agent.seedSessionHistory(sessionId, cwd, history);
+				const session = agent.getSession(sessionId) ?? {
+					id: sessionId,
+					createdAt: Date.now(),
+					updatedAt: Date.now(),
+					workspacePath: cwd,
+				};
+				const snapshot = this.setSessionSnapshot(agentId, sessionId, {
+					backend: agentId,
+					session,
+					state: { configOptions: session.configOptions },
+					runtimeState: this.rememberSessionRuntimeMetadata(agentId, session),
+					messages: history.messages,
+					updates: [],
+					revision: this.getSessionRevision(agentId, sessionId),
+					syncing: !runtimeWasLoaded,
+				});
+				if (!runtimeWasLoaded) {
+					this.restoreNativeSessionRuntime(
+						clientId,
+						agentId,
+						sessionId,
+						cwd,
+						options,
+						history,
+					);
+				}
+				return snapshot;
+			} catch (error) {
+				logger.warn(
+					`Native history read failed for ${agentId}; falling back to ACP replay`,
+					error,
+				);
+			}
+		}
 		const cached = this.sessionSnapshots.get(key);
 		if (cached && !agent.hasActivePrompt()) {
 			if (!agent.getSession(sessionId)) {
@@ -639,6 +679,10 @@ export class AgentsManager {
 				message: "Working",
 			},
 		});
+		const restoring = this.sessionLoadTasks.get(
+			this.sessionKey(agentId, sessionId),
+		);
+		if (restoring) await restoring;
 		if (!agent.getSession(sessionId)) {
 			await this.ensureSessionRuntimeLoaded(clientId, agentId, sessionId);
 		}
@@ -1690,6 +1734,75 @@ export class AgentsManager {
 						properties: { sessionId, syncing: false },
 					});
 				}
+				if (this.sessionLoadTasks.get(key) === task) {
+					this.sessionLoadTasks.delete(key);
+				}
+			});
+		this.sessionLoadTasks.set(key, task);
+	}
+
+	private restoreNativeSessionRuntime(
+		clientId: string,
+		agentId: AiBackend,
+		sessionId: string,
+		cwd: string,
+		options: Partial<
+			Omit<Parameters<ACP["loadSession"]>[0], "sessionId" | "cwd">
+		>,
+		history: { messages: AcpMessage[] },
+	) {
+		const key = this.sessionKey(agentId, sessionId);
+		const agent = this.sessionRuntimes.get(key);
+		if (!agent || this.sessionLoadTasks.has(key)) return;
+		const params = {
+			...options,
+			sessionId,
+			cwd,
+			mcpServers: options.mcpServers ?? [],
+		};
+		const restore = agent.capabilities?.sessionCapabilities?.resume
+			? agent.resumeSession(params).then((result) => result.response)
+			: agent.loadSession(params, clientId).then((result) => result.response);
+		const task = restore
+			.then((response) => {
+				// ACP restore is the execution/control plane. Keep the transcript from
+				// the native authoritative read rather than its slower replay stream.
+				agent.seedSessionHistory(sessionId, cwd, history);
+				const session = agent.getSession(sessionId);
+				if (!session) return;
+				const snapshot = this.sessionSnapshots.get(key);
+				this.setSessionSnapshot(agentId, sessionId, {
+					backend: agentId,
+					session: {
+						...session,
+						configOptions: response.configOptions ?? session.configOptions,
+					},
+					state: {
+						...(snapshot?.state ?? {}),
+						configOptions: response.configOptions ?? session.configOptions,
+					},
+					runtimeState: this.getSessionRuntimeState(agentId, sessionId),
+					messages: history.messages,
+					updates: snapshot?.updates ?? [],
+					revision: this.getSessionRevision(agentId, sessionId),
+					syncing: false,
+				});
+			})
+			.catch((error) => {
+				logger.warn(`Unable to restore ${agentId} session ${sessionId}`, error);
+				this.emit(this.sessionClientIds.get(key) ?? clientId, agentId, {
+					type: "error",
+					properties: {
+						sessionId,
+						error: getErrorMessage(error),
+					},
+				});
+			})
+			.finally(() => {
+				this.emit(this.sessionClientIds.get(key) ?? clientId, agentId, {
+					type: "session.status",
+					properties: { sessionId, syncing: false },
+				});
 				if (this.sessionLoadTasks.get(key) === task) {
 					this.sessionLoadTasks.delete(key);
 				}
