@@ -545,8 +545,9 @@ export class SessionWatcher {
 	private lastReported = new Map<string, ExternalSessionUpdate>();
 	private scanner = new ProcessScanner();
 	private pollTimer?: ReturnType<typeof setInterval>;
-	// On poll-based platforms, the file mtime we last processed per path, so we
-	// only re-parse files that actually changed.
+	// The file mtime we last processed per path during discovery (poll on Linux,
+	// reconcile's discoverFresh everywhere), so we only re-parse files that
+	// actually changed.
 	private polledMtimes = new Map<string, number>();
 
 	constructor(
@@ -581,29 +582,16 @@ export class SessionWatcher {
 		}, DECAY_INTERVAL_MS);
 		this.decayTimer.unref?.();
 
-		// Linux (and any platform without recursive fs.watch) relies on polling to
-		// notice new/changed session logs.
+		// Linux (and any platform without recursive fs.watch) has no live watch at
+		// all, so it polls more frequently to notice new/changed session logs.
+		// (Recursive-watch platforms still get periodic discovery via reconcile's
+		// discoverFresh, as a safety net for missed watch events.)
 		if (!SUPPORTS_RECURSIVE_WATCH) {
-			this.pollTimer = setInterval(() => this.poll(), POLL_INTERVAL_MS);
+			this.pollTimer = setInterval(
+				() => this.discoverFresh(),
+				POLL_INTERVAL_MS,
+			);
 			this.pollTimer.unref?.();
-		}
-	}
-
-	/** Re-parses recently-modified files on platforms without recursive watch. */
-	private poll() {
-		for (const target of this.targets) {
-			if (!existsSync(target.root)) continue;
-			for (const filePath of this.recentFiles(target.root, SEED_LIMIT)) {
-				let mtime: number;
-				try {
-					mtime = statSync(filePath).mtimeMs;
-				} catch {
-					continue;
-				}
-				if (this.polledMtimes.get(filePath) === mtime) continue;
-				this.polledMtimes.set(filePath, mtime);
-				void this.processFile(target, filePath);
-			}
 		}
 	}
 
@@ -755,14 +743,22 @@ export class SessionWatcher {
 	}
 
 	/**
-	 * Periodic reconciliation: rescan processes, drop any surfaced session whose
-	 * agent process has exited, and decay a stale "running" to "finished" once
-	 * its log has been quiet (the process may still be alive but idle).
+	 * Periodic reconciliation: discover newly-touched session logs, rescan
+	 * processes, drop any surfaced session whose agent process has exited, and
+	 * decay a stale "running" to "finished" once its log has been quiet (the
+	 * process may still be alive but idle).
 	 */
 	private async reconcile() {
 		const now = Date.now();
 		// Force a fresh process scan so exits are detected promptly.
 		await this.scanner.scan();
+		// Discover fresh files as a safety net for missed fs.watch events. A
+		// resumed session appends to its ORIGINAL (possibly old-dated) log file,
+		// and recursive fs.watch can drop events (FSEvents coalescing, atomic
+		// saves, etc.). Without this rescan, such a session would never surface
+		// until a CLI restart — reconnecting from the app can't recover it because
+		// listActivities() only returns what's already in state.
+		this.discoverFresh();
 		for (const [key, update] of [...this.lastReported.entries()]) {
 			const live = await this.hasLiveProcess(update);
 			if (!live) {
@@ -791,6 +787,35 @@ export class SessionWatcher {
 			if (!existsSync(target.root)) continue;
 			const files = this.recentFiles(target.root, SEED_LIMIT);
 			for (const filePath of files) {
+				void this.processFile(target, filePath);
+			}
+		}
+	}
+
+	/**
+	 * Re-scans recently-modified logs and re-parses any whose mtime changed since
+	 * we last saw them. This is the discovery safety net (see reconcile): it runs
+	 * on every platform and catches sessions that fs.watch missed — most notably a
+	 * resumed session that appends to its original, older log file. Bounded to
+	 * files modified within the freshness window so it stays cheap (a stat per
+	 * candidate, then a parse only when something actually changed).
+	 */
+	private discoverFresh() {
+		const now = Date.now();
+		for (const target of this.targets) {
+			if (!existsSync(target.root)) continue;
+			for (const filePath of this.recentFiles(target.root, SEED_LIMIT)) {
+				let mtime: number;
+				try {
+					mtime = statSync(filePath).mtimeMs;
+				} catch {
+					continue;
+				}
+				// Only the freshness window can hold a live session's log; skip the
+				// rest so we don't re-parse the whole history each tick.
+				if (now - mtime > LIVE_SESSION_FRESHNESS_MS) continue;
+				if (this.polledMtimes.get(filePath) === mtime) continue;
+				this.polledMtimes.set(filePath, mtime);
 				void this.processFile(target, filePath);
 			}
 		}
