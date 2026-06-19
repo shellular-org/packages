@@ -91,18 +91,29 @@ function fromClaude(payload) {
 	if (typeof sessionId !== "string") return undefined;
 	const event = payload.hook_event_name;
 	const ntype = payload.notification_type;
+	const msg = typeof payload.message === "string" ? payload.message : "";
+	// Claude's Notification hook fires for several reasons. ONLY a genuine
+	// permission/approval prompt should map to waiting_for_permission. An
+	// "idle" notification (Claude has been waiting for your input for a while)
+	// is NOT a permission gate — the turn already finished — so reporting it as
+	// "Permission" is a false positive. The notification_type field is the
+	// authoritative discriminator; we additionally sniff the message text as a
+	// fallback for Claude versions that don't set notification_type.
+	const isPermission =
+		ntype === "permission_prompt" ||
+		ntype === "elicitation_dialog" ||
+		(!ntype && /needs?\\s+your\\s+permission|permission to use|approve/i.test(msg));
 	let status;
 	let message;
 	if (event === "Stop") {
 		status = "finished";
 		message = "Finished";
-	} else if (ntype === "permission_prompt" || ntype === "elicitation_dialog") {
+	} else if (isPermission) {
 		status = "waiting_for_permission";
 		message = "Waiting for permission";
-	} else if (ntype === "idle_prompt") {
-		status = "waiting_for_permission";
-		message = typeof payload.message === "string" ? payload.message : "Waiting";
 	} else {
+		// Idle / generic notification: the turn is done and Claude is waiting for
+		// the user to type. Treat as finished, not as a permission prompt.
 		return undefined;
 	}
 	return {
