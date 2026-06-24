@@ -28,8 +28,10 @@ import { Copilot } from "./copilot";
 import { Cursor } from "./cursor";
 import { AgentUnavailableError } from "./errors";
 import { Hermes } from "./hermes";
+import { NotifyBridge, type NotifyEvent } from "./notify-bridge";
 import { OpenCode } from "./opencode";
 import { Pi } from "./pi";
+import { type ExternalSessionUpdate, SessionWatcher } from "./session-watcher";
 import {
 	normalizeCustomAgentInput,
 	readAgentsConfig,
@@ -168,9 +170,168 @@ export class AgentsManager {
 		ReturnType<typeof setTimeout>
 	>();
 	private sessionAgents = new Map<string, string>();
+	private sessionWatcher?: SessionWatcher;
+	private notifyBridge?: NotifyBridge;
+	// Sessions whose runtime state was sourced from on-disk watching rather than
+	// a Shellular-managed runtime. Used so the recency/expiry rules can treat
+	// them differently (they persist until dismissed).
+	private externalSessions = new Set<string>();
+	// External session keys the user has dismissed from the home view. Kept so
+	// the watcher's continued reports of the same finished state don't re-add it.
+	private dismissedSessions = new Set<string>();
 
 	constructor() {
 		this.reloadDescriptors();
+		this.startSessionWatcher();
+		this.startNotifyBridge();
+	}
+
+	private startSessionWatcher() {
+		if (this.sessionWatcher) return;
+		this.sessionWatcher = new SessionWatcher(
+			(update) => this.applyExternalRuntimeState(update),
+			(agentId, sessionId) =>
+				this.removeExternalRuntimeState(agentId, sessionId),
+		);
+		this.sessionWatcher.start();
+	}
+
+	/**
+	 * Removes an externally-observed session (its agent process exited). Mirrors
+	 * the watcher's gate: only sessions surfaced from disk are removed this way,
+	 * never a Shellular-managed runtime.
+	 */
+	private removeExternalRuntimeState(agentId: AiBackend, sessionId: string) {
+		const key = this.sessionKey(agentId, sessionId);
+		if (!this.externalSessions.has(key)) return;
+		this.externalSessions.delete(key);
+		this.sessionRuntimeStates.delete(key);
+		// Tell connected clients to drop it from the home view.
+		this.broadcastActivityRemoved(agentId, sessionId);
+	}
+
+	private broadcastActivityRemoved(agentId: AiBackend, sessionId: string) {
+		const event: AiEvent = {
+			type: "session.removed",
+			properties: { sessionId },
+			revision: this.nextSessionRevision(agentId, sessionId),
+		};
+		const targets = new Set<string>(this.knownClients);
+		const attached = this.attachedSessionClients.get(
+			this.sessionKey(agentId, sessionId),
+		);
+		if (attached) for (const id of attached) targets.add(id);
+		for (const subscriber of this.subscribers) {
+			for (const clientId of targets) {
+				subscriber(clientId, agentId, event);
+			}
+		}
+	}
+
+	private startNotifyBridge() {
+		if (this.notifyBridge) return;
+		this.notifyBridge = new NotifyBridge((event) =>
+			this.applyNotifyEvent(event),
+		);
+		this.notifyBridge.start();
+	}
+
+	/**
+	 * Applies a state from an agent notify hook. Unlike the file watcher, this is
+	 * authoritative for permission waits (which never reach disk), so it can
+	 * override a watcher-derived running/finished state.
+	 */
+	private applyNotifyEvent(event: NotifyEvent) {
+		this.applyExternalRuntimeState(
+			{
+				agentId: event.agentId,
+				sessionId: event.sessionId,
+				status: event.status,
+				updatedAt: event.updatedAt,
+				message: event.message,
+				workspacePath: event.workspacePath,
+			},
+			{ authoritative: true },
+		);
+	}
+
+	/**
+	 * Applies a runtime state derived from on-disk session logs for an agent
+	 * session that Shellular did not start. If Shellular already owns a live
+	 * runtime for this session, the in-process state wins (it is authoritative,
+	 * e.g. it can see permission prompts), so we skip the external update.
+	 */
+	private applyExternalRuntimeState(
+		update: ExternalSessionUpdate,
+		options: { authoritative?: boolean } = {},
+	) {
+		const { agentId, sessionId } = update;
+		if (!this.isAgentEnabled(agentId)) return;
+		const key = this.sessionKey(agentId, sessionId);
+
+		// A live Shellular runtime is authoritative; don't override it with a
+		// file-watch guess. Notify-hook events are authoritative (they see things
+		// the transcript can't, like permission prompts), so they may override.
+		if (this.sessionRuntimes.has(key) && !options.authoritative) {
+			const owned = this.sessionRuntimeStates.get(key);
+			if (owned && !this.externalSessions.has(key)) return;
+		}
+
+		this.externalSessions.add(key);
+		// Don't resurrect a session the user has dismissed; the watcher will keep
+		// reporting the file's last finished state otherwise.
+		if (this.dismissedSessions.has(key)) {
+			// Only re-show if it became live again (new activity after dismissal),
+			// or on an authoritative notify (e.g. it now needs permission).
+			if (!isLiveRuntimeStatus(update.status) && !options.authoritative) return;
+			this.dismissedSessions.delete(key);
+		}
+		const state = this.setSessionRuntimeState(agentId, sessionId, {
+			status: update.status,
+			updatedAt: update.updatedAt,
+			external: true,
+			// External sessions are surfaced only while a live agent process exists
+			// for them, and are removed when that process exits. So they should not
+			// expire on the app's recency timer regardless of working/finished —
+			// a session that finished while you were away (but whose CLI is still
+			// open) must remain visible until you see it or the process exits.
+			persistent: true,
+			...(update.title ? { title: update.title } : {}),
+			...(update.workspacePath ? { workspacePath: update.workspacePath } : {}),
+			...(update.message ? { message: update.message } : {}),
+		});
+
+		// Push to all connected clients so the home view updates live without a
+		// re-fetch. Unlike emit(), this isn't tied to a session the client is
+		// attached to — a client viewing the home page should see it. We bypass
+		// emit() because it re-derives runtime state and targets only attached
+		// clients.
+		this.broadcastRuntimeState(agentId, sessionId, state, update.message);
+	}
+
+	private broadcastRuntimeState(
+		agentId: AiBackend,
+		sessionId: string,
+		state: AiSessionRuntimeState,
+		message?: string,
+	) {
+		const revision = this.nextSessionRevision(agentId, sessionId);
+		const event: AiEvent = {
+			type: "session.status",
+			properties: { sessionId, message },
+			state,
+			revision,
+		};
+		const targets = new Set<string>(this.knownClients);
+		const attached = this.attachedSessionClients.get(
+			this.sessionKey(agentId, sessionId),
+		);
+		if (attached) for (const id of attached) targets.add(id);
+		for (const subscriber of this.subscribers) {
+			for (const clientId of targets) {
+				subscriber(clientId, agentId, event);
+			}
+		}
 	}
 
 	listAgents() {
@@ -360,12 +521,24 @@ export class AgentsManager {
 			.filter(
 				(activity) =>
 					isLiveRuntimeStatus(activity.status) ||
+					// Persistent (e.g. externally-observed) states stay until the user
+					// dismisses them, so a session that finished while they were away
+					// is still shown when they open the app.
+					activity.persistent ||
 					now - activity.updatedAt <= RECENT_SESSION_ACTIVITY_MS,
 			)
 			.sort((a, b) => b.updatedAt - a.updatedAt);
 	}
 
+	dismissActivity(agentId: AiBackend, sessionId: string) {
+		const key = this.sessionKey(agentId, sessionId);
+		this.dismissedSessions.add(key);
+		this.sessionRuntimeStates.delete(key);
+		this.externalSessions.delete(key);
+	}
+
 	notifyClient(clientId: string) {
+		if (clientId) this.knownClients.add(clientId);
 		for (const [agentId, agent] of this.agents.entries()) {
 			this.registerPermissionListener(agentId, clientId, agent);
 			agent.requestPendingPermissions(clientId);
@@ -762,6 +935,10 @@ export class AgentsManager {
 	}
 
 	destroy() {
+		this.sessionWatcher?.destroy();
+		this.sessionWatcher = undefined;
+		this.notifyBridge?.destroy();
+		this.notifyBridge = undefined;
 		for (const agent of this.agents.values()) {
 			agent.destroy();
 		}
@@ -790,6 +967,7 @@ export class AgentsManager {
 		(clientId: string, backend: AiBackend, event: AiEvent) => void
 	>();
 	private sessionClientIds = new Map<string, string>();
+	private knownClients = new Set<string>();
 	private attachedSessionClients = new Map<string, Set<string>>();
 	private sessionRevisions = new Map<string, number>();
 	private sessionRuntimeStates = new Map<string, AiSessionRuntimeState>();
@@ -971,6 +1149,29 @@ export class AgentsManager {
 					activities: this.listActivities(msg.data?.backend),
 				},
 			});
+		});
+
+		conn.on(MsgType.AI_ACTIVITY_DISMISS, (msg) => {
+			try {
+				this.dismissActivity(msg.data.backend, msg.data.sessionId);
+				conn.send({
+					type: MsgType.AI_ACTIVITY_DISMISS_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: {
+						backend: msg.data.backend,
+						sessionId: msg.data.sessionId,
+						ok: true,
+					},
+				});
+			} catch (err) {
+				conn.send({
+					type: MsgType.AI_ACTIVITY_DISMISS_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(err),
+				});
+			}
 		});
 
 		conn.on(MsgType.AI_SESSION_CREATE, async (msg: AiSessionCreateMsg) => {
@@ -1508,6 +1709,7 @@ export class AgentsManager {
 		});
 
 		conn.on(MsgType.SESSION_CLIENT_LEFT, (msg) => {
+			this.knownClients.delete(msg.data.clientId);
 			this.detachClientFromAllSessions(msg.data.clientId);
 			this.removeClientPermissionListeners(msg.data.clientId);
 		});
@@ -1874,6 +2076,8 @@ export class AgentsManager {
 			...(previous?.pendingPermission
 				? { pendingPermission: previous.pendingPermission }
 				: {}),
+			...(previous?.external ? { external: previous.external } : {}),
+			...(previous?.persistent ? { persistent: previous.persistent } : {}),
 			...patch,
 			agentId,
 			sessionId,
@@ -1910,7 +2114,18 @@ export class AgentsManager {
 				session.updatedAt ??
 				Date.now(),
 		};
-		if (session.title) patch.title = session.title;
+		// Don't overwrite a real title (e.g. one the session watcher derived) with
+		// a generic placeholder the ACP adapter injects when it has no title.
+		const existingTitle = this.getSessionRuntimeState(
+			agentId,
+			session.id,
+		)?.title;
+		if (
+			session.title &&
+			(!isPlaceholderTitle(session.title) || !isRealTitle(existingTitle))
+		) {
+			patch.title = session.title;
+		}
 		if (session.workspacePath) patch.workspacePath = session.workspacePath;
 		if (session.model) patch.model = session.model;
 		return this.setSessionRuntimeState(agentId, session.id, patch);
@@ -2137,5 +2352,21 @@ function isLiveRuntimeStatus(status: AiSessionRuntimeState["status"]) {
 		status === "running" ||
 		status === "waiting_for_permission" ||
 		status === "stopping"
+	);
+}
+
+// Generic titles the ACP adapter injects when it has no real title; these must
+// not overwrite a real title (e.g. one derived by the session watcher).
+const PLACEHOLDER_TITLES = new Set(["New Chat", "Untitled Chat"]);
+
+function isPlaceholderTitle(value: string): boolean {
+	return PLACEHOLDER_TITLES.has(value.trim());
+}
+
+function isRealTitle(value: unknown): value is string {
+	return (
+		typeof value === "string" &&
+		value.trim().length > 0 &&
+		!isPlaceholderTitle(value)
 	);
 }

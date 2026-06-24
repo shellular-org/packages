@@ -5,7 +5,7 @@ import { MsgType } from "./base";
 // ─── Incoming (client → CLI) ──────────────────────────────────────────────────
 
 export const SysmonGetMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.SYSMON_GET),
 	clientId: z.string(),
 });
@@ -16,7 +16,7 @@ export type SysmonGetMsg = z.infer<typeof SysmonGetMsgSchema>;
 export const SysmonResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.SYSMON_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z

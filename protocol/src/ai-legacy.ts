@@ -185,6 +185,18 @@ export const AiSessionRuntimeStateSchema = z.object({
 	stopReason: z.string().optional(),
 	error: z.string().optional(),
 	pendingPermission: z.record(z.string(), z.unknown()).optional(),
+	/**
+	 * True when this state was observed from a session Shellular did not start
+	 * (e.g. the user running claude/codex directly), via on-disk watching.
+	 */
+	external: z.boolean().optional(),
+	/**
+	 * When true, the activity should remain visible until the user explicitly
+	 * dismisses it, rather than expiring after a recency window. Used so a
+	 * session that finished while the user was away is still shown when they
+	 * next open the app.
+	 */
+	persistent: z.boolean().optional(),
 });
 export type AiSessionRuntimeState = z.infer<typeof AiSessionRuntimeStateSchema>;
 
@@ -210,14 +222,14 @@ export type ProviderInfo = z.infer<typeof ProviderInfoSchema>;
 // ─── Incoming (client → CLI) ──────────────────────────────────────────────────
 
 export const AiAvailabilityMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_AVAILABILITY),
 	clientId: z.string(),
 });
 export type AiAvailabilityMsg = z.infer<typeof AiAvailabilityMsgSchema>;
 
 export const AiSessionListMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_SESSION_LIST),
 	clientId: z.string(),
 	data: z
@@ -231,7 +243,7 @@ export const AiSessionListMsgSchema = z.object({
 export type AiSessionListMsg = z.infer<typeof AiSessionListMsgSchema>;
 
 export const AiSessionCreateMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_SESSION_CREATE),
 	clientId: z.string(),
 	data: z.object({
@@ -248,7 +260,7 @@ export const AiSessionCreateMsgSchema = z.object({
 export type AiSessionCreateMsg = z.infer<typeof AiSessionCreateMsgSchema>;
 
 export const AiSessionGetMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_SESSION_GET),
 	clientId: z.string(),
 	data: z.object({
@@ -259,7 +271,7 @@ export const AiSessionGetMsgSchema = z.object({
 export type AiSessionGetMsg = z.infer<typeof AiSessionGetMsgSchema>;
 
 export const AiSessionDeleteMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_SESSION_DELETE),
 	clientId: z.string(),
 	data: z.object({
@@ -270,7 +282,7 @@ export const AiSessionDeleteMsgSchema = z.object({
 export type AiSessionDeleteMsg = z.infer<typeof AiSessionDeleteMsgSchema>;
 
 export const AiMessagesListMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_MESSAGES_LIST),
 	clientId: z.string(),
 	data: z.object({
@@ -281,7 +293,7 @@ export const AiMessagesListMsgSchema = z.object({
 export type AiMessagesListMsg = z.infer<typeof AiMessagesListMsgSchema>;
 
 export const AiPromptMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_PROMPT),
 	clientId: z.string(),
 	data: z.object({
@@ -299,7 +311,7 @@ export const AiPromptMsgSchema = z.object({
 export type AiPromptMsg = z.infer<typeof AiPromptMsgSchema>;
 
 export const AiAbortMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_ABORT),
 	clientId: z.string(),
 	data: z.object({
@@ -310,7 +322,7 @@ export const AiAbortMsgSchema = z.object({
 export type AiAbortMsg = z.infer<typeof AiAbortMsgSchema>;
 
 export const AiAgentsListMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_AGENTS_LIST),
 	clientId: z.string(),
 	data: z.object({
@@ -320,7 +332,7 @@ export const AiAgentsListMsgSchema = z.object({
 export type AiAgentsListMsg = z.infer<typeof AiAgentsListMsgSchema>;
 
 export const AiActivityListMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_ACTIVITY_LIST),
 	clientId: z.string(),
 	data: z
@@ -331,8 +343,19 @@ export const AiActivityListMsgSchema = z.object({
 });
 export type AiActivityListMsg = z.infer<typeof AiActivityListMsgSchema>;
 
+export const AiActivityDismissMsgSchema = z.object({
+	id: z.string(),
+	type: z.literal(MsgType.AI_ACTIVITY_DISMISS),
+	clientId: z.string(),
+	data: z.object({
+		backend: AiBackendSchema,
+		sessionId: z.string(),
+	}),
+});
+export type AiActivityDismissMsg = z.infer<typeof AiActivityDismissMsgSchema>;
+
 export const AiProvidersListMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_PROVIDERS_LIST),
 	clientId: z.string(),
 	data: z.object({
@@ -342,7 +365,7 @@ export const AiProvidersListMsgSchema = z.object({
 export type AiProvidersListMsg = z.infer<typeof AiProvidersListMsgSchema>;
 
 export const AiAuthSetMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_AUTH_SET),
 	clientId: z.string(),
 	data: z.object({
@@ -354,7 +377,7 @@ export const AiAuthSetMsgSchema = z.object({
 export type AiAuthSetMsg = z.infer<typeof AiAuthSetMsgSchema>;
 
 export const AiCommandMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_COMMAND),
 	clientId: z.string(),
 	data: z.object({
@@ -367,7 +390,7 @@ export const AiCommandMsgSchema = z.object({
 export type AiCommandMsg = z.infer<typeof AiCommandMsgSchema>;
 
 export const AiRevertMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_REVERT),
 	clientId: z.string(),
 	data: z.object({
@@ -379,7 +402,7 @@ export const AiRevertMsgSchema = z.object({
 export type AiRevertMsg = z.infer<typeof AiRevertMsgSchema>;
 
 export const AiUnrevertMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_UNREVERT),
 	clientId: z.string(),
 	data: z.object({
@@ -390,7 +413,7 @@ export const AiUnrevertMsgSchema = z.object({
 export type AiUnrevertMsg = z.infer<typeof AiUnrevertMsgSchema>;
 
 export const AiShareMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_SHARE),
 	clientId: z.string(),
 	data: z.object({
@@ -401,7 +424,7 @@ export const AiShareMsgSchema = z.object({
 export type AiShareMsg = z.infer<typeof AiShareMsgSchema>;
 
 export const AiPermissionReplyMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_PERMISSION_REPLY),
 	clientId: z.string(),
 	data: z.union([
@@ -422,7 +445,7 @@ export const AiPermissionReplyMsgSchema = z.object({
 export type AiPermissionReplyMsg = z.infer<typeof AiPermissionReplyMsgSchema>;
 
 export const AiQuestionReplyMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_QUESTION_REPLY),
 	clientId: z.string(),
 	data: z.object({
@@ -435,7 +458,7 @@ export const AiQuestionReplyMsgSchema = z.object({
 export type AiQuestionReplyMsg = z.infer<typeof AiQuestionReplyMsgSchema>;
 
 export const AiQuestionRejectMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.AI_QUESTION_REJECT),
 	clientId: z.string(),
 	data: z.object({
@@ -451,7 +474,7 @@ export type AiQuestionRejectMsg = z.infer<typeof AiQuestionRejectMsgSchema>;
 export const AiAvailabilityResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_AVAILABILITY_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z.object({
@@ -465,7 +488,7 @@ export type AiAvailabilityResultMsg = z.infer<
 export const AiSessionListResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_SESSION_LIST_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -482,7 +505,7 @@ export type AiSessionListResultMsg = z.infer<
 export const AiSessionCreateResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_SESSION_CREATE_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -500,7 +523,7 @@ export type AiSessionCreateResultMsg = z.infer<
 export const AiSessionGetResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_SESSION_GET_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -515,7 +538,7 @@ export type AiSessionGetResultMsg = z.infer<typeof AiSessionGetResultMsgSchema>;
 export const AiSessionDeletedMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_SESSION_DELETED),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -529,7 +552,7 @@ export type AiSessionDeletedMsg = z.infer<typeof AiSessionDeletedMsgSchema>;
 export const AiMessagesListResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_MESSAGES_LIST_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -546,7 +569,7 @@ export type AiMessagesListResultMsg = z.infer<
 export const AiEventMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_EVENT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	error: z.string().optional(),
 	data: z
 		.object({
@@ -567,7 +590,7 @@ export type AiEventMsg = z.infer<typeof AiEventMsgSchema>;
 export const AiPromptAckMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_PROMPT_ACK),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -583,7 +606,7 @@ export type AiPromptAckMsg = z.infer<typeof AiPromptAckMsgSchema>;
 export const AiAbortAckMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_ABORT_ACK),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -597,7 +620,7 @@ export type AiAbortAckMsg = z.infer<typeof AiAbortAckMsgSchema>;
 export const AiAgentsListResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_AGENTS_LIST_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -611,7 +634,7 @@ export type AiAgentsListResultMsg = z.infer<typeof AiAgentsListResultMsgSchema>;
 export const AiActivityListResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_ACTIVITY_LIST_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -624,10 +647,28 @@ export type AiActivityListResultMsg = z.infer<
 	typeof AiActivityListResultMsgSchema
 >;
 
+export const AiActivityDismissResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_ACTIVITY_DISMISS_RESULT),
+	clientId: z.string(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			backend: AiBackendSchema,
+			sessionId: z.string(),
+			ok: z.boolean(),
+		})
+		.optional(),
+});
+export type AiActivityDismissResultMsg = z.infer<
+	typeof AiActivityDismissResultMsgSchema
+>;
+
 export const AiProvidersListResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_PROVIDERS_LIST_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -643,7 +684,7 @@ export type AiProvidersListResultMsg = z.infer<
 export const AiAuthSetAckMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_AUTH_SET_ACK),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -657,7 +698,7 @@ export type AiAuthSetAckMsg = z.infer<typeof AiAuthSetAckMsgSchema>;
 export const AiCommandResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_COMMAND_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -671,7 +712,7 @@ export type AiCommandResultMsg = z.infer<typeof AiCommandResultMsgSchema>;
 export const AiRevertAckMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_REVERT_ACK),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -685,7 +726,7 @@ export type AiRevertAckMsg = z.infer<typeof AiRevertAckMsgSchema>;
 export const AiUnrevertAckMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_UNREVERT_ACK),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -699,7 +740,7 @@ export type AiUnrevertAckMsg = z.infer<typeof AiUnrevertAckMsgSchema>;
 export const AiShareResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_SHARE_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -713,7 +754,7 @@ export type AiShareResultMsg = z.infer<typeof AiShareResultMsgSchema>;
 export const AiPermissionReplyAckMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_PERMISSION_REPLY_ACK),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -729,7 +770,7 @@ export type AiPermissionReplyAckMsg = z.infer<
 export const AiQuestionReplyAckMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_QUESTION_REPLY_ACK),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -743,7 +784,7 @@ export type AiQuestionReplyAckMsg = z.infer<typeof AiQuestionReplyAckMsgSchema>;
 export const AiQuestionRejectAckMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.AI_QUESTION_REJECT_ACK),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z

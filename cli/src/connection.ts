@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import type { HostInfo } from "@shellular/protocol";
 import {
 	type AiAbortMsg,
+	type AiActivityDismissMsg,
 	type AiActivityListMsg,
 	type AiAgentsCustomAddMsg,
 	type AiAgentsCustomRemoveMsg,
@@ -342,6 +343,10 @@ export class Connection extends EventEmitter {
 		listener: (msg: AiActivityListMsg) => void,
 	): this;
 	on(
+		eventName: typeof MsgType.AI_ACTIVITY_DISMISS,
+		listener: (msg: AiActivityDismissMsg) => void,
+	): this;
+	on(
 		eventName: typeof MsgType.AI_PROVIDERS_LIST,
 		listener: (msg: AiProvidersListMsg) => void,
 	): this;
@@ -625,6 +630,10 @@ export class Connection extends EventEmitter {
 		msg: AiActivityListMsg,
 	): boolean;
 	emit(
+		eventName: typeof MsgType.AI_ACTIVITY_DISMISS,
+		msg: AiActivityDismissMsg,
+	): boolean;
+	emit(
 		eventName: typeof MsgType.AI_PROVIDERS_LIST,
 		msg: AiProvidersListMsg,
 	): boolean;
@@ -774,10 +783,11 @@ export class Connection extends EventEmitter {
 
 			// init handshake on open
 			this.ws.once("open", () => {
-				const msg: SessionHostMsg = {
-					type: MsgType.SESSION_HOST,
-					data: this.hostInfo,
-				};
+			const msg: SessionHostMsg = {
+				id: nanoid(),
+				type: MsgType.SESSION_HOST,
+				data: this.hostInfo,
+			};
 				this.send(msg);
 			});
 

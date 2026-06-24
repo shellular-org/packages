@@ -159,6 +159,8 @@ export const MsgType = {
 	AI_AGENTS_CUSTOM_REMOVE_RESULT: "ai:agents:custom:remove:result",
 	AI_ACTIVITY_LIST: "ai:activity:list",
 	AI_ACTIVITY_LIST_RESULT: "ai:activity:list:result",
+	AI_ACTIVITY_DISMISS: "ai:activity:dismiss",
+	AI_ACTIVITY_DISMISS_RESULT: "ai:activity:dismiss:result",
 	AI_PROVIDERS_LIST: "ai:providers:list",
 	AI_PROVIDERS_LIST_RESULT: "ai:providers:list:result",
 	AI_AUTH_SET: "ai:auth:set",
@@ -211,7 +213,7 @@ export const PingMsgSchema = z.object({
 export type PingMsg = z.infer<typeof PingMsgSchema>;
 
 export const PongMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.PONG),
 	respTo: z.string().optional(),
 });
@@ -222,7 +224,7 @@ export type PongMsg = z.infer<typeof PongMsgSchema>;
 export const EncryptedMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.ENCRYPTED),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	nonce: z.string(),
 	ciphertext: z.string(),
 });

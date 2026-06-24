@@ -5,14 +5,14 @@ import { MsgType } from "./base";
 // ─── Incoming (client → CLI) ──────────────────────────────────────────────────
 
 export const PortsListMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.PORTS_LIST),
 	clientId: z.string(),
 });
 export type PortsListMsg = z.infer<typeof PortsListMsgSchema>;
 
 export const PortsKillMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.PORTS_KILL),
 	clientId: z.string(),
 	data: z.object({
@@ -26,7 +26,7 @@ export type PortsKillMsg = z.infer<typeof PortsKillMsgSchema>;
 export const PortsListResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.PORTS_LIST_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -50,7 +50,7 @@ export type PortsListResultMsg = z.infer<typeof PortsListResultMsgSchema>;
 export const PortsKillResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.PORTS_KILL_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
