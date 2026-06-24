@@ -1,5 +1,13 @@
 # shellular
 
+## 0.0.38
+
+### Patch Changes
+
+- 025d3a9: feat: monitor active claude code and codex sessions and send it to FE so that they can be shown under active sessions for seamless handoff
+- Updated dependencies [025d3a9]
+  - @shellular/protocol@0.0.21
+
 ## 0.0.37
 
 ### Patch Changes
