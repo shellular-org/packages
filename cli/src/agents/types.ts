@@ -90,6 +90,22 @@ export interface LoadSessionResult {
 	messages: AcpMessage[];
 }
 
+/**
+ * An authoritative transcript read from an agent's native session API.
+ *
+ * Native history is deliberately not persisted by Shellular: another harness
+ * may update the same session at any time, so every attach must read from the
+ * agent that owns the session.
+ */
+export interface NativeSessionHistory {
+	messages: AcpMessage[];
+}
+
+export interface NativeSessionHistoryRequest extends acp.LoadSessionRequest {
+	cursor?: string;
+	limit?: number;
+}
+
 export interface PromptResult {
 	response: acp.PromptResponse;
 	messages: AcpMessage[];

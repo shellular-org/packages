@@ -29,6 +29,8 @@ import type {
 	AgentDescriptor,
 	AgentInfo,
 	LoadSessionResult,
+	NativeSessionHistory,
+	NativeSessionHistoryRequest,
 	PromptCallbacks,
 	PromptResult,
 	StoredSession,
@@ -619,6 +621,37 @@ export class ACP {
 
 	getSession(sessionId: string) {
 		return this.sessions.get(sessionId)?.session ?? null;
+	}
+
+	/** Whether this adapter can read current history without ACP replay. */
+	hasNativeSessionHistory(): boolean {
+		return false;
+	}
+
+	/**
+	 * Read the current transcript from the agent's own storage/API.
+	 * Implementations must not return a Shellular-maintained cache.
+	 */
+	async readNativeSessionHistory(
+		_params: NativeSessionHistoryRequest,
+	): Promise<NativeSessionHistory> {
+		throw new UnsupportedCapabilityError(this.id, "native session history");
+	}
+
+	seedSessionHistory(
+		sessionId: string,
+		cwd: string,
+		history: NativeSessionHistory,
+	) {
+		const transcript = this.getTranscript(sessionId);
+		transcript.replaceMessages(history.messages);
+		const existing = this.sessions.get(sessionId);
+		this.sessions.set(sessionId, {
+			session:
+				existing?.session ??
+				newAiSessionFromResponse({ sessionId }, path.resolve(cwd), sessionId),
+			messages: transcript.getMessages(),
+		});
 	}
 
 	snapshotSession(

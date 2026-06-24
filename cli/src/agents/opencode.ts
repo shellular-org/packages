@@ -11,10 +11,14 @@ import { config } from "@/config";
 import { BUILTIN_AGENT_DESCRIPTORS } from "./agents";
 import { ACP } from "./base";
 import { type AcpTranscriptOptions, acpSessionToAiSession } from "./events";
+import { normalizeOpenCodeHistory } from "./native-history";
 import {
 	normalizeUserFileAttachmentReplayMessage,
 	shouldSkipOpenCodeReadReplayContent,
 } from "./replay-normalization";
+import type { NativeSessionHistoryRequest } from "./types";
+
+const NATIVE_HISTORY_PAGE_SIZE = 30;
 
 const OpenCodeSessionSchema = z.object({
 	id: z.string(),
@@ -111,6 +115,26 @@ export class OpenCode extends ACP {
 		}
 
 		return this.#ocClient;
+	}
+
+	override hasNativeSessionHistory(): boolean {
+		return true;
+	}
+
+	override async readNativeSessionHistory(params: NativeSessionHistoryRequest) {
+		await this.init();
+		const response = await this.ocClient.session.messages({
+			sessionID: params.sessionId,
+			directory: params.cwd,
+			limit: params.limit ?? NATIVE_HISTORY_PAGE_SIZE,
+			before: params.cursor,
+		});
+		if (response.error) {
+			throw new Error(
+				`Unable to read OpenCode session history: ${JSON.stringify(response.error)}`,
+			);
+		}
+		return { messages: normalizeOpenCodeHistory(response.data ?? []) };
 	}
 
 	override async listSessionPage(
