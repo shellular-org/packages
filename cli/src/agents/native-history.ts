@@ -1,7 +1,184 @@
+import type { SessionMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { Message, Part } from "@opencode-ai/sdk/v2";
 import type { AcpMessage, AcpMessagePart } from "@shellular/protocol";
 
 type OpenCodeEntry = { info: Message; parts: Part[] };
+
+type ClaudeContentBlock = Record<string, unknown> & { type?: string };
+
+type ClaudeToolCallPart = {
+	id?: string;
+	type: "tool_call";
+	name: string;
+	title?: string;
+	arguments?: string;
+	status?: string;
+	output?: string;
+	parts?: unknown[];
+};
+
+/**
+ * Normalize Claude Code session messages (from `getSessionMessages`) into the
+ * ACP message shape. User entries whose content is purely `tool_result` blocks
+ * are folded back into the preceding assistant's `tool_call` parts rather than
+ * being rendered as standalone user turns. Subagent (`parent_tool_use_id != null`)
+ * entries are dropped from the main transcript to match the codex subtask
+ * treatment.
+ */
+export function normalizeClaudeCodeHistory(
+	entries: SessionMessage[],
+): AcpMessage[] {
+	const messages: AcpMessage[] = [];
+	const pendingToolCalls = new Map<string, ClaudeToolCallPart>();
+	for (const entry of entries) {
+		if (entry.parent_tool_use_id) continue;
+		const content = (entry.message as { content?: unknown }).content;
+		const blocks = Array.isArray(content)
+			? (content as ClaudeContentBlock[])
+			: null;
+		if (!blocks) {
+			const text = typeof content === "string" ? content : undefined;
+			if (!text) continue;
+			maybeMerge(messages, "user", entry.uuid, [{ type: "text", text }]);
+			continue;
+		}
+		const parts: AcpMessagePart[] = [];
+		let onlyToolResults = true;
+		for (const block of blocks) {
+			const part = claudeBlockPart(block, pendingToolCalls);
+			if (part) {
+				parts.push(part);
+				if (block.type !== "tool_result") onlyToolResults = false;
+			}
+		}
+		if (entry.type === "user" && onlyToolResults) continue;
+		if (!parts.length) continue;
+		maybeMerge(messages, entry.type, entry.uuid, parts);
+	}
+	return messages;
+}
+
+function maybeMerge(
+	target: AcpMessage[],
+	role: "user" | "assistant" | string,
+	id: string,
+	parts: AcpMessagePart[],
+) {
+	const previous = target[target.length - 1];
+	if (previous && previous.role === role) {
+		appendNormalizedParts(previous.parts, parts);
+		return;
+	}
+	target.push({ id, role: role as "user" | "assistant", parts });
+}
+
+function claudeBlockPart(
+	block: ClaudeContentBlock,
+	pending: Map<string, ClaudeToolCallPart>,
+): AcpMessagePart | null {
+	switch (block.type) {
+		case "text":
+			return typeof block.text === "string"
+				? { type: "text", text: block.text }
+				: null;
+		case "thinking":
+			return typeof block.thinking === "string"
+				? { type: "reasoning", content: block.thinking, summary: "Reasoning" }
+				: null;
+		case "tool_use": {
+			const id = typeof block.id === "string" ? block.id : undefined;
+			const name = typeof block.name === "string" ? block.name : "tool";
+			const part: ClaudeToolCallPart = {
+				id,
+				type: "tool_call",
+				name: inferClaudeToolKind(name),
+				title: name,
+				arguments: json(block.input),
+				status: "in_progress",
+			};
+			if (id) pending.set(id, part);
+			return part;
+		}
+		case "tool_result": {
+			const id =
+				typeof block.tool_use_id === "string" ? block.tool_use_id : undefined;
+			const existing = id ? pending.get(id) : undefined;
+			const output = claudeToolResultOutput(block.content);
+			const failed = typeof block.is_error === "boolean" && block.is_error;
+			if (existing) {
+				existing.output = output ?? existing.output;
+				if (failed) {
+					existing.status = "failed";
+				} else if (existing.status === "in_progress") {
+					existing.status = "completed";
+				}
+				if (id) pending.delete(id);
+				return null;
+			}
+			return {
+				id,
+				type: "tool_call",
+				name: "other",
+				title: "Tool result",
+				output,
+				status: failed ? "failed" : "completed",
+			};
+		}
+		case "image":
+			return typeof block.source === "object" && block.source
+				? {
+						type: "image",
+						src: claudeImageSrc(block.source as Record<string, unknown>),
+						alt: "Image",
+						mime:
+							typeof (block.source as Record<string, unknown>).media_type ===
+							"string"
+								? ((block.source as Record<string, unknown>)
+										.media_type as string)
+								: "image/png",
+					}
+				: null;
+		default:
+			return null;
+	}
+}
+
+function claudeToolResultOutput(content: unknown): string | undefined {
+	if (typeof content === "string") return content || undefined;
+	if (!Array.isArray(content)) return content ? json(content) : undefined;
+	return (
+		content
+			.flatMap((block): string[] => {
+				if (!block || typeof block !== "object") return [];
+				const value = block as Record<string, unknown>;
+				if (value.type === "text" && typeof value.text === "string")
+					return [value.text];
+				if (value.type === "image") return ["[image]"];
+				return [];
+			})
+			.join("\n") || undefined
+	);
+}
+
+function claudeImageSrc(source: Record<string, unknown>): string {
+	if (typeof source.data === "string") {
+		const media =
+			typeof source.media_type === "string" ? source.media_type : "image/png";
+		return `data:${media};base64,${source.data}`;
+	}
+	if (typeof source.url === "string") return source.url;
+	return "";
+}
+
+function inferClaudeToolKind(name: string): string {
+	const normalized = name.toLowerCase();
+	if (/read|notebookread|view|goto/.test(normalized)) return "read";
+	if (/write|edit|update|patch|apply|notebookedit|multiedit/.test(normalized))
+		return "edit";
+	if (/grep|glob|search|find|list|nearest/.test(normalized)) return "search";
+	if (/bash|shell|exec|command|run/.test(normalized)) return "execute";
+	return "other";
+}
 
 interface CodexThreadReadResult {
 	thread?: {
