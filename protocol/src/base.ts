@@ -213,7 +213,7 @@ export const PingMsgSchema = z.object({
 export type PingMsg = z.infer<typeof PingMsgSchema>;
 
 export const PongMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.PONG),
 	respTo: z.string().optional(),
 });
@@ -224,7 +224,7 @@ export type PongMsg = z.infer<typeof PongMsgSchema>;
 export const EncryptedMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.ENCRYPTED),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	nonce: z.string(),
 	ciphertext: z.string(),
 });

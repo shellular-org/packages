@@ -35,7 +35,7 @@ export type GitCommitFile = z.infer<typeof GitCommitFileSchema>;
 // ─── Incoming (client → CLI) ──────────────────────────────────────────────────
 
 export const FsListMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.FS_LIST),
 	clientId: z.string(),
 	data: z.object({
@@ -46,7 +46,7 @@ export const FsListMsgSchema = z.object({
 export type FsListMsg = z.infer<typeof FsListMsgSchema>;
 
 export const FsReadMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.FS_READ),
 	clientId: z.string(),
 	data: z.object({
@@ -56,7 +56,7 @@ export const FsReadMsgSchema = z.object({
 export type FsReadMsg = z.infer<typeof FsReadMsgSchema>;
 
 export const FsWriteMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.FS_WRITE),
 	clientId: z.string(),
 	data: z.object({
@@ -68,7 +68,7 @@ export const FsWriteMsgSchema = z.object({
 export type FsWriteMsg = z.infer<typeof FsWriteMsgSchema>;
 
 export const FsMkdirMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.FS_MKDIR),
 	clientId: z.string(),
 	data: z.object({
@@ -78,7 +78,7 @@ export const FsMkdirMsgSchema = z.object({
 export type FsMkdirMsg = z.infer<typeof FsMkdirMsgSchema>;
 
 export const FsDeleteMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.FS_DELETE),
 	clientId: z.string(),
 	data: z.object({
@@ -88,7 +88,7 @@ export const FsDeleteMsgSchema = z.object({
 export type FsDeleteMsg = z.infer<typeof FsDeleteMsgSchema>;
 
 export const FsRenameMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.FS_RENAME),
 	clientId: z.string(),
 	data: z.object({
@@ -99,7 +99,7 @@ export const FsRenameMsgSchema = z.object({
 export type FsRenameMsg = z.infer<typeof FsRenameMsgSchema>;
 
 export const FsStatMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.FS_STAT),
 	clientId: z.string(),
 	data: z.object({
@@ -109,7 +109,7 @@ export const FsStatMsgSchema = z.object({
 export type FsStatMsg = z.infer<typeof FsStatMsgSchema>;
 
 export const GitReadMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.GIT_READ),
 	clientId: z.string(),
 	data: z.object({
@@ -119,7 +119,7 @@ export const GitReadMsgSchema = z.object({
 export type GitReadMsg = z.infer<typeof GitReadMsgSchema>;
 
 export const GitLogMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.GIT_LOG),
 	clientId: z.string(),
 	data: z.object({
@@ -131,7 +131,7 @@ export const GitLogMsgSchema = z.object({
 export type GitLogMsg = z.infer<typeof GitLogMsgSchema>;
 
 export const GitCommitFilesMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.GIT_COMMIT_FILES),
 	clientId: z.string(),
 	data: z.object({
@@ -142,7 +142,7 @@ export const GitCommitFilesMsgSchema = z.object({
 export type GitCommitFilesMsg = z.infer<typeof GitCommitFilesMsgSchema>;
 
 export const GitCommitFileDiffMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.GIT_COMMIT_FILE_DIFF),
 	clientId: z.string(),
 	data: z.object({
@@ -154,7 +154,7 @@ export const GitCommitFileDiffMsgSchema = z.object({
 export type GitCommitFileDiffMsg = z.infer<typeof GitCommitFileDiffMsgSchema>;
 
 export const ProjectInfoMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.PROJECT_INFO),
 	clientId: z.string(),
 	data: z.object({
@@ -168,7 +168,7 @@ export type ProjectInfoMsg = z.infer<typeof ProjectInfoMsgSchema>;
 export const FsResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.FS_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -182,7 +182,7 @@ export type FsResultMsg = z.infer<typeof FsResultMsgSchema>;
 export const FsListResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.FS_LIST_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -207,7 +207,7 @@ export type FsListResultMsg = z.infer<typeof FsListResultMsgSchema>;
 export const FsReadResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.FS_READ_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -223,7 +223,7 @@ export type FsReadResultMsg = z.infer<typeof FsReadResultMsgSchema>;
 export const FsWriteResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.FS_WRITE_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -238,7 +238,7 @@ export type FsWriteResultMsg = z.infer<typeof FsWriteResultMsgSchema>;
 export const FsStatResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.FS_STAT_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -256,7 +256,7 @@ export type FsStatResultMsg = z.infer<typeof FsStatResultMsgSchema>;
 export const GitReadResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.GIT_READ_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -272,7 +272,7 @@ export type GitReadResultMsg = z.infer<typeof GitReadResultMsgSchema>;
 export const GitLogResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.GIT_LOG_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -288,7 +288,7 @@ export type GitLogResultMsg = z.infer<typeof GitLogResultMsgSchema>;
 export const GitCommitFilesResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.GIT_COMMIT_FILES_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -304,7 +304,7 @@ export type GitCommitFilesResultMsg = z.infer<
 export const GitCommitFileDiffResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.GIT_COMMIT_FILE_DIFF_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -322,7 +322,7 @@ export type GitCommitFileDiffResultMsg = z.infer<
 export const ProjectInfoResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.PROJECT_INFO_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -343,7 +343,7 @@ export const ProjectInfoResultMsgSchema = z.object({
 export type ProjectInfoResultMsg = z.infer<typeof ProjectInfoResultMsgSchema>;
 
 export const ProjectFileSearchMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.PROJECT_FILE_SEARCH),
 	clientId: z.string(),
 	data: z.object({
@@ -360,7 +360,7 @@ export type ProjectFileSearchMsg = z.infer<typeof ProjectFileSearchMsgSchema>;
 export const ProjectFileSearchResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.PROJECT_FILE_SEARCH_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z

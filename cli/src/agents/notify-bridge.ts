@@ -297,16 +297,23 @@ export class NotifyBridge {
 	private consume(filePath: string) {
 		if (!filePath.endsWith(".json")) return;
 		let event: NotifyEvent | undefined;
+		let parsed = false;
 		try {
 			const raw = readFileSync(filePath, "utf8");
-			const parsed = JSON.parse(raw) as NotifyEvent;
-			if (parsed?.agentId && parsed.sessionId && parsed.status) {
-				event = { ...parsed, updatedAt: parsed.updatedAt ?? Date.now() };
+			const data = JSON.parse(raw) as NotifyEvent;
+			if (data?.agentId && data.sessionId && data.status) {
+				event = { ...data, updatedAt: data.updatedAt ?? Date.now() };
+				parsed = true;
+			} else {
+				parsed = true; // valid JSON but not a usable event — consume it
 			}
 		} catch {
-			// File may still be mid-write; the watcher will fire again on close.
+			// File may still be mid-write; leave it for the next watch event.
 			return;
-		} finally {
+		}
+		// Only delete once we've successfully parsed, so a mid-write read
+		// doesn't drop the event permanently.
+		if (parsed) {
 			try {
 				rmSync(filePath, { force: true });
 			} catch {

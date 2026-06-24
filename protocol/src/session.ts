@@ -17,7 +17,7 @@ export type HostInfo = z.infer<typeof HostInfoSchema>;
 // ─── Outgoing (CLI → server → client) ────────────────────────────────────────
 
 export const SessionHostMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.SESSION_HOST),
 	data: HostInfoSchema,
 });

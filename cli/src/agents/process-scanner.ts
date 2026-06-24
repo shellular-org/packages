@@ -1,42 +1,27 @@
 import { execFile } from "node:child_process";
-import { readdirSync, readFileSync, readlinkSync } from "node:fs";
+import { readlinkSync } from "node:fs";
+
 import type { AiBackend } from "@shellular/protocol";
 
 import { logger } from "@/logger";
 
 /**
- * Detects which agent CLIs (claude / codex) are actually running, and in which
- * working directories. This is the gate for surfacing externally-observed
- * sessions: a session is only shown if a live process exists for its agent in
- * its workspace. Without this, the watcher would surface every historical
- * session log on disk.
+ * Minimal liveness disambiguation for the session watcher. Used ONLY to
+ * distinguish "the agent CLI finished its turn and is idle" from "the user
+ * killed / closed the CLI mid-turn" — not as a general surfacing gate (recency
+ * handles that). Called infrequently: only when a running/permission session
+ * has been silent long enough that we need to check whether the process is
+ * still alive.
  *
- * Cross-platform: agents don't hold their session .jsonl open (append+close),
- * so file-handle matching is unreliable — we match on each process's cwd and
- * executable path. How we read those differs per OS:
- *   - macOS:   `lsof` (single pass for command + cwd + txt/exe path)
- *   - Linux:   /proc/<pid>/{cwd,exe,cmdline} (no external binary)
- *   - Windows: PowerShell Win32_Process (Name + ExecutablePath + CommandLine;
- *              per-process cwd isn't readily available, so matching falls back
- *              to "agent present" + the session log's recency, handled upstream).
+ * Approach: `pgrep -f` finds candidate PIDs cheaply (kernel process table,
+ * not every open file). Then we read each candidate's cwd and compare it to
+ * the session's launch directory. If no candidate matches, the CLI is gone.
+ *
+ *   - macOS:   pgrep + `lsof -p <pids> -a -d cwd -Fn`
+ *   - Linux:   pgrep + readlink /proc/<pid>/cwd
+ *   - Windows: pgrep unavailable; fall back to "assume alive" (session decays
+ *              to a sticky finished rather than being removed).
  */
-
-export type LiveAgentProcesses = {
-	/** Per-agent set of absolute cwds that currently have a live process. */
-	cwds: Map<AiBackend, Set<string>>;
-	/** True if at least one process was found for the agent (any cwd). */
-	present: Set<AiBackend>;
-};
-
-type ProcInfo = {
-	pid: string;
-	/** Process command/argv0 name, if known. */
-	command?: string;
-	/** Current working directory, if obtainable on this platform. */
-	cwd?: string;
-	/** Candidate executable/command paths used to identify the agent. */
-	paths: string[];
-};
 
 function execFileAsync(
 	file: string,
@@ -47,234 +32,116 @@ function execFileAsync(
 		execFile(
 			file,
 			args,
-			{ timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true },
-			(err, stdout) => {
-				// Some tools exit non-zero when a few entries are inaccessible; stdout
-				// is still usable, so parse whatever we got.
-				if (err && !stdout) {
-					logger.debug(`process-scanner: ${file} failed:`, err.message);
-				}
-				resolve(stdout ?? "");
-			},
+			{ timeout: timeoutMs, maxBuffer: 1024 * 1024, windowsHide: true },
+			(_err, stdout) => resolve(stdout ?? ""),
 		);
 	});
 }
 
-/**
- * Identifies whether a process is one of our agents from its command name and
- * candidate paths. Works across platforms: the claude native binary is often
- * exec'd with argv0 set to its version, so the executable PATH is the reliable
- * signal (`.../claude/versions/<v>`, or a `claude`/`codex` binary name).
- */
-function classifyAgent(proc: ProcInfo): AiBackend | undefined {
-	const command = (proc.command ?? "").toLowerCase();
-	const base = basename(command);
-	if (base === "claude" || base === "claude.exe") return "claude-code";
-	if (base === "codex" || base === "codex.exe") return "codex";
-
-	for (const raw of proc.paths) {
-		const lower = raw.toLowerCase().replace(/\\/g, "/");
-		if (
-			lower.includes("/claude/versions/") ||
-			/\/claude(\.exe)?(\/|$)/.test(lower)
-		) {
-			return "claude-code";
-		}
-		if (/\/codex(\.exe)?(\/|$|-)/.test(lower)) return "codex";
+/** True if a process command line is a real agent CLI (not an .app bundle). */
+function isAgentCommand(agent: AiBackend, command: string): boolean {
+	const lower = command.toLowerCase().replace(/\\/g, "/");
+	if (lower.includes(".app/contents/")) return false;
+	const base = lower.slice(lower.lastIndexOf("/") + 1);
+	if (agent === "claude-code") {
+		return base === "claude" || lower.includes("/claude/versions/");
 	}
-	return undefined;
-}
-
-function basename(p: string): string {
-	const norm = p.replace(/\\/g, "/");
-	const idx = norm.lastIndexOf("/");
-	return idx === -1 ? norm : norm.slice(idx + 1);
-}
-
-// ─── macOS: lsof ────────────────────────────────────────────────────────────
-
-/**
- * Parses `lsof -nP -Fpcfn -d cwd,txt`. The -F format emits one field per line,
- * prefixed by a type char: p=pid, c=command, f=fd, n=name.
- */
-function parseLsof(output: string): ProcInfo[] {
-	const procs: ProcInfo[] = [];
-	let current: ProcInfo | undefined;
-	let fd = "";
-	for (const line of output.split("\n")) {
-		if (!line) continue;
-		const tag = line[0];
-		const value = line.slice(1);
-		switch (tag) {
-			case "p":
-				if (current) procs.push(current);
-				current = { pid: value, paths: [] };
-				fd = "";
-				break;
-			case "c":
-				if (current) current.command = value;
-				break;
-			case "f":
-				fd = value;
-				break;
-			case "n":
-				if (!current) break;
-				if (fd === "cwd") current.cwd = value;
-				else if (fd === "txt") current.paths.push(value);
-				break;
-			default:
-				break;
-		}
+	if (agent === "codex") {
+		return base === "codex" || /\/codex(\/|$|-)/.test(lower);
 	}
-	if (current) procs.push(current);
-	return procs;
+	return false;
 }
 
-async function collectMacos(): Promise<ProcInfo[]> {
-	const output = await execFileAsync(
-		"lsof",
-		["-nP", "-Fpcfn", "-d", "cwd,txt"],
-		4000,
-	);
-	return parseLsof(output);
-}
-
-// ─── Linux: /proc ─────────────────────────────────────────────────────────────
-
-function collectLinux(): ProcInfo[] {
-	const procs: ProcInfo[] = [];
-	let pids: string[];
+/** Returns candidate PIDs for the agent via `pgrep -fl`. */
+async function candidatePids(agent: AiBackend): Promise<Map<number, string>> {
+	const pattern = agent === "claude-code" ? "claude" : "codex";
+	const result = new Map<number, string>();
 	try {
-		pids = readdirSync("/proc").filter((name) => /^\d+$/.test(name));
-	} catch {
-		return procs;
-	}
-	for (const pid of pids) {
-		try {
-			// cmdline is NUL-separated argv; argv0 is the command/exe.
-			let argv0: string | undefined;
-			try {
-				const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
-				argv0 = cmdline.split("\0")[0] || undefined;
-			} catch {
-				// process may have exited or be inaccessible
-			}
-			let exe: string | undefined;
-			try {
-				exe = readlinkSync(`/proc/${pid}/exe`);
-			} catch {
-				// /proc/<pid>/exe requires matching uid/caps; ok if missing
-			}
-			const paths = [argv0, exe].filter((p): p is string => Boolean(p));
-			if (paths.length === 0) continue;
-			// Quick prefilter so we only readlink cwd for likely agents.
-			const proc: ProcInfo = { pid, command: argv0, paths };
-			if (!classifyAgent(proc)) continue;
-			try {
-				proc.cwd = readlinkSync(`/proc/${pid}/cwd`);
-			} catch {
-				// cwd not readable; upstream falls back to recency
-			}
-			procs.push(proc);
-		} catch {
-			// ignore unreadable pid
+		const output = await execFileAsync("pgrep", ["-fl", pattern], 3000);
+		for (const line of output.split("\n")) {
+			const trimmed = line.trim();
+			if (!trimmed) continue;
+			const spaceIdx = trimmed.indexOf(" ");
+			if (spaceIdx === -1) continue;
+			const pid = parseInt(trimmed.slice(0, spaceIdx), 10);
+			if (!Number.isFinite(pid)) continue;
+			const command = trimmed.slice(spaceIdx + 1);
+			if (isAgentCommand(agent, command)) result.set(pid, command);
 		}
+	} catch {
+		// pgrep not available or failed — callers fall back to "assume alive".
 	}
-	return procs;
+	return result;
 }
 
-// ─── Windows: PowerShell Win32_Process ─────────────────────────────────────────
-
-async function collectWindows(): Promise<ProcInfo[]> {
-	// Get name + executable path + command line as JSON. Per-process cwd is not
-	// exposed by Win32_Process, so cwd stays undefined and matching falls back to
-	// agent-present + session recency (handled by the watcher).
-	const script =
-		"Get-CimInstance Win32_Process | " +
-		"Select-Object ProcessId,Name,ExecutablePath,CommandLine | " +
-		"ConvertTo-Json -Compress";
-	const output = await execFileAsync(
-		"powershell.exe",
-		["-NoProfile", "-NonInteractive", "-Command", script],
-		6000,
-	);
-	if (!output.trim()) return [];
-	let parsed: unknown;
+/** Returns the cwd of a single PID, or undefined if unreadable. */
+function pidCwdLinux(pid: number): string | undefined {
 	try {
-		parsed = JSON.parse(output);
+		return readlinkSync(`/proc/${pid}/cwd`);
 	} catch {
-		return [];
+		return undefined;
 	}
-	const rows = Array.isArray(parsed) ? parsed : [parsed];
-	const procs: ProcInfo[] = [];
-	for (const row of rows) {
-		if (!row || typeof row !== "object") continue;
-		const r = row as Record<string, unknown>;
-		const name = typeof r.Name === "string" ? r.Name : undefined;
-		const exe =
-			typeof r.ExecutablePath === "string" ? r.ExecutablePath : undefined;
-		const cmd = typeof r.CommandLine === "string" ? r.CommandLine : undefined;
-		const paths = [name, exe, cmd].filter((p): p is string => Boolean(p));
-		if (paths.length === 0) continue;
-		procs.push({
-			pid: String(r.ProcessId ?? ""),
-			command: name,
-			paths,
-		});
-	}
-	return procs;
 }
 
-export class ProcessScanner {
-	private cached: LiveAgentProcesses = {
-		cwds: new Map(),
-		present: new Set(),
-	};
-	private lastScan = 0;
-
-	/** Returns cached liveness if scanned within `maxAgeMs`, else rescans. */
-	async getLiveAgents(maxAgeMs = 5000): Promise<LiveAgentProcesses> {
-		if (Date.now() - this.lastScan < maxAgeMs) return this.cached;
-		return this.scan();
-	}
-
-	async scan(): Promise<LiveAgentProcesses> {
-		const cwds = new Map<AiBackend, Set<string>>();
-		const present = new Set<AiBackend>();
-		try {
-			const procs = await this.collect();
-			for (const proc of procs) {
-				const agent = classifyAgent(proc);
-				if (!agent) continue;
-				present.add(agent);
-				if (proc.cwd) {
-					let set = cwds.get(agent);
-					if (!set) {
-						set = new Set();
-						cwds.set(agent, set);
-					}
-					set.add(proc.cwd);
-				}
+/** Batch-reads cwds for PIDs via `lsof -p <pids> -a -d cwd -Fn`. */
+async function pidCwdsMacos(pids: number[]): Promise<Map<number, string>> {
+	const result = new Map<number, string>();
+	if (pids.length === 0) return result;
+	try {
+		const output = await execFileAsync(
+			"lsof",
+			["-p", pids.join(","), "-a", "-d", "cwd", "-Fn"],
+			3000,
+		);
+		let currentPid = 0;
+		for (const line of output.split("\n")) {
+			if (!line) continue;
+			const tag = line[0];
+			const value = line.slice(1);
+			if (tag === "p") {
+				currentPid = parseInt(value, 10) || 0;
+			} else if (tag === "n" && currentPid) {
+				result.set(currentPid, value);
 			}
-		} catch (err) {
-			logger.debug("process-scanner: scan error:", err);
 		}
-		this.cached = { cwds, present };
-		this.lastScan = Date.now();
-		return this.cached;
+	} catch (err) {
+		logger.debug("process-scanner: lsof cwd lookup failed:", err);
+	}
+	return result;
+}
+
+/**
+ * Returns true if a live agent process exists in the given cwd (the session's
+ * launch directory). If cwd is undefined or we can't read per-process cwds on
+ * this platform, returns true (assume alive — the session decays to a sticky
+ * finished rather than being wrongly removed).
+ */
+export async function isAgentAliveInCwd(
+	agent: AiBackend,
+	cwd?: string,
+): Promise<boolean> {
+	if (!cwd) return true;
+	const candidates = await candidatePids(agent);
+	if (candidates.size === 0) return false;
+
+	if (process.platform === "linux") {
+		for (const pid of candidates.keys()) {
+			if (pidCwdLinux(pid) === cwd) return true;
+		}
+		// Process exists but cwd wasn't readable — assume alive.
+		return true;
 	}
 
-	private collect(): Promise<ProcInfo[]> | ProcInfo[] {
-		switch (process.platform) {
-			case "darwin":
-				return collectMacos();
-			case "linux":
-				return collectLinux();
-			case "win32":
-				return collectWindows();
-			default:
-				// Unknown platform: try lsof, harmless if absent.
-				return collectMacos();
+	if (process.platform === "darwin") {
+		const cwds = await pidCwdsMacos([...candidates.keys()]);
+		if (cwds.size === 0) return true; // lsof failed — assume alive
+		for (const procCwd of cwds.values()) {
+			if (procCwd === cwd) return true;
 		}
+		// Agent process exists but in a different cwd.
+		return false;
 	}
+
+	// Windows / unknown: can't read per-process cwd — assume alive.
+	return true;
 }

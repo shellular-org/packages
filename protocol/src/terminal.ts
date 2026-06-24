@@ -5,7 +5,7 @@ import { MsgType } from "./base";
 // ─── Incoming (client → CLI) ──────────────────────────────────────────────────
 
 export const TerminalCreateMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.TERMINAL_CREATE),
 	clientId: z.string(),
 	data: z.object({
@@ -17,14 +17,14 @@ export const TerminalCreateMsgSchema = z.object({
 export type TerminalCreateMsg = z.infer<typeof TerminalCreateMsgSchema>;
 
 export const TerminalListMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.TERMINAL_LIST),
 	clientId: z.string(),
 });
 export type TerminalListMsg = z.infer<typeof TerminalListMsgSchema>;
 
 export const TerminalAttachMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.TERMINAL_ATTACH),
 	clientId: z.string(),
 	data: z.object({
@@ -36,7 +36,7 @@ export const TerminalAttachMsgSchema = z.object({
 export type TerminalAttachMsg = z.infer<typeof TerminalAttachMsgSchema>;
 
 export const TerminalDataMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.TERMINAL_DATA),
 	clientId: z.string(),
 	data: z.object({
@@ -47,7 +47,7 @@ export const TerminalDataMsgSchema = z.object({
 export type TerminalDataMsg = z.infer<typeof TerminalDataMsgSchema>;
 
 export const TerminalResizeMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.TERMINAL_RESIZE),
 	clientId: z.string(),
 	data: z.object({
@@ -59,7 +59,7 @@ export const TerminalResizeMsgSchema = z.object({
 export type TerminalResizeMsg = z.infer<typeof TerminalResizeMsgSchema>;
 
 export const TerminalCloseMsgSchema = z.object({
-	id: z.string().optional(),
+	id: z.string(),
 	type: z.literal(MsgType.TERMINAL_CLOSE),
 	clientId: z.string(),
 	data: z.object({
@@ -73,7 +73,7 @@ export type TerminalCloseMsg = z.infer<typeof TerminalCloseMsgSchema>;
 export const TerminalCreateResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.TERMINAL_CREATE_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -90,7 +90,7 @@ export type TerminalCreateResultMsg = z.infer<
 export const TerminalListResultMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.TERMINAL_LIST_RESULT),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z
@@ -131,7 +131,7 @@ export type TerminalAttachResultMsg = z.infer<
 export const TerminalOutputMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.TERMINAL_DATA),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	data: z.object({
 		terminalId: z.string(),
 		data: z.string(),
@@ -142,7 +142,7 @@ export type TerminalOutputMsg = z.infer<typeof TerminalOutputMsgSchema>;
 export const TerminalClosedMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.TERMINAL_CLOSED),
-	clientId: z.string().optional(),
+	clientId: z.string(),
 	respTo: z.string().optional(),
 	error: z.string().optional(),
 	data: z

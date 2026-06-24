@@ -11,7 +11,7 @@ import path from "node:path";
 import type { AiBackend, AiSessionRuntimeStatus } from "@shellular/protocol";
 
 import { logger } from "@/logger";
-import { ProcessScanner } from "./process-scanner";
+import { isAgentAliveInCwd } from "./process-scanner";
 
 /**
  * Watches the on-disk session logs that Claude Code and Codex write while the
@@ -19,10 +19,19 @@ import { ProcessScanner } from "./process-scanner";
  * lightweight runtime state for each session so the app can surface "active",
  * "working", and "finished" sessions that Shellular never started.
  *
- * A session is only surfaced if a live agent process exists in its workspace
- * (see ProcessScanner). This gate is what keeps the home page to the sessions
- * the user actually has open right now — working OR finished — rather than every
- * historical log on disk. When the process exits, the session is removed.
+ * Surfacing gate: a session is surfaced if its log was appended to within
+ * ACTIVE_WINDOW_MS (actively working/just finished), OR if it was touched
+ * within DISCOVERY_WINDOW_MS (2h) and a live agent process exists in its
+ * launch cwd (idle but CLI still open). Historical sessions beyond the
+ * discovery window are never surfaced. Once surfaced, the session is tracked.
+ *
+ * Retention: a session that finished (authoritatively, via a Stop hook or
+ * task_complete marker) is sticky — it stays until the user explicitly dismisses
+ * it, even if the CLI closes, because the user needs to check the result. A
+ * running/permission session that goes silent for KILL_CHECK_TIMEOUT_MS is
+ * disambiguated with a cheap pgrep check: if the agent process is dead, the CLI
+ * was killed/closed mid-turn → remove; if alive, the turn finished naturally →
+ * decay to a sticky finished.
  *
  * Neither agent records permission/approval prompts to disk, so those are
  * handled separately by the notify bridge. This watcher only reports presence
@@ -44,6 +53,14 @@ export type ExternalSessionUpdate = {
 	 */
 	launchCwd?: string;
 	message?: string;
+	/**
+	 * True when the finished/cancelled status came from an authoritative
+	 * lifecycle marker (Codex task_complete/turn_aborted). Claude's log-based
+	 * finished is never authoritative — only its Stop hook is (handled by the
+	 * notify bridge). Authoritative finished sessions are sticky; non-
+	 * authoritative ones are kill-checked after KILL_CHECK_TIMEOUT_MS.
+	 */
+	authoritativeFinished?: boolean;
 };
 
 type WatchTarget = {
@@ -56,19 +73,22 @@ type WatchTarget = {
 
 const DEBOUNCE_MS = 300;
 // A session whose log was appended to within this window is treated as actively
-// "working" (vs finished).
+// "working" (vs finished). Sessions within this window are surfaced immediately
+// at discovery without a process check.
 const ACTIVE_WINDOW_MS = 30 * 1000;
-// A live agent process can share a cwd with many historical session logs. Only
-// the session whose log was touched within this window is the one the process is
-// actually using; older logs in the same cwd are stale and not surfaced. Kept
-// generous so a session that finished a while ago (but whose CLI is still open)
-// stays visible until you check it or the process exits.
-const LIVE_SESSION_FRESHNESS_MS = 60 * 60 * 1000;
-// How often we re-scan processes to decay state and drop exited sessions.
+// How long a non-authoritative running/finished session can be silent before we
+// disambiguate "idle finished" from "killed" with a pgrep check.
+const KILL_CHECK_TIMEOUT_MS = 60 * 1000;
+// Bounding window for discoverFresh's safety-net scan and the surfacing gate.
+// Sessions whose log was touched within this window but beyond ACTIVE_WINDOW_MS
+// are surfaced only if a live agent process exists in their cwd (pgrep check).
+// Beyond this window, sessions are considered historical and not surfaced.
+const DISCOVERY_WINDOW_MS = 2 * 60 * 60 * 1000;
+// How often we decay state, drop killed sessions, and re-discover missed files.
 const DECAY_INTERVAL_MS = 10 * 1000;
 // fs.watch recursive mode is only supported on macOS and Windows. On other
 // platforms (Linux) we poll recent files instead, at this interval.
-const POLL_INTERVAL_MS = 3 * 1000;
+const POLL_INTERVAL_MS = 10 * 1000;
 const SUPPORTS_RECURSIVE_WATCH =
 	process.platform === "darwin" || process.platform === "win32";
 // How many bytes to read from the tail of a log to find the latest event.
@@ -81,13 +101,6 @@ function homeSubdir(envVar: string, fallback: string): string {
 	const fromEnv = process.env[envVar];
 	if (fromEnv?.trim()) return path.resolve(fromEnv.trim());
 	return path.resolve(os.homedir(), fallback);
-}
-
-/** True if `parent` is the same dir as, or an ancestor of, `child`. */
-function pathContains(parent: string, child: string): boolean {
-	if (parent === child) return true;
-	const base = parent.endsWith(path.sep) ? parent : parent + path.sep;
-	return child.startsWith(base);
 }
 
 function statusLabel(status: AiSessionRuntimeStatus): string {
@@ -417,6 +430,8 @@ async function parseCodexSession(
 		launchCwd: workspacePath,
 		title,
 		message: statusLabel(status) || undefined,
+		authoritativeFinished:
+			lastEvent?.type === "task_complete" || lastEvent?.type === "turn_aborted",
 	};
 }
 
@@ -534,16 +549,21 @@ async function readCodexLastLifecycle(
 
 // ─── Watcher ────────────────────────────────────────────────────────────────
 
+type TrackedSession = {
+	update: ExternalSessionUpdate;
+	/** True once the session reached a definitive finished/cancelled state. */
+	authoritativeFinished: boolean;
+};
+
 export class SessionWatcher {
 	private watchers: FSWatcher[] = [];
 	private debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	private decayTimer?: ReturnType<typeof setInterval>;
 	private targets: WatchTarget[] = [];
 	private started = false;
-	// Sessions currently surfaced (had a live process). Used to decay running ->
-	// finished, and to detect when a process exits so we can remove the session.
-	private lastReported = new Map<string, ExternalSessionUpdate>();
-	private scanner = new ProcessScanner();
+	// Sessions currently surfaced. Used to decay running -> finished, detect
+	// killed CLIs, and keep finished sessions sticky until dismissed.
+	private tracked = new Map<string, TrackedSession>();
 	private pollTimer?: ReturnType<typeof setInterval>;
 	// The file mtime we last processed per path during discovery (poll on Linux,
 	// reconcile's discoverFresh everywhere), so we only re-parse files that
@@ -653,131 +673,164 @@ export class SessionWatcher {
 		try {
 			const update = await target.parse(filePath);
 			if (!update?.sessionId) return;
-			const live = await this.hasLiveProcess(update);
 			const key = `${update.agentId}:${update.sessionId}`;
-			if (!live) {
-				// No live process for this session's workspace. If we were showing it,
-				// the process just exited — remove it; otherwise ignore the change.
-				if (this.lastReported.has(key)) {
-					this.lastReported.delete(key);
-					this.onRemove(update.agentId, update.sessionId);
+			const now = Date.now();
+
+			// Surfacing gate for untracked sessions:
+			// - Within ACTIVE_WINDOW_MS (30s): surface immediately — the session
+			//   is actively working or just finished a turn.
+			// - Between ACTIVE_WINDOW_MS and DISCOVERY_WINDOW_MS (2h): the session
+			//   is idle but the CLI might still be open. Surface only if a live
+			//   agent process exists in its launch cwd (cheap pgrep check).
+			// - Beyond DISCOVERY_WINDOW_MS: historical, never surface.
+			// Already-tracked sessions always get processed (new activity).
+			if (!this.tracked.has(key)) {
+				const age = now - update.updatedAt;
+				if (age > DISCOVERY_WINDOW_MS) return;
+				if (age > ACTIVE_WINDOW_MS) {
+					const alive = await isAgentAliveInCwd(
+						update.agentId,
+						update.launchCwd ?? update.workspacePath,
+					);
+					if (!alive) return;
 				}
-				return;
 			}
+
 			// Title stickiness: title extraction can occasionally come back empty on
 			// a given parse (e.g. ai-title not yet written, transient read). Never
 			// let a later update drop a title we already had for this session, so the
 			// app never flickers back to the raw id / "New Chat".
 			if (!update.title) {
-				const prevTitle = this.lastReported.get(key)?.title;
-				if (prevTitle) update.title = prevTitle;
+				const prev = this.tracked.get(key)?.update.title;
+				if (prev) update.title = prev;
 			}
-			this.report(update);
+
+			// Preserve authoritative-finished stickiness: once a session has been
+			// marked authoritatively finished (e.g. Codex task_complete), a later
+			// non-authoritative parse must not downgrade it.
+			const prevTracked = this.tracked.get(key);
+			const authoritative =
+				update.authoritativeFinished ??
+				prevTracked?.authoritativeFinished ??
+				false;
+
+			this.report(update, authoritative);
 		} catch (err) {
 			logger.debug(`SessionWatcher: parse failed for ${filePath}:`, err);
 		}
 	}
 
-	/**
-	 * A session is surfaced only when a live agent process exists in its
-	 * workspace. If the agent isn't running at all, it's definitely not live.
-	 * If it's running but we couldn't read a workspacePath, fall back to
-	 * "agent present" so we don't hide a genuinely active session.
-	 */
-	private async hasLiveProcess(
-		update: ExternalSessionUpdate,
-	): Promise<boolean> {
-		const live = await this.scanner.getLiveAgents();
-		if (!live.present.has(update.agentId)) return false;
-
-		// A live process shares a cwd with all historical session logs in that
-		// workspace, so cwd alone can't tell which session the process is using.
-		// The discriminator is recency: only the session whose log was touched
-		// within the freshness window belongs to the running process.
-		const fresh = Date.now() - update.updatedAt <= LIVE_SESSION_FRESHNESS_MS;
-		if (!fresh) return false;
-
-		const cwds = live.cwds.get(update.agentId);
-		if (!cwds || cwds.size === 0) {
-			// Process exists but we have no per-process cwd on this platform
-			// (e.g. Windows Win32_Process, or a restricted lsof/proc). Fall back to
-			// recency alone — the 1h freshness window above still bounds it — so we
-			// don't hide a genuinely active session.
-			return true;
-		}
-
-		// A process's cwd is its LAUNCH directory. Match it against the session's
-		// launch dir by EQUALITY — this is the precise owner relationship. Using
-		// the session's drifting current cwd (workspacePath) here would either
-		// miss the session (it cd'd into a subdir) or, with containment, falsely
-		// claim sibling sessions launched in subdirs of the process cwd.
-		if (update.launchCwd) {
-			return cwds.has(update.launchCwd);
-		}
-		// No launch dir known: best-effort. The session's current cwd is a
-		// descendant of (or equal to) its launch dir, so a process whose cwd is an
-		// ancestor-or-equal is plausibly the owner.
-		if (!update.workspacePath) return true;
-		for (const procCwd of cwds) {
-			if (pathContains(procCwd, update.workspacePath)) return true;
-		}
-		return false;
-	}
-
-	private report(update: ExternalSessionUpdate) {
+	private report(update: ExternalSessionUpdate, authoritative: boolean) {
 		const key = `${update.agentId}:${update.sessionId}`;
-		const previous = this.lastReported.get(key);
-		// Avoid spamming identical finished states; only emit on change or while
+		const previous = this.tracked.get(key);
+		// Avoid spamming identical non-running states; only emit on change or while
 		// running (so updatedAt stays fresh for recency filtering).
 		if (
 			previous &&
-			previous.status === update.status &&
+			previous.update.status === update.status &&
 			update.status !== "running" &&
-			previous.title === update.title &&
-			previous.workspacePath === update.workspacePath
+			previous.update.title === update.title &&
+			previous.update.workspacePath === update.workspacePath &&
+			previous.authoritativeFinished === authoritative
 		) {
 			return;
 		}
-		this.lastReported.set(key, update);
+		this.tracked.set(key, { update, authoritativeFinished: authoritative });
 		this.onUpdate(update);
 	}
 
 	/**
-	 * Periodic reconciliation: discover newly-touched session logs, rescan
-	 * processes, drop any surfaced session whose agent process has exited, and
-	 * decay a stale "running" to "finished" once its log has been quiet (the
-	 * process may still be alive but idle).
+	 * Periodic reconciliation: discover newly-touched session logs (safety net
+	 * for missed fs.watch events), decay stale running -> finished, and detect
+	 * killed CLIs. Authoritative-finished sessions are sticky and never removed
+	 * here. Non-authoritative sessions that have been silent for
+	 * KILL_CHECK_TIMEOUT_MS are disambiguated with a cheap pgrep check: alive →
+	 * upgrade to sticky finished; dead → remove.
 	 */
 	private async reconcile() {
 		const now = Date.now();
-		// Force a fresh process scan so exits are detected promptly.
-		await this.scanner.scan();
-		// Discover fresh files as a safety net for missed fs.watch events. A
-		// resumed session appends to its ORIGINAL (possibly old-dated) log file,
-		// and recursive fs.watch can drop events (FSEvents coalescing, atomic
-		// saves, etc.). Without this rescan, such a session would never surface
-		// until a CLI restart — reconnecting from the app can't recover it because
-		// listActivities() only returns what's already in state.
 		this.discoverFresh();
-		for (const [key, update] of [...this.lastReported.entries()]) {
-			const live = await this.hasLiveProcess(update);
-			if (!live) {
-				this.lastReported.delete(key);
-				this.onRemove(update.agentId, update.sessionId);
+		for (const [key, session] of [...this.tracked.entries()]) {
+			const { update, authoritativeFinished } = session;
+			// Authoritative finished/cancelled/error: sticky until user dismisses.
+			if (
+				authoritativeFinished &&
+				(update.status === "finished" ||
+					update.status === "cancelled" ||
+					update.status === "error")
+			) {
 				continue;
 			}
-			if (
-				update.status === "running" &&
-				now - update.updatedAt > ACTIVE_WINDOW_MS
-			) {
+
+			const quietMs = now - update.updatedAt;
+
+			// Running session that went quiet: decay to finished. If it stays
+			// quiet past KILL_CHECK_TIMEOUT_MS, the reconcile below will pgrep.
+			if (update.status === "running" && quietMs > ACTIVE_WINDOW_MS) {
 				const finished: ExternalSessionUpdate = {
 					...update,
 					status: "finished",
 					message: statusLabel("finished"),
 					updatedAt: update.updatedAt,
 				};
-				this.lastReported.set(key, finished);
+				this.tracked.set(key, {
+					update: finished,
+					authoritativeFinished: false,
+				});
 				this.onUpdate(finished);
+				continue;
+			}
+
+			// Non-authoritative finished or waiting-for-permission, silent long
+			// enough to suspect the CLI was killed: disambiguate with pgrep.
+			if (quietMs <= KILL_CHECK_TIMEOUT_MS) continue;
+			if (
+				update.status === "waiting_for_permission" ||
+				update.status === "running"
+			) {
+				const alive = await isAgentAliveInCwd(
+					update.agentId,
+					update.launchCwd ?? update.workspacePath,
+				);
+				if (alive) {
+					// Process still running — the turn ended but the CLI is open.
+					// Upgrade to sticky finished so we don't keep re-checking.
+					const finished: ExternalSessionUpdate = {
+						...update,
+						status: "finished",
+						message: statusLabel("finished"),
+						updatedAt: update.updatedAt,
+					};
+					this.tracked.set(key, {
+						update: finished,
+						authoritativeFinished: true,
+					});
+					this.onUpdate(finished);
+				} else {
+					// CLI was killed/closed — remove the session.
+					this.tracked.delete(key);
+					this.onRemove(update.agentId, update.sessionId);
+				}
+				continue;
+			}
+
+			// Non-authoritative finished, silent past kill-check timeout: the CLI
+			// is probably gone. Disambiguate with pgrep; if alive, upgrade to
+			// sticky so we stop checking.
+			if (update.status === "finished") {
+				const alive = await isAgentAliveInCwd(
+					update.agentId,
+					update.launchCwd ?? update.workspacePath,
+				);
+				if (alive) {
+					this.tracked.set(key, {
+						update,
+						authoritativeFinished: true,
+					});
+				} else {
+					this.tracked.delete(key);
+					this.onRemove(update.agentId, update.sessionId);
+				}
 			}
 		}
 	}
@@ -811,9 +864,9 @@ export class SessionWatcher {
 				} catch {
 					continue;
 				}
-				// Only the freshness window can hold a live session's log; skip the
-				// rest so we don't re-parse the whole history each tick.
-				if (now - mtime > LIVE_SESSION_FRESHNESS_MS) continue;
+				// Only files touched within the discovery window can hold a live or
+				// recently-active session; skip the rest so we don't re-parse history.
+				if (now - mtime > DISCOVERY_WINDOW_MS) continue;
 				if (this.polledMtimes.get(filePath) === mtime) continue;
 				this.polledMtimes.set(filePath, mtime);
 				void this.processFile(target, filePath);
@@ -869,6 +922,6 @@ export class SessionWatcher {
 		if (this.pollTimer) clearInterval(this.pollTimer);
 		this.pollTimer = undefined;
 		this.polledMtimes.clear();
-		this.lastReported.clear();
+		this.tracked.clear();
 	}
 }

@@ -783,10 +783,11 @@ export class Connection extends EventEmitter {
 
 			// init handshake on open
 			this.ws.once("open", () => {
-				const msg: SessionHostMsg = {
-					type: MsgType.SESSION_HOST,
-					data: this.hostInfo,
-				};
+			const msg: SessionHostMsg = {
+				id: nanoid(),
+				type: MsgType.SESSION_HOST,
+				data: this.hostInfo,
+			};
 				this.send(msg);
 			});
 
