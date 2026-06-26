@@ -32,6 +32,69 @@ export const GitCommitFileSchema = z.object({
 });
 export type GitCommitFile = z.infer<typeof GitCommitFileSchema>;
 
+export const GitWorkingTreeFileSchema = z.object({
+	path: z.string(),
+	originalPath: z.string().optional(),
+	indexStatus: z.string(),
+	worktreeStatus: z.string(),
+	status: GitStatusSchema,
+	staged: z.boolean(),
+	unstaged: z.boolean(),
+	untracked: z.boolean(),
+});
+export type GitWorkingTreeFile = z.infer<typeof GitWorkingTreeFileSchema>;
+
+export const GitWorkingTreeStatusSchema = z.object({
+	hasGit: z.boolean(),
+	root: z.string().optional(),
+	branch: z.string().optional(),
+	upstream: z.string().optional(),
+	ahead: z.number(),
+	behind: z.number(),
+	staged: z.number(),
+	unstaged: z.number(),
+	untracked: z.number(),
+	files: z.array(GitWorkingTreeFileSchema),
+});
+export type GitWorkingTreeStatus = z.infer<typeof GitWorkingTreeStatusSchema>;
+
+export const GitBranchSchema = z.object({
+	name: z.string(),
+	ref: z.string(),
+	remote: z.boolean(),
+	current: z.boolean(),
+	default: z.boolean(),
+	upstream: z.string().optional(),
+});
+export type GitBranch = z.infer<typeof GitBranchSchema>;
+
+export const GitWorkingTreeFileDiffSchema = z.object({
+	path: z.string(),
+	oldText: z.string(),
+	newText: z.string(),
+	binary: z.boolean(),
+});
+export type GitWorkingTreeFileDiff = z.infer<
+	typeof GitWorkingTreeFileDiffSchema
+>;
+
+export const GitOperationSchema = z.enum([
+	"status",
+	"diff",
+	"stage",
+	"unstage",
+	"discard",
+	"commit",
+	"fetch",
+	"pull",
+	"push",
+	"branches",
+	"checkout",
+	"branch-create",
+	"branch-delete",
+]);
+export type GitOperation = z.infer<typeof GitOperationSchema>;
+
 // ─── Incoming (client → CLI) ──────────────────────────────────────────────────
 
 export const FsListMsgSchema = z.object({
@@ -152,6 +215,22 @@ export const GitCommitFileDiffMsgSchema = z.object({
 	}),
 });
 export type GitCommitFileDiffMsg = z.infer<typeof GitCommitFileDiffMsgSchema>;
+
+export const GitOperationMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.GIT_OPERATION),
+	clientId: z.string(),
+	data: z.object({
+		path: z.string(),
+		operation: GitOperationSchema,
+		files: z.array(z.string()).optional(),
+		file: z.string().optional(),
+		message: z.string().optional(),
+		branch: z.string().optional(),
+		force: z.boolean().optional(),
+	}),
+});
+export type GitOperationMsg = z.infer<typeof GitOperationMsgSchema>;
 
 export const ProjectInfoMsgSchema = z.object({
 	id: z.string(),
@@ -318,6 +397,24 @@ export const GitCommitFileDiffResultMsgSchema = z.object({
 export type GitCommitFileDiffResultMsg = z.infer<
 	typeof GitCommitFileDiffResultMsgSchema
 >;
+
+export const GitOperationResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.GIT_OPERATION_RESULT),
+	clientId: z.string().optional(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			ok: z.boolean(),
+			output: z.string().optional(),
+			status: GitWorkingTreeStatusSchema.optional(),
+			branches: z.array(GitBranchSchema).optional(),
+			diff: GitWorkingTreeFileDiffSchema.optional(),
+		})
+		.optional(),
+});
+export type GitOperationResultMsg = z.infer<typeof GitOperationResultMsgSchema>;
 
 export const ProjectInfoResultMsgSchema = z.object({
 	id: z.string().optional(),
