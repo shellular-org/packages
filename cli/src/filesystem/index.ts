@@ -19,6 +19,8 @@ import {
 	type GitCommitFilesResultMsg,
 	type GitLogMsg,
 	type GitLogResultMsg,
+	type GitOperationMsg,
+	type GitOperationResultMsg,
 	type GitReadMsg,
 	type GitReadResultMsg,
 	MsgType,
@@ -37,6 +39,7 @@ import {
 	getFileGitStatuses,
 	getGitLog,
 	getProjectGitInfo,
+	runGitOperation,
 } from "./git";
 import { searchProjectFiles } from "./project-search";
 
@@ -550,6 +553,46 @@ export function initFilesystemHandler(conn: Connection, rootDir: string) {
 		} catch (err) {
 			const respMsg: GitCommitFileDiffResultMsg = {
 				type: MsgType.GIT_COMMIT_FILE_DIFF_RESULT,
+				clientId,
+				respTo: msg.id,
+				error: (err as Error).message,
+			};
+			conn.send(respMsg);
+		}
+	});
+
+	conn.on(MsgType.GIT_OPERATION, async (msg: GitOperationMsg) => {
+		const { clientId } = msg;
+		const projectPath = safePath(rootDir, msg.data.path);
+		if (!projectPath) {
+			const respMsg: GitOperationResultMsg = {
+				type: MsgType.GIT_OPERATION_RESULT,
+				clientId,
+				respTo: msg.id,
+				error: "Access denied: path outside workspace",
+			};
+			conn.send(respMsg);
+			return;
+		}
+
+		try {
+			const result = await runGitOperation(projectPath, msg.data.operation, {
+				files: msg.data.files,
+				file: msg.data.file,
+				message: msg.data.message,
+				branch: msg.data.branch,
+				force: msg.data.force,
+			});
+			const respMsg: GitOperationResultMsg = {
+				type: MsgType.GIT_OPERATION_RESULT,
+				clientId,
+				respTo: msg.id,
+				data: result,
+			};
+			conn.send(respMsg);
+		} catch (err) {
+			const respMsg: GitOperationResultMsg = {
+				type: MsgType.GIT_OPERATION_RESULT,
 				clientId,
 				respTo: msg.id,
 				error: (err as Error).message,

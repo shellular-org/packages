@@ -2,24 +2,52 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import type { GitCommit, GitCommitFile, GitStatus } from "@shellular/protocol";
+import type {
+	GitBranch,
+	GitCommit,
+	GitCommitFile,
+	GitOperation,
+	GitStatus,
+	GitWorkingTreeFile,
+	GitWorkingTreeFileDiff,
+	GitWorkingTreeStatus,
+} from "@shellular/protocol";
 
 const execFileAsync = promisify(execFile);
+const gitRootCache = new Map<string, string>();
+const MAX_GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 function normalizeGitPath(filePath: string): string {
 	return filePath.replace(/\\/g, "/");
 }
 
 async function execGit(args: string[], cwd: string): Promise<string> {
-	const { stdout } = await execFileAsync("git", args, { cwd });
+	const { stdout } = await execFileAsync("git", args, {
+		cwd,
+		maxBuffer: MAX_GIT_OUTPUT_BYTES,
+	});
 	// Only strip the trailing newline(s); do NOT trim leading whitespace, since
 	// porcelain status lines begin with a significant space (e.g. " M path").
 	return stdout.replace(/\n+$/, "");
 }
 
+async function execGitWithOutput(args: string[], cwd: string): Promise<string> {
+	const { stdout, stderr } = await execFileAsync("git", args, {
+		cwd,
+		maxBuffer: MAX_GIT_OUTPUT_BYTES,
+	});
+	return [stdout, stderr].filter(Boolean).join("\n").replace(/\n+$/, "");
+}
+
 export async function findGitRoot(dir: string): Promise<string | null> {
+	const cached = gitRootCache.get(dir);
+	if (cached) return cached;
 	try {
 		const result = await execGit(["rev-parse", "--show-toplevel"], dir);
+		if (result) {
+			gitRootCache.set(dir, result);
+			gitRootCache.set(result, result);
+		}
 		return result || null;
 	} catch {
 		return null;
@@ -205,6 +233,461 @@ export async function getProjectGitInfo(
 	} catch {
 		return { hasGit: false };
 	}
+}
+
+function parseBranchStatus(
+	branchLine: string | undefined,
+): Pick<GitWorkingTreeStatus, "branch" | "upstream" | "ahead" | "behind"> {
+	const result = {
+		branch: undefined as string | undefined,
+		upstream: undefined as string | undefined,
+		ahead: 0,
+		behind: 0,
+	};
+	if (!branchLine?.startsWith("# branch.")) return result;
+
+	if (branchLine.startsWith("# branch.head ")) {
+		result.branch = branchLine.slice("# branch.head ".length);
+		if (result.branch === "(detached)") result.branch = "HEAD";
+	} else if (branchLine.startsWith("# branch.upstream ")) {
+		result.upstream = branchLine.slice("# branch.upstream ".length);
+	} else if (branchLine.startsWith("# branch.ab ")) {
+		const match = branchLine.match(/\+(\d+)\s+-(\d+)/);
+		if (match) {
+			result.ahead = Number(match[1]) || 0;
+			result.behind = Number(match[2]) || 0;
+		}
+	}
+	return result;
+}
+
+function mapPorcelainStatus(
+	indexStatus: string,
+	worktreeStatus: string,
+): GitStatus {
+	if (indexStatus === "?" && worktreeStatus === "?") return "untracked";
+	if (indexStatus === "A") return "added";
+	if (indexStatus === "R" || indexStatus === "C") return "renamed";
+	if (worktreeStatus === "D" || indexStatus === "D") return "deleted";
+	if (indexStatus !== "." && worktreeStatus === ".") return "staged";
+	return "modified";
+}
+
+function parseWorkingTreeStatus(
+	output: string,
+	root: string,
+): GitWorkingTreeStatus {
+	const files: GitWorkingTreeFile[] = [];
+	let branch: string | undefined;
+	let upstream: string | undefined;
+	let ahead = 0;
+	let behind = 0;
+
+	const records = output.split("\0").filter(Boolean);
+	for (let i = 0; i < records.length; i++) {
+		const record = records[i];
+		if (record.startsWith("# branch.")) {
+			const parsed = parseBranchStatus(record);
+			branch = parsed.branch ?? branch;
+			upstream = parsed.upstream ?? upstream;
+			ahead = parsed.ahead || ahead;
+			behind = parsed.behind || behind;
+			continue;
+		}
+
+		const kind = record[0];
+		if (kind === "1" || kind === "2") {
+			const match =
+				kind === "1"
+					? record.match(/^1 (\S+) \S+ \S+ \S+ \S+ \S+ \S+ (.*)$/)
+					: record.match(/^2 (\S+) \S+ \S+ \S+ \S+ \S+ \S+ \S+ (.*)$/);
+			if (!match) continue;
+			const indexStatus = match[1]?.[0] ?? ".";
+			const worktreeStatus = match[1]?.[1] ?? ".";
+			const rawPath = match[2] ?? "";
+			let originalPath: string | undefined;
+			if (kind === "2") {
+				originalPath = records[++i];
+			}
+			const pathName = normalizeGitPath(rawPath);
+			files.push({
+				path: pathName,
+				originalPath: originalPath ? normalizeGitPath(originalPath) : undefined,
+				indexStatus,
+				worktreeStatus,
+				status: mapPorcelainStatus(indexStatus, worktreeStatus),
+				staged: indexStatus !== ".",
+				unstaged: worktreeStatus !== ".",
+				untracked: false,
+			});
+		} else if (kind === "?") {
+			const pathName = normalizeGitPath(record.slice(2));
+			files.push({
+				path: pathName,
+				indexStatus: "?",
+				worktreeStatus: "?",
+				status: "untracked",
+				staged: false,
+				unstaged: true,
+				untracked: true,
+			});
+		}
+	}
+
+	return {
+		hasGit: true,
+		root,
+		branch,
+		upstream,
+		ahead,
+		behind,
+		staged: files.filter((file) => file.staged).length,
+		unstaged: files.filter((file) => file.unstaged).length,
+		untracked: files.filter((file) => file.untracked).length,
+		files,
+	};
+}
+
+export async function getWorkingTreeStatus(
+	projectPath: string,
+): Promise<GitWorkingTreeStatus> {
+	const root = await findGitRoot(projectPath);
+	if (!root) {
+		return {
+			hasGit: false,
+			ahead: 0,
+			behind: 0,
+			staged: 0,
+			unstaged: 0,
+			untracked: 0,
+			files: [],
+		};
+	}
+
+	return getWorkingTreeStatusAtRoot(root);
+}
+
+async function getWorkingTreeStatusAtRoot(
+	root: string,
+): Promise<GitWorkingTreeStatus> {
+	const output = await execGit(
+		["status", "--porcelain=v2", "--branch", "-z", "-uall"],
+		root,
+	);
+	return parseWorkingTreeStatus(output, root);
+}
+
+async function showHeadBlob(root: string, relPath: string): Promise<Buffer> {
+	try {
+		const { stdout } = await execFileAsync("git", ["show", `HEAD:${relPath}`], {
+			cwd: root,
+			encoding: "buffer",
+			maxBuffer: MAX_DIFF_FILE_BYTES,
+		});
+		return stdout;
+	} catch {
+		return Buffer.alloc(0);
+	}
+}
+
+export async function getWorkingTreeFileDiff(
+	projectPath: string,
+	filePath: string,
+): Promise<GitWorkingTreeFileDiff | null> {
+	const root = await findGitRoot(projectPath);
+	if (!root) return null;
+
+	return getWorkingTreeFileDiffAtRoot(root, filePath);
+}
+
+async function getWorkingTreeFileDiffAtRoot(
+	root: string,
+	filePath: string,
+): Promise<GitWorkingTreeFileDiff> {
+	const relPath = normalizeGitPath(filePath);
+	const absPath = path.join(root, relPath);
+	const [oldBuf, newBuf] = await Promise.all([
+		showHeadBlob(root, relPath),
+		fsReadFileSafe(absPath),
+	]);
+
+	if (isBinaryBuffer(oldBuf) || isBinaryBuffer(newBuf)) {
+		return { path: relPath, oldText: "", newText: "", binary: true };
+	}
+
+	return {
+		path: relPath,
+		oldText: oldBuf.toString("utf-8"),
+		newText: newBuf.toString("utf-8"),
+		binary: false,
+	};
+}
+
+const BRANCH_FIELD_SEPARATOR = "\x1f";
+
+function parseBranchRows(
+	output: string,
+	remote: boolean,
+	currentBranch: string,
+	defaultRef: string,
+): GitBranch[] {
+	const branches: GitBranch[] = [];
+	for (const row of output.split("\n")) {
+		if (!row) continue;
+		const [ref, shortName, upstream = ""] = row.split(BRANCH_FIELD_SEPARATOR);
+		if (
+			!ref ||
+			!shortName ||
+			ref.endsWith("/HEAD") ||
+			shortName.endsWith("/HEAD")
+		) {
+			continue;
+		}
+		const name = remote ? shortName.replace(/^[^/]+\//, "") : shortName;
+		branches.push({
+			name,
+			ref: shortName,
+			remote,
+			current: !remote && shortName === currentBranch,
+			default:
+				ref === defaultRef ||
+				(!defaultRef &&
+					!remote &&
+					(shortName === "main" || shortName === "master")),
+			upstream: upstream || undefined,
+		});
+	}
+	return branches;
+}
+
+function sortBranches(branches: GitBranch[]): GitBranch[] {
+	const rank = (branch: GitBranch): number => {
+		if (branch.default && !branch.remote) return 0;
+		if (branch.name === "main" && !branch.remote) return 1;
+		if (branch.name === "master" && !branch.remote) return 2;
+		if (branch.current) return 3;
+		if (!branch.remote) return 4;
+		if (branch.default) return 5;
+		return 6;
+	};
+	return branches.sort(
+		(left, right) =>
+			rank(left) - rank(right) ||
+			left.name.localeCompare(right.name, undefined, { sensitivity: "base" }),
+	);
+}
+
+async function getBranches(root: string): Promise<GitBranch[]> {
+	const format = ["%(refname)", "%(refname:short)", "%(upstream:short)"].join(
+		BRANCH_FIELD_SEPARATOR,
+	);
+	const [localOutput, remoteOutput, currentBranch, defaultRef] =
+		await Promise.all([
+			execGit(["for-each-ref", `--format=${format}`, "refs/heads"], root),
+			execGit(["for-each-ref", `--format=${format}`, "refs/remotes"], root),
+			execGit(["branch", "--show-current"], root),
+			execGit(["symbolic-ref", "refs/remotes/origin/HEAD"], root).catch(
+				() => "",
+			),
+		]);
+	return sortBranches([
+		...parseBranchRows(
+			localOutput,
+			false,
+			currentBranch,
+			defaultRef.replace(/^refs\/remotes\/[^/]+\//, "refs/heads/"),
+		),
+		...parseBranchRows(remoteOutput, true, currentBranch, defaultRef),
+	]);
+}
+
+async function validateBranchName(root: string, branch: string): Promise<void> {
+	if (!branch || branch.includes("\0"))
+		throw new Error("Branch name is required");
+	try {
+		await execGit(["check-ref-format", "--branch", branch], root);
+	} catch {
+		throw new Error(`Invalid branch name: ${branch}`);
+	}
+}
+
+async function pushCurrentBranch(root: string): Promise<string> {
+	const branch = await execGit(["branch", "--show-current"], root);
+	if (!branch) throw new Error("Cannot push a detached HEAD");
+	const upstream = await execGit(
+		["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+		root,
+	).catch(() => "");
+	if (upstream) return execGitWithOutput(["push"], root);
+
+	const remotes = (await execGit(["remote"], root))
+		.split("\n")
+		.map((remote) => remote.trim())
+		.filter(Boolean);
+	const remote = remotes.includes("origin") ? "origin" : remotes[0];
+	if (!remote) throw new Error("No Git remote is configured");
+	return execGitWithOutput(["push", "--set-upstream", remote, branch], root);
+}
+
+async function fsReadFileSafe(filePath: string): Promise<Buffer> {
+	try {
+		const fs = await import("node:fs/promises");
+		return await fs.readFile(filePath);
+	} catch {
+		return Buffer.alloc(0);
+	}
+}
+
+function normalizeOperationFiles(files?: string[]): string[] {
+	return (files ?? [])
+		.map((file) => normalizeGitPath(file))
+		.filter((file) => file && !path.isAbsolute(file) && !file.includes("\0"));
+}
+
+export async function runGitOperation(
+	projectPath: string,
+	operation: GitOperation,
+	options: {
+		files?: string[];
+		file?: string;
+		message?: string;
+		branch?: string;
+		force?: boolean;
+	} = {},
+): Promise<{
+	ok: boolean;
+	output?: string;
+	status?: GitWorkingTreeStatus;
+	branches?: GitBranch[];
+	diff?: GitWorkingTreeFileDiff;
+}> {
+	const root = await findGitRoot(projectPath);
+	if (!root) throw new Error("Not in a git repository");
+
+	if (operation === "status") {
+		return { ok: true, status: await getWorkingTreeStatusAtRoot(root) };
+	}
+
+	if (operation === "diff") {
+		if (!options.file) throw new Error("No file selected");
+		const diff = await getWorkingTreeFileDiffAtRoot(root, options.file);
+		return { ok: true, diff };
+	}
+
+	if (operation === "branches") {
+		return { ok: true, branches: await getBranches(root) };
+	}
+
+	const files = normalizeOperationFiles(options.files);
+	let output = "";
+	switch (operation) {
+		case "stage":
+			if (!files.length) throw new Error("No files selected");
+			output = await execGitWithOutput(["add", "--", ...files], root);
+			break;
+		case "unstage":
+			if (!files.length) throw new Error("No files selected");
+			output = await execGitWithOutput(
+				["restore", "--staged", "--", ...files],
+				root,
+			);
+			break;
+		case "discard": {
+			if (!files.length) throw new Error("No files selected");
+			const statuses = await getFileGitStatuses(root, ".");
+			const tracked: string[] = [];
+			const untracked: string[] = [];
+			for (const file of files) {
+				const status = statuses.get(file);
+				if (status === "untracked" || status === "ignored") {
+					untracked.push(file);
+				} else {
+					tracked.push(file);
+				}
+			}
+			const outputs: string[] = [];
+			if (tracked.length > 0) {
+				const out = await execGitWithOutput(
+					["restore", "--", ...tracked],
+					root,
+				);
+				if (out) outputs.push(out);
+			}
+			if (untracked.length > 0) {
+				const out = await execGitWithOutput(
+					["clean", "-df", "--", ...untracked],
+					root,
+				);
+				if (out) outputs.push(out);
+			}
+			output = outputs.join("\n");
+			break;
+		}
+		case "checkout": {
+			const branch = options.branch || options.message;
+			if (!branch) throw new Error("Branch name is required");
+			const exactLocalExists = await execGit(
+				["show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+				root,
+			)
+				.then(() => true)
+				.catch(() => false);
+			if (exactLocalExists) {
+				output = await execGitWithOutput(["switch", branch], root);
+				break;
+			}
+			const localName = branch.replace(/^[^/]+\//, "");
+			const trackedLocalExists = await execGit(
+				["show-ref", "--verify", "--quiet", `refs/heads/${localName}`],
+				root,
+			)
+				.then(() => true)
+				.catch(() => false);
+			output = trackedLocalExists
+				? await execGitWithOutput(["switch", localName], root)
+				: await execGitWithOutput(["switch", "--track", branch], root);
+			break;
+		}
+		case "branch-create": {
+			const branch = options.branch || options.message;
+			if (!branch) throw new Error("Branch name is required");
+			await validateBranchName(root, branch);
+			output = await execGitWithOutput(["switch", "-c", branch], root);
+			break;
+		}
+		case "branch-delete": {
+			const branch = options.branch || options.message;
+			if (!branch) throw new Error("Branch name is required");
+			output = await execGitWithOutput(
+				["branch", options.force ? "-D" : "-d", branch],
+				root,
+			);
+			break;
+		}
+		case "commit": {
+			const message = options.message?.trim();
+			if (!message) throw new Error("Commit message is required");
+			output = await execGitWithOutput(["commit", "-m", message], root);
+			break;
+		}
+		case "fetch":
+			output = await execGitWithOutput(["fetch", "--prune"], root);
+			break;
+		case "pull":
+			output = await execGitWithOutput(["pull", "--ff-only"], root);
+			break;
+		case "push":
+			output = await pushCurrentBranch(root);
+			break;
+		default:
+			throw new Error(`Unsupported git operation: ${operation}`);
+	}
+
+	return {
+		ok: true,
+		output,
+		status: await getWorkingTreeStatusAtRoot(root),
+	};
 }
 
 // ─── Commit history ──────────────────────────────────────────────────────────
