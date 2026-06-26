@@ -233,6 +233,22 @@ export const GitOperationMsgSchema = z.object({
 export type GitOperationMsg = z.infer<typeof GitOperationMsgSchema>;
 
 export const ProjectInfoMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.GIT_OPERATION),
+	clientId: z.string(),
+	data: z.object({
+		path: z.string(),
+		operation: GitOperationSchema,
+		files: z.array(z.string()).optional(),
+		file: z.string().optional(),
+		message: z.string().optional(),
+		branch: z.string().optional(),
+		force: z.boolean().optional(),
+	}),
+});
+export type GitOperationMsg = z.infer<typeof GitOperationMsgSchema>;
+
+export const ProjectInfoMsgSchema = z.object({
 	id: z.string(),
 	type: z.literal(MsgType.PROJECT_INFO),
 	clientId: z.string(),

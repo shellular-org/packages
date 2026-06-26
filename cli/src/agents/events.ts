@@ -305,6 +305,16 @@ export class AcpTranscript {
 		});
 	}
 
+	replaceMessages(messages: AcpMessage[]) {
+		this.messages = messages.map((message) => ({
+			...message,
+			parts: [...message.parts],
+		}));
+		this.currentUser = null;
+		this.currentAssistant = null;
+		this.toolParts.clear();
+	}
+
 	beginTurn(prompt?: acp.PromptRequest["prompt"]) {
 		this.currentUser = null;
 		this.currentAssistant = null;
