@@ -288,6 +288,9 @@ export const AiMessagesListMsgSchema = z.object({
 	data: z.object({
 		backend: AiBackendSchema,
 		sessionId: z.string(),
+		cwd: z.string().optional(),
+		cursor: z.string().optional(),
+		limit: z.number().int().positive().max(100).optional(),
 	}),
 });
 export type AiMessagesListMsg = z.infer<typeof AiMessagesListMsgSchema>;
