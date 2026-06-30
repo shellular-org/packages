@@ -1,4 +1,6 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
 
@@ -14,11 +16,17 @@ import {
 import { config } from "@/config";
 import { logger } from "@/logger";
 import { preStart } from "@/pre-start";
+import { getFileSize, streamFile } from "@/utils";
 
-type DaemonOptions = {
+export type DaemonOptions = {
 	server: string;
 	dir: string;
 	unknownClients: "always-reject" | "always-allow" | "requires-approval";
+	qr: boolean;
+};
+
+export type DaemonStartOptions = DaemonOptions & {
+	logStream?: boolean;
 };
 
 type Pm2Process = pm2.ProcessDescription;
@@ -43,6 +51,7 @@ function getLatestLogPaths(): { out: string; err: string } | null {
 	try {
 		const files = fs
 			.readdirSync(config.LOGS_DIR)
+			// Daemon stdout logs are named `shellular.<timestamp>.log`
 			.filter(
 				(f) =>
 					f.startsWith(`${config.NAME}.`) &&
@@ -63,14 +72,6 @@ function getLatestLogPaths(): { out: string; err: string } | null {
 		};
 	} catch {
 		return null;
-	}
-}
-
-function getFileSize(filePath: string): number {
-	try {
-		return fs.statSync(filePath).size;
-	} catch {
-		return 0;
 	}
 }
 
@@ -187,6 +188,7 @@ function startDaemonProcess(
 					path.resolve(options.dir),
 					"--unknown-clients",
 					options.unknownClients,
+					options.qr ? "--qr" : "--no-qr",
 				],
 				cwd: process.cwd(),
 				output: logs.out,
@@ -220,6 +222,79 @@ function deleteDaemon(): Promise<void> {
 	});
 }
 
+function stopPm2Daemon(): Promise<void> {
+	return new Promise((resolve, reject) => {
+		pm2.stop(config.NAME, (err) => {
+			if (err) reject(err);
+			else resolve();
+		});
+	});
+}
+
+function dumpPm2ProcessList(): Promise<void> {
+	return new Promise((resolve, reject) => {
+		pm2.dump((err) => {
+			if (err) reject(err);
+			else resolve();
+		});
+	});
+}
+
+/**
+ * pm2's programmatic `startup`/`uninstallStartup` API (lib/API/Startup.js)
+ * isn't actually safe to call from another process: `isNotRoot()` reads
+ * `require.main.filename` (undefined outside a CJS entrypoint — we're ESM —
+ * which throws) and, when a user is supplied, indexes into `opts.args[1]`
+ * expecting a commander `Command` from pm2's own CLI parser. Both of pm2's
+ * own typed/untyped call shapes assume they're driven by pm2's `bin/pm2`,
+ * not called as a library. So instead we shell out to that same `pm2` binary,
+ * exactly as the documented `pm2 startup` / `pm2 unstartup` workflow does —
+ * this also means the user sees pm2's own colored output and the `sudo ...`
+ * command it prints, live, instead of us trying to recreate it.
+ */
+const pm2BinPath = createRequire(import.meta.url).resolve("pm2/bin/pm2");
+
+/**
+ * `pm2 startup` / `pm2 unstartup` exit with code 1 when run without root —
+ * that's not a failure, it's pm2 printing the exact `sudo ...` command to
+ * copy/paste and re-run. Any other non-zero exit is a real failure.
+ */
+function runPm2StartupCli(arg: "startup" | "unstartup"): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const child = spawn(process.execPath, [pm2BinPath, arg], {
+			stdio: "inherit",
+			env: {
+				/**
+				 * `pm2`'s own package entrypoint (lib/index.js) sets
+				 * `process.env.PM2_PROGRAMMATIC = 'true'` as a side effect of merely being
+				 * imported — which we do, above, for the rest of this file's `pm2.*` calls.
+				 * That flag leaks into any child process by default (spawn inherits env),
+				 * and pm2's `Common.printOut` silently no-ops whenever it's set. Without
+				 * stripping it back out here, the spawned `pm2 startup`/`unstartup` CLI
+				 * loses its own status lines (e.g. "Init System found: launchd") even
+				 * though it still prints the actual `sudo ...` command via plain
+				 * `console.log`. Force both silencing flags off for this child only.
+				 */
+				...process.env,
+				PM2_PROGRAMMATIC: undefined,
+				PM2_SILENT: undefined,
+			},
+		});
+
+		child.on("close", (code) => {
+			if (code === 0 || code === 1) {
+				// apparently pm2's startup/unstartup commands return 1 when they print the "you need to run this with sudo" message,
+				// so treat that as success (the user can re-run the printed command themselves).
+				resolve();
+			} else {
+				reject(new Error(`pm2 ${arg} exited with code ${code}`));
+			}
+		});
+
+		child.on("error", reject);
+	});
+}
+
 function formatDuration(ms: number): string {
 	const seconds = Math.max(0, Math.floor(ms / 1000));
 	const minutes = Math.floor(seconds / 60);
@@ -243,44 +318,6 @@ function writeLockDetails(lock: LockData): void {
 	if (lock.workDir) {
 		logger.debug(`Directory: ${chalk.white(lock.workDir)}`);
 	}
-}
-
-function streamFile(
-	filePath: string,
-	startAt: number,
-	stream: NodeJS.WriteStream,
-) {
-	let offset = startAt;
-	let hasData = offset > 0;
-
-	const readNewData = () => {
-		const size = getFileSize(filePath);
-		if (size < offset) {
-			offset = 0;
-		}
-		if (size <= offset) {
-			return;
-		}
-
-		const reader = fs.createReadStream(filePath, {
-			start: offset,
-			end: size - 1,
-		});
-		offset = size;
-		hasData = true;
-		reader.pipe(stream, { end: false });
-	};
-
-	readNewData();
-	const timer = setInterval(readNewData, 500);
-	return {
-		stop: () => {
-			clearInterval(timer);
-		},
-		get hasData() {
-			return hasData;
-		},
-	};
 }
 
 async function streamDaemonLogs(
@@ -360,7 +397,10 @@ function pollDaemonReady(timeoutMs = 10_000): Promise<Pm2Process | null> {
 	});
 }
 
-export async function startDaemon(options: DaemonOptions): Promise<void> {
+export async function startDaemon(
+	options: DaemonOptions,
+	streamLogs: boolean,
+): Promise<void> {
 	logger.log("Starting Shellular daemon...");
 
 	const activeLockData = getBootLockData();
@@ -369,7 +409,7 @@ export async function startDaemon(options: DaemonOptions): Promise<void> {
 		logger.log(chalk.yellow("Shellular CLI is already running."));
 		writeLockDetails(activeLockData);
 		const daemon = await withPm2(describeDaemon);
-		if (daemon?.pm2_env?.status === "online") {
+		if (streamLogs && daemon?.pm2_env?.status === "online") {
 			const latestLogs = getLatestLogPaths();
 			if (latestLogs) {
 				await streamDaemonLogs(latestLogs);
@@ -430,13 +470,46 @@ export async function startDaemon(options: DaemonOptions): Promise<void> {
 
 	if (status === "online") {
 		logger.log(chalk.green("Daemon is running."));
-	} else {
+	} else if (streamLogs) {
 		logger.warn(
 			`Daemon status: ${chalk.yellow(status ?? "unknown")}. Streaming logs...`,
 		);
 	}
 
+	// Non-interactive callers must return so the process
+	// can exit; only the interactive `start` tails logs and waits for Ctrl+C.
+	if (!streamLogs) {
+		return;
+	}
+
 	await streamDaemonLogs(logs, offsets);
+}
+
+/**
+ * Recover the original `__daemon` launch options from a running PM2 spec. PM2
+ * records the args it launched the daemon with, so this is an in-sync source of
+ * what server/dir/policy the daemon is actually running with — no need to also
+ * stash them in the boot lock.
+ */
+function readDaemonOptions(daemon: Pm2Process): Partial<DaemonOptions> {
+	// `args` is present at runtime but missing from PM2's `Pm2Env` typings.
+	const args = (daemon.pm2_env as { args?: unknown } | undefined)?.args;
+	if (!Array.isArray(args)) return {};
+
+	const valueAfter = (flag: string): string | undefined => {
+		const i = args.indexOf(flag);
+		const value = i >= 0 ? args[i + 1] : undefined;
+		return typeof value === "string" ? value : undefined;
+	};
+
+	return {
+		server: valueAfter("--server"),
+		dir: valueAfter("--dir"),
+		unknownClients: valueAfter("--unknown-clients") as
+			| DaemonOptions["unknownClients"]
+			| undefined,
+		qr: args.includes("--no-qr") ? false : true,
+	};
 }
 
 export async function restartDaemon(): Promise<void> {
@@ -462,13 +535,18 @@ export async function restartDaemon(): Promise<void> {
 	logger.log(chalk.green("Shellular daemon restarted."));
 }
 
-export async function stopDaemon(): Promise<void> {
+export async function stopDaemon(shouldDelete: boolean): Promise<void> {
 	const stopped = await withPm2(async () => {
 		const daemon = await describeDaemon();
 		if (!daemon) {
 			return false;
 		}
-		await deleteDaemon();
+
+		if (shouldDelete) {
+			await deleteDaemon();
+		} else {
+			await stopPm2Daemon();
+		}
 		return true;
 	});
 
@@ -525,9 +603,23 @@ export async function showDaemonStatus(): Promise<void> {
 		? `${Math.round(daemon.monit.memory / 1024 / 1024)} MB`
 		: "n/a";
 
+	logger.log(`Version: ${config.VERSION}`);
 	logger.log(`PID: ${pid}`);
 	logger.log(`Restarts: ${restarts}`);
 	logger.log(`Memory: ${memory}`);
+
+	// The args the daemon is actually running with (read back from PM2). Handy for
+	// confirming a self-update relaunched onto the same server/dir/policy.
+	const opts = readDaemonOptions(daemon);
+	if (opts.server) {
+		logger.log(`Server: ${chalk.white(opts.server)}`);
+	}
+	if (opts.dir) {
+		logger.log(`Directory: ${chalk.white(opts.dir)}`);
+	}
+	if (opts.unknownClients) {
+		logger.log(`Unknown clients: ${chalk.white(opts.unknownClients)}`);
+	}
 
 	const latestLogs = getLatestLogPaths();
 	if (latestLogs) {
@@ -546,5 +638,65 @@ export async function showDaemonStatus(): Promise<void> {
 		if (activeLockData) {
 			logger.debug(chalk.dim(`Stale lock PID: ${activeLockData.pid}`));
 		}
+	}
+}
+
+/**
+ * Equivalent of `pm2 startup && pm2 save`: installs an OS boot service
+ * (launchd on macOS, systemd on Linux) that resurrects the daemon's process
+ * list on machine startup, then saves the current process list so there's
+ * something to resurrect. Most platforms require the first step to run as
+ * root/sudo — `pm2 startup` detects that itself and prints (to inherited
+ * stdio, so the user sees it directly) the exact command to re-run.
+ */
+export async function enableStartup(): Promise<void> {
+	const daemon = await withPm2(describeDaemon);
+	if (daemon?.pm2_env?.status !== "online") {
+		logger.error(
+			chalk.red(
+				"Shellular daemon is not running. Run 'shellular start' first.",
+			),
+		);
+		process.exitCode = 1;
+		return;
+	}
+
+	try {
+		await runPm2StartupCli("startup");
+	} catch (err) {
+		logger.error(
+			chalk.red(
+				`Failed to install boot service: ${err instanceof Error ? err.message : String(err)}`,
+			),
+		);
+		process.exitCode = 1;
+		return;
+	}
+
+	try {
+		await withPm2(dumpPm2ProcessList);
+	} catch (err) {
+		logger.error(
+			chalk.red(
+				`Boot service installed, but failed to save the process list: ${err instanceof Error ? err.message : String(err)}`,
+			),
+		);
+		logger.error("Run 'shellular startup' again once the daemon is running.");
+		process.exitCode = 1;
+		return;
+	}
+}
+
+export async function disableStartup(): Promise<void> {
+	try {
+		await runPm2StartupCli("unstartup");
+	} catch (err) {
+		logger.error(
+			chalk.red(
+				`Failed to remove boot service: ${err instanceof Error ? err.message : String(err)}`,
+			),
+		);
+		process.exitCode = 1;
+		return;
 	}
 }

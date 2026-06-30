@@ -28,6 +28,9 @@ const _config = {
 	SHELLULAR_DIR,
 	CONFIG_FILE,
 	LOGS_DIR: path.join(SHELLULAR_DIR, "logs"),
+	// Self-update worker logs live in their own subdir so they don't mix into
+	// the daemon log glob and so `logs --self-updates` is just a dir listing.
+	SELF_UPDATE_LOGS_DIR: path.join(SHELLULAR_DIR, "logs", "self-updates"),
 	CLIENTS_FILE: path.join(SHELLULAR_DIR, "clients.json"),
 	MACHINE_ID: machineId,
 	PLATFORM: process.platform,
@@ -44,6 +47,10 @@ export function ensureConfig() {
 
 	if (!fs.existsSync(_config.LOGS_DIR)) {
 		fs.mkdirSync(_config.LOGS_DIR, { recursive: true });
+	}
+
+	if (!fs.existsSync(_config.SELF_UPDATE_LOGS_DIR)) {
+		fs.mkdirSync(_config.SELF_UPDATE_LOGS_DIR, { recursive: true });
 	}
 }
 
@@ -148,3 +155,17 @@ export const config = {
 };
 
 export const npxCommand = config.PLATFORM === "win32" ? "npx.cmd" : "npx";
+
+/**
+ * Build a fresh, timestamped log path for one self-update run, e.g.
+ * `~/.shellular/logs/self-updates/shellular.2026-06-30T17-58-00.log`. A new
+ * file per run keeps history instead of overwriting, and since they live in
+ * their own subdir, `logs --self-updates` is just a listing of that dir.
+ */
+export function getSelfUpdateLogPath(): string {
+	const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+	return path.join(
+		config.SELF_UPDATE_LOGS_DIR,
+		`${config.NAME}.${timestamp}.log`,
+	);
+}

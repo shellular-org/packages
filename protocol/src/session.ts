@@ -11,6 +11,15 @@ export const HostInfoSchema = z.object({
 	platform: z.string(),
 	dir: z.string(),
 	machineId: z.string(),
+	/** Version of the Shellular CLI running on the host. */
+	cliVersion: z.string().optional(),
+	/**
+	 * True when the CLI can safely update + restart itself in place — i.e. it is
+	 * running under a supervisor (the daemon/PM2). For a foreground `npx`/global
+	 * launch this is false: the app should tell the user to update manually
+	 * rather than risk orphaning the process.
+	 */
+	canSelfUpdate: z.boolean().optional(),
 });
 export type HostInfo = z.infer<typeof HostInfoSchema>;
 
@@ -36,13 +45,14 @@ export const SessionJoinedMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.SESSION_JOINED),
 	respTo: z.string().optional(),
-	data: z.object({
-		username: z.string(),
-		hostname: z.string(),
-		platform: z.string(),
-		dir: z.string(),
-		machineId: z.string(),
+	// The server spreads the host's HostInfo into this message and adds sessionId,
+	// so reuse HostInfoSchema in full rather than redeclaring its fields.
+	data: HostInfoSchema.extend({
 		sessionId: z.string(),
+		/** True when a newer CLI version is available on npm. */
+		updateAvailable: z.boolean().optional(),
+		/** Latest CLI version published on npm, when known. */
+		latestCliVersion: z.string().optional(),
 	}),
 });
 export type SessionJoinedMsg = z.infer<typeof SessionJoinedMsgSchema>;
@@ -102,6 +112,11 @@ export const SessionClientJoinResultMsgSchema = z.object({
 	data: z.object({
 		clientId: z.string(),
 		approved: z.boolean(),
+		// The server merges these into session.hostInfo before sending
+		// SESSION_JOINED, so the joining app always sees current update status —
+		// even for a long-lived daemon which might have been the latest when it was started
+		updateAvailable: z.boolean().optional(),
+		latestCliVersion: z.string().optional(),
 	}),
 });
 export type SessionClientJoinResultMsg = z.infer<
