@@ -55,6 +55,7 @@ import {
 	HostIncomingMsgSchema,
 	type HostToClientMsg,
 	type HostToServerMsg,
+	type HostUpdateMsg,
 	type HttpRequestMsg,
 	MsgType,
 	PLAINTEXT_TYPES,
@@ -385,6 +386,10 @@ export class Connection extends EventEmitter {
 	on(
 		eventName: typeof MsgType.AI_QUESTION_REJECT,
 		listener: (msg: AiQuestionRejectMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.HOST_UPDATE,
+		listener: (msg: HostUpdateMsg) => void,
 	): this;
 	on(eventName: "disconnected", listener: (info: DisconnectInfo) => void): this;
 	on<TArgs extends unknown[]>(
@@ -783,11 +788,11 @@ export class Connection extends EventEmitter {
 
 			// init handshake on open
 			this.ws.once("open", () => {
-			const msg: SessionHostMsg = {
-				id: nanoid(),
-				type: MsgType.SESSION_HOST,
-				data: this.hostInfo,
-			};
+				const msg: SessionHostMsg = {
+					id: nanoid(),
+					type: MsgType.SESSION_HOST,
+					data: this.hostInfo,
+				};
 				this.send(msg);
 			});
 

@@ -17,6 +17,10 @@ export const MsgType = {
 	SESSION_CLIENT_JOIN: "session:client-join",
 	/** CLI sends this to report whether a pending client was approved */
 	SESSION_CLIENT_JOIN_RESULT: "session:client-join:result",
+	/** App asks the host CLI to update itself to the latest version and restart */
+	HOST_UPDATE: "host:update",
+	/** CLI reports progress/result of a self-update triggered by the app */
+	HOST_UPDATE_RESULT: "host:update:result",
 	/** Request to list directory contents */
 	FS_LIST: "fs:list",
 	/** Response with directory listing entries */

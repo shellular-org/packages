@@ -7,6 +7,7 @@ import { checkbox, confirm } from "@inquirer/prompts";
 import {
 	type AiAvailabilityResultMsg,
 	type HostInfo,
+	type HostUpdateMsg,
 	MsgType,
 	type SessionClientJoinMsg,
 	type SessionClientLeftMsg,
@@ -31,6 +32,10 @@ import {
 import { config, ensureConfig } from "@/config";
 import { connectWithReconnect } from "@/connection";
 import {
+	type DaemonOptions,
+	type DaemonStartOptions,
+	disableStartup,
+	enableStartup,
 	restartDaemon,
 	showDaemonLogs,
 	showDaemonStatus,
@@ -47,7 +52,10 @@ import { cleanupProxy, initProxyHandler } from "@/proxy";
 import { ServerUrl } from "@/server-url";
 import { initBatteryStream, initSysmonHandler } from "@/sysmon";
 import { initTerminalHandler } from "@/terminal";
-import { checkForUpdate } from "@/update-check";
+import { checkForUpdate, getUpdateInfo } from "@/update-check";
+import { showSelfUpdateLogs } from "@/update-logs";
+import { runSelfUpdate } from "@/update-runner";
+import { updateAndStartShellular } from "./update-and-start";
 
 const DEFAULT_SERVER_URL = "wss://api.shellular.dev";
 
@@ -81,12 +89,15 @@ type CliOptions = {
 	server: string;
 	dir: string;
 	unknownClients: UnknownClientApprovalPolicy;
+	qr: boolean;
 };
-
-type DaemonOptions = Pick<CliOptions, "server" | "dir" | "unknownClients">;
 
 type ClientsCommandOptions = {
 	delete?: string;
+};
+
+type DaemonStopOptions = {
+	delete: boolean;
 };
 
 /**
@@ -105,6 +116,7 @@ function createProgram(): Command {
 		.allowExcessArguments(false)
 		.option("--server <url>", "Shellular server URL", DEFAULT_SERVER_URL)
 		.option("--dir <path>", "Working directory", os.homedir())
+		.option("--no-qr", "Do not display QR code in terminal")
 		.option(
 			"--unknown-clients <policy>",
 			`unknown clients approval policy (${NEW_CLIENT_APPROVAL_POLICIES.join(", ")})`,
@@ -122,21 +134,30 @@ function createProgram(): Command {
 			server: options.server ?? globals.server,
 			dir: options.dir ?? globals.dir,
 			unknownClients: options.unknownClients ?? globals.unknownClients,
+			qr: options.qr ?? globals.qr,
 		};
 	};
 
 	program
 		.command("start")
+		.option(
+			"--no-log-stream",
+			"Do not stream logs to the console. Just start the daemon and exit.",
+		)
 		.description("Start Shellular in the background as a daemon")
-		.action(async (options: Partial<DaemonOptions>, command: Command) => {
-			await startDaemon(resolveDaemonOptions(options, command));
+		.action(async (options: Partial<DaemonStartOptions>, command: Command) => {
+			await startDaemon(
+				resolveDaemonOptions(options, command),
+				options.logStream || false,
+			);
 		});
 
 	program
 		.command("stop")
 		.description("Stop the Shellular daemon")
-		.action(async () => {
-			await stopDaemon();
+		.option("--no-delete", "Do not delete the daemon process from PM2")
+		.action(async (options: DaemonStopOptions) => {
+			await stopDaemon(options.delete);
 		});
 
 	program
@@ -147,9 +168,33 @@ function createProgram(): Command {
 		});
 
 	program
+		.command("startup")
+		.description(
+			"Enable Shellular to start automatically on boot (requires the daemon to be running)",
+		)
+		.action(async () => {
+			await enableStartup();
+		});
+
+	program
+		.command("unstartup")
+		.description("Disable automatic startup of Shellular on boot")
+		.action(async () => {
+			await disableStartup();
+		});
+
+	program
 		.command("logs")
 		.description("Stream Shellular daemon logs")
-		.action(async () => {
+		.option(
+			"--self-updates",
+			"List self-update logs and stream the latest instead",
+		)
+		.action(async (options: { selfUpdates?: boolean }) => {
+			if (options.selfUpdates) {
+				await showSelfUpdateLogs();
+				return;
+			}
 			await showDaemonLogs();
 		});
 
@@ -158,6 +203,13 @@ function createProgram(): Command {
 		.description("Show Shellular daemon status")
 		.action(async () => {
 			await showDaemonStatus();
+		});
+
+	program
+		.command("__update_and_start", { hidden: true })
+		.description("Update Shellular and start the daemon")
+		.action(async () => {
+			await updateAndStartShellular();
 		});
 
 	program
@@ -286,6 +338,7 @@ async function runCli({
 	dir,
 	unknownClients: unknownClientsApproval,
 	isDaemon = false,
+	qr: showQr,
 }: RunCliOptions): Promise<void> {
 	const serverUrl = new ServerUrl(server);
 	const workDir = path.resolve(dir);
@@ -326,6 +379,12 @@ async function runCli({
 
 	logger.log();
 
+	// Warm the npm "latest version" TTL cache so the first client to join doesn't
+	// pay the lookup. The dynamic updateAvailable/latestCliVersion are NOT part of
+	// stable host identity — they're re-checked and sent per client-join (in the
+	// approval), so they live on the session's updateInfo, not on HostInfo here.
+	getUpdateInfo(config.VERSION).catch(() => undefined);
+
 	const hostInfo: HostInfo = {
 		id: hostId,
 		username: config.USERNAME,
@@ -333,6 +392,11 @@ async function runCli({
 		platform: config.PLATFORM,
 		dir: workDir,
 		machineId: config.MACHINE_ID,
+		cliVersion: config.VERSION,
+		// Only a daemon (PM2-supervised) can safely self-update + restart. A
+		// foreground npx/global launch would orphan itself, so the app shows a
+		// "please update manually" hint instead of the Update button.
+		canSelfUpdate: isDaemon,
 	};
 
 	const agentsManager = new AgentsManager();
@@ -372,10 +436,11 @@ async function runCli({
 
 				if (isFirst) {
 					logger.log(
-						"📲",
-						`Scan the QR code with ${chalk.bold("Shellular app")} to connect.`,
+						chalk.green(
+							"✅",
+							`Connected to server at ${new Date().toLocaleString()}`,
+						),
 					);
-
 					logger.log(
 						"🔒",
 						chalk.green(
@@ -383,32 +448,41 @@ async function runCli({
 						),
 					);
 
-					// Display QR code with hostId:e2eeKey for out-of-band key exchange
-					const qrData = `${hostId}:${getKeyBase64()}`;
-					logger.log();
-					qrcode.generate(qrData, { small: true }, (qr: string) => {
-						qr.split("\n").forEach((line) => {
-							logger.log(line);
-						});
-
-						logger.log();
+					if (showQr) {
 						logger.log(
-							"⚠️ ",
-							chalk.yellow.bold(
-								"Keep this QR code private — do not share it with anyone.",
-							),
+							"📲",
+							`Scan the QR code with ${chalk.bold("Shellular app")} to connect.`,
 						);
 
-						if (config.PLATFORM === "darwin") {
-							logger.log(
-								"💡",
-								"Connection stays active as long as Shellular CLI is running and your laptop is online, even if you lock your screen.",
-							);
-							logger.log("📌", "Just don't close the laptop lid.");
-						}
+						// Display QR code with hostId:e2eeKey for out-of-band key exchange
+						const qrData = `${hostId}:${getKeyBase64()}`;
+						logger.log();
+						qrcode.generate(qrData, { small: true }, (qr: string) => {
+							qr.split("\n").forEach((line) => {
+								logger.log(line);
+							});
 
-						logger.log("👋", "Press Ctrl+C to exit.\n");
-					});
+							logger.log();
+							logger.log(
+								"⚠️ ",
+								chalk.yellow.bold(
+									"Keep this QR code private — do not share it with anyone.",
+								),
+							);
+
+							if (config.PLATFORM === "darwin") {
+								logger.log(
+									"💡",
+									"Connection stays active as long as Shellular CLI is running and your laptop is online, even if you lock your screen.",
+								);
+								logger.log("📌", "Just don't close the laptop lid.");
+							}
+
+							logger.log("👋", "Press Ctrl+C to exit.\n");
+						});
+					} else {
+						logger.log("🙈", "Not showing QR code since --no-qr was specified");
+					}
 				} else {
 					logger.log(
 						chalk.green(
@@ -432,6 +506,72 @@ async function runCli({
 					);
 				});
 
+				conn.on(MsgType.HOST_UPDATE, (msg: HostUpdateMsg) => {
+					const { clientId } = msg;
+
+					// Only a daemon (PM2-supervised) can safely self-update: PM2 owns the
+					// replacement process. A foreground npx/global launch would orphan
+					// itself, so we refuse and ask the user to update manually. The app
+					// only shows the Update button when canSelfUpdate, so this guards
+					// against stale/rogue clients sending HOST_UPDATE anyway.
+					if (!isDaemon) {
+						logger.log(
+							chalk.yellow(
+								`⬆️  Update requested by client ${clientId}, but this is a foreground launch — not self-updating.`,
+							),
+						);
+						conn.send({
+							type: MsgType.HOST_UPDATE_RESULT,
+							clientId,
+							data: {
+								status: "error",
+								message:
+									"This CLI isn't running as a daemon. Update manually with `npx shellular@latest`.",
+							},
+						});
+						return;
+					}
+
+					logger.log(chalk.cyan(`⬆️  Update requested by client ${clientId}.`));
+
+					conn.send({
+						type: MsgType.HOST_UPDATE_RESULT,
+						clientId,
+						data: { status: "starting" },
+					});
+
+					// Let the "starting" frame flush to the app before we kick off the
+					// update (which, for daemon/global, tears this process down).
+					setTimeout(async () => {
+						conn.send({
+							type: MsgType.HOST_UPDATE_RESULT,
+							clientId,
+							data: { status: "updating" },
+						});
+
+						try {
+							// Daemon-only: spawns a detached helper that installs the
+							// resolved version, then stops this daemon and starts the new
+							// one with the same options. The original options are re-passed
+							// to `start` so the relaunched daemon keeps server/dir/approval.
+							await runSelfUpdate();
+							conn.send({
+								type: MsgType.HOST_UPDATE_RESULT,
+								clientId,
+								data: { status: "restarting" },
+							});
+						} catch (err) {
+							const message = err instanceof Error ? err.message : String(err);
+							logger.error(chalk.red(`Self-update failed: ${message}`));
+							conn.send({
+								type: MsgType.HOST_UPDATE_RESULT,
+								clientId,
+								data: { status: "error", message },
+							});
+						}
+					}, 250);
+				});
+
 				conn.on(
 					MsgType.SESSION_CLIENT_JOIN,
 					async (msg: SessionClientJoinMsg) => {
@@ -439,40 +579,56 @@ async function runCli({
 
 						const deviceSummary = formatClientDeviceInfo(msg.data);
 
+						// Approve the joining client, attaching freshly re-checked update
+						// info (TTL-cached). The server merges this into session.hostInfo
+						// before the SESSION_JOINED handshake, so this specific client
+						// sees current update availability even on a long-lived daemon.
+						const approve = async () => {
+							const update = await getUpdateInfo(config.VERSION).catch(() => ({
+								current: config.VERSION,
+								latest: undefined,
+								updateAvailable: false,
+							}));
+							conn.send({
+								type: MsgType.SESSION_CLIENT_JOIN_RESULT,
+								data: {
+									clientId,
+									approved: true,
+									updateAvailable: update.updateAvailable,
+									latestCliVersion: update.latest,
+								},
+							});
+						};
+
+						const reject = () => {
+							conn.send({
+								type: MsgType.SESSION_CLIENT_JOIN_RESULT,
+								data: { clientId, approved: false },
+							});
+						};
+
 						const approval = getClientApproval(clientId);
 						if (approval === true) {
 							// Previously approved — auto-allow silently
-							conn.send({
-								type: MsgType.SESSION_CLIENT_JOIN_RESULT,
-								data: { clientId, approved: true },
-							});
+							await approve();
 							return;
 						}
 
 						if (approval === false) {
 							// Previously rejected — silently reject again without notifying
-							conn.send({
-								type: MsgType.SESSION_CLIENT_JOIN_RESULT,
-								data: { clientId, approved: false },
-							});
+							reject();
 							return;
 						}
 
 						// approval === null means that it's a new and unknown client
 
 						if (unknownClientsApproval === "always-allow") {
-							conn.send({
-								type: MsgType.SESSION_CLIENT_JOIN_RESULT,
-								data: { clientId, approved: true },
-							});
+							await approve();
 							return;
 						}
 
 						if (unknownClientsApproval === "always-reject") {
-							conn.send({
-								type: MsgType.SESSION_CLIENT_JOIN_RESULT,
-								data: { clientId, approved: false },
-							});
+							reject();
 							return;
 						}
 
@@ -496,22 +652,13 @@ async function runCli({
 							);
 							if (allow) {
 								upsertClient(msg.data, true);
-								conn.send({
-									type: MsgType.SESSION_CLIENT_JOIN_RESULT,
-									data: { clientId, approved: true },
-								});
+								await approve();
 							} else {
-								conn.send({
-									type: MsgType.SESSION_CLIENT_JOIN_RESULT,
-									data: { clientId, approved: false },
-								});
+								reject();
 							}
 						} else {
 							// Daemon: auto-reject, instruct user to run shellular clients
-							conn.send({
-								type: MsgType.SESSION_CLIENT_JOIN_RESULT,
-								data: { clientId, approved: false },
-							});
+							reject();
 							logger.warn(
 								`Unknown client ${clientId} (${deviceSummary}) tried to connect. Run \`${chalk.cyan("npx shellular clients")}\` to approve.`,
 							);

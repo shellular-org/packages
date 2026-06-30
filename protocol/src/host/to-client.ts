@@ -51,6 +51,7 @@ import {
 	ProjectFileSearchResultMsgSchema,
 	ProjectInfoResultMsgSchema,
 } from "@/filesystem";
+import { HostUpdateResultMsgSchema } from "@/host/update";
 import {
 	HttpResponseDataMsgSchema,
 	HttpResponseEndMsgSchema,
@@ -133,6 +134,7 @@ export const HostToClientSchema = z.discriminatedUnion("type", [
 	AiQuestionReplyAckMsgSchema,
 	AiQuestionRejectAckMsgSchema,
 	AiEventMsgSchema,
+	HostUpdateResultMsgSchema,
 ]);
 
 export type HostToClientMsg = z.infer<typeof HostToClientSchema>;

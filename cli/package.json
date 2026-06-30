@@ -8,7 +8,8 @@
 		"start": "tsx src/main.ts",
 		"build": "tsc && tsup",
 		"prepublishOnly": "pnpm run build",
-		"ci:publish": "pnpm publish --access public"
+		"ci:publish": "pnpm publish --access public",
+		"try-run": "pnpm run build && node dist/main.js"
 	},
 	"publishConfig": {
 		"access": "public"
@@ -43,18 +44,16 @@
 		"nanoid": "^5.1.7",
 		"node-machine-id": "^1.1.12",
 		"node-pty": "^1.2.0-beta.12",
-		"pm2": "^7.0.1",
+		"pm2": "^7.0.3",
 		"qrcode-terminal": "^0.12.0",
 		"semver": "^7.7.4",
 		"ws": "^8.20.0",
 		"zod": "^4.3.6"
 	},
 	"devDependencies": {
-		"@types/better-sqlite3": "^7.6.13",
-		"@types/node": "^22.0.0",
+		"@types/node": "^22.19.17",
 		"@types/qrcode-terminal": "^0.12.2",
 		"@types/semver": "^7.7.1",
-		"@types/vscode": "^1.116.0",
 		"@types/ws": "^8.18.0",
 		"cross-env": "^10.1.0",
 		"tsup": "^8.5.1",
