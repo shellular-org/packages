@@ -41,12 +41,18 @@ function execFileAsync(
 /** True if a process command line is a real agent CLI (not an .app bundle). */
 function isAgentCommand(agent: AiBackend, command: string): boolean {
 	const lower = command.toLowerCase().replace(/\\/g, "/");
-	if (lower.includes(".app/contents/")) return false;
 	const base = lower.slice(lower.lastIndexOf("/") + 1);
 	if (agent === "claude-code") {
+		if (lower.includes(".app/contents/")) return false;
 		return base === "claude" || lower.includes("/claude/versions/");
 	}
 	if (agent === "codex") {
+		if (
+			lower.includes("/codex.app/contents/resources/cua_node/bin/node")
+		) {
+			return true;
+		}
+		if (lower.includes(".app/contents/")) return false;
 		return base === "codex" || /\/codex(\/|$|-)/.test(lower);
 	}
 	return false;
@@ -54,7 +60,7 @@ function isAgentCommand(agent: AiBackend, command: string): boolean {
 
 /** Returns candidate PIDs for the agent via `pgrep -fl`. */
 async function candidatePids(agent: AiBackend): Promise<Map<number, string>> {
-	const pattern = agent === "claude-code" ? "claude" : "codex";
+	const pattern = agent === "claude-code" ? "claude" : "[cC]odex";
 	const result = new Map<number, string>();
 	try {
 		const output = await execFileAsync("pgrep", ["-fl", pattern], 3000);
