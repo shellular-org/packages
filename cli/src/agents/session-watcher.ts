@@ -44,14 +44,14 @@ export type ExternalSessionUpdate = {
 	status: AiSessionRuntimeStatus;
 	updatedAt: number;
 	title?: string;
-	workspacePath?: string;
 	/**
-	 * The directory the session was launched from. Stable for the session's
-	 * lifetime, unlike workspacePath which follows the agent's current cwd as it
-	 * `cd`s around. Used to match a session to its live process (whose cwd is the
-	 * launch dir). Falls back to workspacePath when unknown.
+	 * The directory the session was launched from — the project the agent was
+	 * started in. Derived from the launch record in the log (Claude's first cwd
+	 * line, Codex's session_meta), never the agent's later drifting cwd. This is
+	 * both the session's workspace and what session/load needs to locate it on
+	 * disk, and it's the cwd we match against a live process.
 	 */
-	launchCwd?: string;
+	workspacePath?: string;
 	message?: string;
 	/**
 	 * True when the finished/cancelled status came from an authoritative
@@ -218,13 +218,15 @@ async function parseClaudeSession(
 	const lastTs = parseTimestamp(last?.timestamp) ?? mtime;
 	const recentlyActive = Date.now() - mtime <= ACTIVE_WINDOW_MS;
 
-	// Launch dir = the first cwd recorded in the log (before any `cd`); stable.
-	const launchCwd =
+	// Workspace = the first cwd recorded in the log (the launch dir), never the
+	// last. The last cwd drifts as the agent `cd`s into subdirectories mid-
+	// session, and a drifted path both mislabels the workspace and breaks
+	// session/load (Claude locates the session by the project folder derived
+	// from this cwd).
+	const workspacePath =
 		(typeof first?.cwd === "string" && first.cwd) ||
 		(await readClaudeCwd(filePath, stat.size)) ||
 		undefined;
-	const workspacePath =
-		(typeof last?.cwd === "string" && last.cwd) || launchCwd || undefined;
 
 	const status = recentlyActive
 		? claudeTurnInProgress(last)
@@ -238,7 +240,6 @@ async function parseClaudeSession(
 		status,
 		updatedAt: lastTs,
 		workspacePath: workspacePath || undefined,
-		launchCwd: launchCwd || undefined,
 		message: statusLabel(status) || undefined,
 	};
 }
@@ -425,9 +426,10 @@ async function parseCodexSession(
 		sessionId,
 		status,
 		updatedAt: lastEvent?.timestamp ?? mtime,
+		// session_meta.cwd is the launch dir. Later turn_context lines carry their
+		// own (drifting) cwd, but we deliberately read only session_meta so the
+		// workspace stays pinned to where the session was started.
 		workspacePath,
-		// Codex records the launch cwd in session_meta and doesn't drift it.
-		launchCwd: workspacePath,
 		title,
 		message: statusLabel(status) || undefined,
 		authoritativeFinished:
@@ -690,7 +692,7 @@ export class SessionWatcher {
 				if (age > ACTIVE_WINDOW_MS) {
 					const alive = await isAgentAliveInCwd(
 						update.agentId,
-						update.launchCwd ?? update.workspacePath,
+						update.workspacePath,
 					);
 					if (!alive) return;
 				}
@@ -790,7 +792,7 @@ export class SessionWatcher {
 			) {
 				const alive = await isAgentAliveInCwd(
 					update.agentId,
-					update.launchCwd ?? update.workspacePath,
+					update.workspacePath,
 				);
 				if (alive) {
 					// Process still running — the turn ended but the CLI is open.
@@ -820,7 +822,7 @@ export class SessionWatcher {
 			if (update.status === "finished") {
 				const alive = await isAgentAliveInCwd(
 					update.agentId,
-					update.launchCwd ?? update.workspacePath,
+					update.workspacePath,
 				);
 				if (alive) {
 					this.tracked.set(key, {
