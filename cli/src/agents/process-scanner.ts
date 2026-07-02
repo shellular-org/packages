@@ -6,21 +6,22 @@ import type { AiBackend } from "@shellular/protocol";
 import { logger } from "@/logger";
 
 /**
- * Minimal liveness disambiguation for the session watcher. Used ONLY to
- * distinguish "the agent CLI finished its turn and is idle" from "the user
- * killed / closed the CLI mid-turn" — not as a general surfacing gate (recency
- * handles that). Called infrequently: only when a running/permission session
- * has been silent long enough that we need to check whether the process is
- * still alive.
+ * Liveness detection for the session watcher. Two uses: disambiguating "the CLI
+ * finished its turn and is idle" from "the user killed the CLI mid-turn", and
+ * proactively discovering live-but-idle sessions no file event will re-surface.
  *
- * Approach: `pgrep -f` finds candidate PIDs cheaply (kernel process table,
- * not every open file). Then we read each candidate's cwd and compare it to
- * the session's launch directory. If no candidate matches, the CLI is gone.
+ * Approach: scan the process table with `ps` for the agent's executable, then
+ * read each candidate's cwd and compare it to the session's launch directory.
+ * If no candidate matches, the CLI is gone.
  *
- *   - macOS:   pgrep + `lsof -p <pids> -a -d cwd -Fn`
- *   - Linux:   pgrep + readlink /proc/<pid>/cwd
- *   - Windows: pgrep unavailable; fall back to "assume alive" (session decays
- *              to a sticky finished rather than being removed).
+ *   - macOS:   ps + `lsof -p <pids> -a -d cwd -Fn`
+ *   - Linux:   ps + readlink /proc/<pid>/cwd
+ *   - Windows: per-process cwd unreadable; fall back to "assume alive" (session
+ *              decays to a sticky finished rather than being removed).
+ *
+ * We deliberately avoid `pgrep`: on macOS it can't read the argv of hardened,
+ * signed binaries (which the Claude and Codex CLIs are) and silently drops them
+ * from its output, so the live process would never be found. `ps` lists them.
  */
 
 function execFileAsync(
@@ -42,22 +43,40 @@ function execFileAsync(
 function isAgentCommand(agent: AiBackend, command: string): boolean {
 	const lower = command.toLowerCase().replace(/\\/g, "/");
 	if (lower.includes(".app/contents/")) return false;
-	const base = lower.slice(lower.lastIndexOf("/") + 1);
+	// Match on the executable (argv[0]) only — the rest is arguments like
+	// `--resume <id>`. Taking the basename of the whole command line would fold
+	// the arguments in (e.g. "claude --resume x") and never equal "claude".
+	const argv0 = lower.split(/\s+/, 1)[0] ?? "";
+	const base = argv0.slice(argv0.lastIndexOf("/") + 1);
 	if (agent === "claude-code") {
 		return base === "claude" || lower.includes("/claude/versions/");
 	}
 	if (agent === "codex") {
-		return base === "codex" || /\/codex(\/|$|-)/.test(lower);
+		return base === "codex" || /\/codex(\/|$|-)/.test(argv0);
 	}
 	return false;
 }
 
-/** Returns candidate PIDs for the agent via `pgrep -fl`. */
+/**
+ * Returns candidate PIDs for the agent by scanning the process table.
+ *
+ * We use `ps`, NOT `pgrep`. On macOS, `pgrep -f` matches against a process's
+ * argv read via KERN_PROCARGS2, which fails for hardened/signed binaries — and
+ * the Claude and Codex CLIs are exactly that. Such processes are silently
+ * omitted from pgrep's output entirely (verified: the live `claude` process is
+ * absent from `pgrep -f .` while present in `ps`), which made every liveness
+ * check come back negative and hid live-but-idle sessions. `ps` reads the
+ * process table directly and lists them, so we scan its output ourselves.
+ */
 async function candidatePids(agent: AiBackend): Promise<Map<number, string>> {
-	const pattern = agent === "claude-code" ? "claude" : "codex";
 	const result = new Map<number, string>();
 	try {
-		const output = await execFileAsync("pgrep", ["-fl", pattern], 3000);
+		// -A: all processes; -ww: don't truncate the command column.
+		const output = await execFileAsync(
+			"ps",
+			["-Aww", "-o", "pid=,command="],
+			3000,
+		);
 		for (const line of output.split("\n")) {
 			const trimmed = line.trim();
 			if (!trimmed) continue;
@@ -69,7 +88,7 @@ async function candidatePids(agent: AiBackend): Promise<Map<number, string>> {
 			if (isAgentCommand(agent, command)) result.set(pid, command);
 		}
 	} catch {
-		// pgrep not available or failed — callers fall back to "assume alive".
+		// ps unavailable/failed — callers fall back to "assume alive".
 	}
 	return result;
 }
@@ -108,6 +127,35 @@ async function pidCwdsMacos(pids: number[]): Promise<Map<number, string>> {
 		logger.debug("process-scanner: lsof cwd lookup failed:", err);
 	}
 	return result;
+}
+
+/**
+ * Returns the set of cwds of live agent processes for the given agent. Used by
+ * the watcher to proactively discover sessions whose CLI is still open but whose
+ * log has gone idle (so no file event re-triggers the surfacing check). Empty
+ * when no process is found, or when per-process cwds can't be read on this
+ * platform (Windows) — in which case proactive discovery is simply skipped.
+ */
+export async function liveAgentCwds(agent: AiBackend): Promise<Set<string>> {
+	const candidates = await candidatePids(agent);
+	if (candidates.size === 0) return new Set();
+
+	if (process.platform === "linux") {
+		const cwds = new Set<string>();
+		for (const pid of candidates.keys()) {
+			const cwd = pidCwdLinux(pid);
+			if (cwd) cwds.add(cwd);
+		}
+		return cwds;
+	}
+
+	if (process.platform === "darwin") {
+		const cwds = await pidCwdsMacos([...candidates.keys()]);
+		return new Set(cwds.values());
+	}
+
+	// Windows / unknown: per-process cwd is unavailable.
+	return new Set();
 }
 
 /**

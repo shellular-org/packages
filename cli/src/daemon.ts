@@ -176,20 +176,24 @@ function startDaemonProcess(
 	const script = getDaemonScriptOptions();
 
 	return new Promise((resolve, reject) => {
+		const args = [
+			"__daemon",
+			"--server",
+			options.server,
+			"--dir",
+			path.resolve(options.dir),
+			"--unknown-clients",
+			options.unknownClients,
+		];
+		if (!options.qr) {
+			args.push("--no-qr");
+		}
+
 		pm2.start(
 			{
 				name: config.NAME,
 				script: script.script,
-				args: [
-					"__daemon",
-					"--server",
-					options.server,
-					"--dir",
-					path.resolve(options.dir),
-					"--unknown-clients",
-					options.unknownClients,
-					options.qr ? "--qr" : "--no-qr",
-				],
+				args,
 				cwd: process.cwd(),
 				output: logs.out,
 				error: logs.err,
@@ -508,7 +512,7 @@ function readDaemonOptions(daemon: Pm2Process): Partial<DaemonOptions> {
 		unknownClients: valueAfter("--unknown-clients") as
 			| DaemonOptions["unknownClients"]
 			| undefined,
-		qr: args.includes("--no-qr") ? false : true,
+		qr: !args.includes("--no-qr"),
 	};
 }
 

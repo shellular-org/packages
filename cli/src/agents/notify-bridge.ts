@@ -49,7 +49,7 @@ const NOTIFY_DIR = path.join(config.SHELLULAR_DIR, "notify");
 const HOOKS_DIR = path.join(config.SHELLULAR_DIR, "hooks");
 const HELPER_PATH = path.join(HOOKS_DIR, "shellular-notify.mjs");
 // Bump when the helper script body changes so installs refresh it.
-const HELPER_VERSION = 1;
+const HELPER_VERSION = 2;
 
 /**
  * Standalone helper invoked by an agent hook. It reads the hook's JSON payload
@@ -131,7 +131,12 @@ function fromCodex(payload, fallbackArg) {
 	if (!data || typeof data !== "object") return undefined;
 	// Codex notify currently only emits turn-complete; treat as finished.
 	if (data.type && data.type !== "agent-turn-complete") return undefined;
-	const sessionId = data["session-id"] || data.session_id || data["turn-id"];
+	// Only the real session id may key a runtime state. Codex's payload carries a
+	// per-turn "turn-id" too; using it as a session id would create a second,
+	// duplicate activity entry for the same session (the file watcher already
+	// tracks it under its real id). If no session id is present, drop the event —
+	// the watcher reports Codex "finished" authoritatively via task_complete.
+	const sessionId = data["session-id"] || data.session_id;
 	if (typeof sessionId !== "string") return undefined;
 	return {
 		agentId: "codex",
