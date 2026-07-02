@@ -11,7 +11,7 @@ import path from "node:path";
 import type { AiBackend, AiSessionRuntimeStatus } from "@shellular/protocol";
 
 import { logger } from "@/logger";
-import { isAgentAliveInCwd } from "./process-scanner";
+import { isAgentAliveInCwd, liveAgentCwds } from "./process-scanner";
 
 /**
  * Watches the on-disk session logs that Claude Code and Codex write while the
@@ -214,6 +214,14 @@ async function parseClaudeSession(
 	const first = firstLine ? safeParseJson(firstLine) : undefined;
 	const last = lastLine ? safeParseJson(lastLine) : undefined;
 
+	// Skip empty sessions: a log with no user or assistant turn is a session that
+	// was opened but never used (e.g. the user ran /resume and cancelled, leaving
+	// only mode/permission/command metadata). Surfacing these as "active" is noise
+	// — there is nothing to hand off to.
+	if (!(await claudeHasConversation(filePath, stat.size, last))) {
+		return undefined;
+	}
+
 	const mtime = stat.mtimeMs;
 	const lastTs = parseTimestamp(last?.timestamp) ?? mtime;
 	const recentlyActive = Date.now() - mtime <= ACTIVE_WINDOW_MS;
@@ -242,6 +250,44 @@ async function parseClaudeSession(
 		workspacePath: workspacePath || undefined,
 		message: statusLabel(status) || undefined,
 	};
+}
+
+/**
+ * True if a Claude log contains at least one real conversation turn (a `user` or
+ * `assistant` line). Used to skip sessions that were opened but never used, whose
+ * logs hold only setup metadata (mode/permission/command lines).
+ *
+ * A real session's last line is almost always a user/assistant/tool line, so the
+ * already-read last line short-circuits the common case. Only when it isn't do we
+ * scan the file — and a session with no conversation is tiny, so that scan reads
+ * just a few hundred bytes. We still bound the read so a pathological metadata-
+ * only log can't cost more than a tail.
+ */
+async function claudeHasConversation(
+	filePath: string,
+	size: number,
+	last?: Record<string, unknown>,
+): Promise<boolean> {
+	if (last?.type === "user" || last?.type === "assistant") return true;
+	if (size <= 0) return false;
+	const handle = await open(filePath, "r");
+	try {
+		const length = Math.min(size, TAIL_BYTES * 8);
+		const buffer = Buffer.alloc(length);
+		const { bytesRead } = await handle.read(buffer, 0, length, 0);
+		const text = buffer.subarray(0, bytesRead).toString("utf8");
+		for (const line of text.split("\n")) {
+			if (!line.includes('"user"') && !line.includes('"assistant"')) continue;
+			const parsed = safeParseJson(line);
+			if (parsed?.type === "user" || parsed?.type === "assistant") return true;
+		}
+		return false;
+	} catch {
+		// On a read error, don't hide a possibly-real session.
+		return true;
+	} finally {
+		await handle.close();
+	}
 }
 
 function claudeTurnInProgress(last?: Record<string, unknown>): boolean {
@@ -671,7 +717,15 @@ export class SessionWatcher {
 		this.debounceTimers.set(filePath, timer);
 	}
 
-	private async processFile(target: WatchTarget, filePath: string) {
+	private async processFile(
+		target: WatchTarget,
+		filePath: string,
+		// The cwds of live agent processes, when the caller (proactive discovery)
+		// has already enumerated them. If a session's launch cwd is in this set we
+		// skip the per-file pgrep — this is what lets an idle-but-live session
+		// surface without depending on a file event ever firing again.
+		options: { liveCwds?: Set<string> } = {},
+	) {
 		try {
 			const update = await target.parse(filePath);
 			if (!update?.sessionId) return;
@@ -683,18 +737,23 @@ export class SessionWatcher {
 			//   is actively working or just finished a turn.
 			// - Between ACTIVE_WINDOW_MS and DISCOVERY_WINDOW_MS (2h): the session
 			//   is idle but the CLI might still be open. Surface only if a live
-			//   agent process exists in its launch cwd (cheap pgrep check).
+			//   agent process exists in its launch cwd (known from liveCwds, else a
+			//   cheap pgrep check).
 			// - Beyond DISCOVERY_WINDOW_MS: historical, never surface.
 			// Already-tracked sessions always get processed (new activity).
 			if (!this.tracked.has(key)) {
 				const age = now - update.updatedAt;
 				if (age > DISCOVERY_WINDOW_MS) return;
 				if (age > ACTIVE_WINDOW_MS) {
-					const alive = await isAgentAliveInCwd(
-						update.agentId,
-						update.workspacePath,
-					);
-					if (!alive) return;
+					const knownAlive =
+						!!update.workspacePath &&
+						options.liveCwds?.has(update.workspacePath) === true;
+					if (
+						!knownAlive &&
+						!(await isAgentAliveInCwd(update.agentId, update.workspacePath))
+					) {
+						return;
+					}
 				}
 			}
 
@@ -752,6 +811,11 @@ export class SessionWatcher {
 	private async reconcile() {
 		const now = Date.now();
 		this.discoverFresh();
+		// Liveness-driven discovery: catch live-but-idle sessions that no file
+		// event will re-surface. Best-effort — never let it block reconciliation.
+		await this.discoverLiveSessions().catch((err) => {
+			logger.debug("SessionWatcher: live discovery failed:", err);
+		});
 		for (const [key, session] of [...this.tracked.entries()]) {
 			const { update, authoritativeFinished } = session;
 			// Authoritative finished/cancelled/error: sticky until user dismisses.
@@ -874,6 +938,54 @@ export class SessionWatcher {
 				void this.processFile(target, filePath);
 			}
 		}
+	}
+
+	/**
+	 * Proactively discovers sessions whose CLI is still running but whose log has
+	 * gone idle. discoverFresh only re-parses files whose mtime *changed*, and
+	 * fs.watch only fires on writes — so a session that finished a turn (with the
+	 * CLI left open) is never re-examined and can be missed if its one surfacing
+	 * check didn't happen at the right moment. Here liveness drives discovery
+	 * instead of file writes: we enumerate live agent process cwds once, then
+	 * surface any untracked recent log launched from one of those cwds. Cheap on
+	 * idle machines — the pgrep short-circuits to an empty set when no agent runs.
+	 */
+	private async discoverLiveSessions() {
+		const now = Date.now();
+		for (const target of this.targets) {
+			if (!existsSync(target.root)) continue;
+			const liveCwds = await liveAgentCwds(target.agentId);
+			if (liveCwds.size === 0) continue;
+			for (const filePath of this.recentFiles(target.root, SEED_LIMIT)) {
+				let mtime: number;
+				try {
+					mtime = statSync(filePath).mtimeMs;
+				} catch {
+					continue;
+				}
+				if (now - mtime > DISCOVERY_WINDOW_MS) continue;
+				// Already-surfaced sessions are re-reported cheaply (report() dedupes),
+				// so we only skip re-parsing when nothing about the file changed since
+				// we last surfaced it — the common idle case.
+				if (this.tracked.has(this.trackedKeyForFile(target, filePath)))
+					continue;
+				void this.processFile(target, filePath, { liveCwds });
+			}
+		}
+	}
+
+	/**
+	 * Derives a session's tracked-map key from its log filename without parsing —
+	 * Claude's basename is the sessionId; Codex embeds the uuid in the filename
+	 * (matching session_meta.id). Lets proactive discovery cheaply skip logs it
+	 * has already surfaced. Returns "" when no id can be derived (never tracked).
+	 */
+	private trackedKeyForFile(target: WatchTarget, filePath: string): string {
+		const sessionId =
+			target.agentId === "codex"
+				? codexIdFromFilename(filePath)
+				: path.basename(filePath, ".jsonl");
+		return sessionId ? `${target.agentId}:${sessionId}` : "";
 	}
 
 	/** Returns the most-recently-modified .jsonl files under root. */
