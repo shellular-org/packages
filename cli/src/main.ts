@@ -45,7 +45,6 @@ import {
 import { getKeyBase64, initEncryption } from "@/encryption";
 import { initFilesystemHandler } from "@/filesystem";
 import { logger } from "@/logger";
-import { notify } from "@/notify";
 import { initPortsHandler } from "@/ports";
 import { preStart } from "@/pre-start";
 import { cleanupProxy, initProxyHandler } from "@/proxy";
@@ -635,16 +634,6 @@ async function runCli({
 						// Record as pending/unapproved
 						upsertClient(msg.data, false);
 
-						notify({
-							title: "Shellular Client Approval",
-							body: [
-								`Client ${clientId} (${deviceSummary}) is requesting to connect.`,
-								isDaemon
-									? "Run `npx shellular clients` to manage approvals."
-									: "Approve or reject the connection in the terminal.",
-							].join("\n"),
-						});
-
 						if (!isDaemon) {
 							// Foreground: ask the user interactively
 							const allow = await confirmWrapper(
@@ -680,10 +669,6 @@ async function runCli({
 						true,
 					);
 					const deviceSummary = formatClientDeviceInfo(msg.data);
-					notify({
-						title: "Shellular Client Connected",
-						body: `Client ${msg.data.clientId} connected on ${deviceSummary} (${msg.data.platform}, v${msg.data.appVersion}).`,
-					});
 					agentsManager.notifyClient(msg.data.clientId);
 
 					logger.log(
