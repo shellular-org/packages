@@ -1,5 +1,13 @@
 # shellular
 
+## 0.0.41
+
+### Patch Changes
+
+- d8770d1: feat(git): push, pull, stage, unstage, commit, pull, push
+- Updated dependencies [d8770d1]
+  - @shellular/protocol@0.0.23
+
 ## 0.0.40
 
 ### Patch Changes
