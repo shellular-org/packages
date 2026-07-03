@@ -112,6 +112,10 @@ export const MsgType = {
 	GIT_COMMIT_FILE_DIFF: "git:commit-file-diff",
 	/** Response with a single file's before/after contents in a commit */
 	GIT_COMMIT_FILE_DIFF_RESULT: "git:commit-file-diff:result",
+	/** Request for working tree git operations */
+	GIT_OPERATION: "git:operation",
+	/** Response with working tree git operation results */
+	GIT_OPERATION_RESULT: "git:operation:result",
 	AI_AVAILABILITY: "ai:availability",
 	AI_AVAILABILITY_RESULT: "ai:availability:result",
 	AI_SESSION_LIST: "ai:session:list",
