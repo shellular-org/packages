@@ -48,6 +48,7 @@ import {
 	type GitCommitFileDiffMsg,
 	type GitCommitFilesMsg,
 	type GitLogMsg,
+	type GitOperationMsg,
 	type GitReadMsg,
 	type HostHandshakeMsg,
 	HostHandshakeRespMsgSchema,
@@ -222,6 +223,10 @@ export class Connection extends EventEmitter {
 	on(
 		eventName: typeof MsgType.GIT_COMMIT_FILE_DIFF,
 		listener: (msg: GitCommitFileDiffMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.GIT_OPERATION,
+		listener: (msg: GitOperationMsg) => void,
 	): this;
 	on(
 		eventName: typeof MsgType.PORTS_LIST,
@@ -500,6 +505,10 @@ export class Connection extends EventEmitter {
 		listener: (msg: GitCommitFileDiffMsg) => void,
 	): this;
 	once(
+		eventName: typeof MsgType.GIT_OPERATION,
+		listener: (msg: GitOperationMsg) => void,
+	): this;
+	once(
 		eventName: typeof MsgType.PORTS_LIST,
 		listener: (msg: PortsListMsg) => void,
 	): this;
@@ -596,6 +605,7 @@ export class Connection extends EventEmitter {
 		eventName: typeof MsgType.GIT_COMMIT_FILE_DIFF,
 		msg: GitCommitFileDiffMsg,
 	): boolean;
+	emit(eventName: typeof MsgType.GIT_OPERATION, msg: GitOperationMsg): boolean;
 	emit(eventName: typeof MsgType.PORTS_LIST, msg: PortsListMsg): boolean;
 	emit(eventName: typeof MsgType.PORTS_KILL, msg: PortsKillMsg): boolean;
 	emit(eventName: typeof MsgType.HTTP_REQUEST, msg: HttpRequestMsg): boolean;
