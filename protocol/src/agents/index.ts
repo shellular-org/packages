@@ -1,6 +1,32 @@
 export * from "./acp";
 
+import {
+	zAvailableCommand as AcpAvailableCommandSchema,
+	zContentBlock as AcpContentBlockSchema,
+} from "@agentclientprotocol/sdk/dist/schema/zod.gen.js";
+import { z } from "zod";
+import {
+	AiBackendSchema,
+	AiMessagePartSchema,
+	AiMessageSchema,
+	AiSessionRuntimeStateSchema,
+	AiSessionSchema,
+} from "@/ai-legacy";
+import { MsgType } from "@/base";
+
 // ─── Agent Info (Shellular-specific, not in the ACP spec) ─────────────────────
+
+export const AgentIdSchema = AiBackendSchema;
+export type AgentId = z.infer<typeof AgentIdSchema>;
+export const AGENT_IDS = [
+	"opencode",
+	"codex",
+	"claude-code",
+	"copilot",
+	"cursor",
+	"pi",
+	"hermes",
+];
 
 export const AcpAgentConnectionStates = [
 	"unavailable",
@@ -15,20 +41,6 @@ export type AcpAgentConnectionState = (typeof AcpAgentConnectionStates)[number];
 // These define the app ↔ CLI websocket message shapes that bridge ACP concepts
 // into the existing Shellular protocol. They were separated from ai.ts to keep
 // the old AI system's types isolated from the new ACP integration.
-
-import {
-	zAvailableCommand as AcpAvailableCommandSchema,
-	zContentBlock as AcpContentBlockSchema,
-} from "@agentclientprotocol/sdk/dist/schema/zod.gen.js";
-import { z } from "zod";
-import {
-	AiBackendSchema,
-	AiMessagePartSchema,
-	AiMessageSchema,
-	AiSessionRuntimeStateSchema,
-	AiSessionSchema,
-} from "@/ai-legacy";
-import { MsgType } from "@/base";
 
 export { AcpAvailableCommandSchema, AcpContentBlockSchema };
 
@@ -94,8 +106,8 @@ export type CustomAcpAgentInput = z.infer<typeof CustomAcpAgentInputSchema>;
 
 export const ManagedAcpAgentInfoSchema = z
 	.object({
-		id: AiBackendSchema,
-		backend: AiBackendSchema.optional(),
+		id: AgentIdSchema,
+		backend: AgentIdSchema.optional(),
 		name: z.string(),
 		title: z.string(),
 		version: z.string().optional(),
@@ -204,7 +216,7 @@ export type AcpMessage = {
 };
 
 export const AiSessionSetupSchema = z.object({
-	backend: AiBackendSchema,
+	backend: AgentIdSchema,
 	sessionId: z.string().optional(),
 	cwd: z.string(),
 	additionalDirectories: z.array(z.string()).optional(),
@@ -245,7 +257,7 @@ export const AiSessionDetachMsgSchema = z.object({
 	type: z.literal(MsgType.AI_SESSION_DETACH),
 	clientId: z.string(),
 	data: z.object({
-		backend: AiBackendSchema,
+		backend: AgentIdSchema,
 		sessionId: z.string(),
 	}),
 });
@@ -276,7 +288,7 @@ export const AiSessionCloseMsgSchema = z.object({
 	type: z.literal(MsgType.AI_SESSION_CLOSE),
 	clientId: z.string(),
 	data: z.object({
-		backend: AiBackendSchema,
+		backend: AgentIdSchema,
 		sessionId: z.string(),
 	}),
 });
@@ -287,7 +299,7 @@ export const AiSessionConfigSetMsgSchema = z.object({
 	type: z.literal(MsgType.AI_SESSION_CONFIG_SET),
 	clientId: z.string(),
 	data: z.object({
-		backend: AiBackendSchema,
+		backend: AgentIdSchema,
 		sessionId: z.string(),
 		configId: z.string(),
 		value: z.union([z.string(), z.boolean()]),
@@ -300,7 +312,7 @@ export const AiSessionModeSetMsgSchema = z.object({
 	type: z.literal(MsgType.AI_SESSION_MODE_SET),
 	clientId: z.string(),
 	data: z.object({
-		backend: AiBackendSchema,
+		backend: AgentIdSchema,
 		sessionId: z.string(),
 		modeId: z.string(),
 	}),
@@ -312,7 +324,7 @@ export const AiAttachmentWriteMsgSchema = z.object({
 	type: z.literal(MsgType.AI_ATTACHMENT_WRITE),
 	clientId: z.string(),
 	data: z.object({
-		backend: AiBackendSchema,
+		backend: AgentIdSchema,
 		sessionId: z.string(),
 		name: z.string(),
 		content: z.string(),
@@ -335,7 +347,7 @@ export const AiAgentsEnableSetMsgSchema = z.object({
 	type: z.literal(MsgType.AI_AGENTS_ENABLE_SET),
 	clientId: z.string(),
 	data: z.object({
-		backend: AiBackendSchema,
+		backend: AgentIdSchema,
 		enabled: z.boolean(),
 	}),
 });
@@ -364,7 +376,7 @@ export const AiAgentsCustomRemoveMsgSchema = z.object({
 	type: z.literal(MsgType.AI_AGENTS_CUSTOM_REMOVE),
 	clientId: z.string(),
 	data: z.object({
-		backend: AiBackendSchema,
+		backend: AgentIdSchema,
 	}),
 });
 export type AiAgentsCustomRemoveMsg = z.infer<
@@ -381,7 +393,7 @@ export const AiSessionLoadResultMsgSchema = z.object({
 	error: z.string().optional(),
 	data: z
 		.object({
-			backend: AiBackendSchema,
+			backend: AgentIdSchema,
 			session: AcpAiSessionSchema,
 			state: AiSessionStateSchema.optional(),
 			runtimeState: AiSessionRuntimeStateSchema.optional(),
@@ -448,7 +460,7 @@ export const AiSessionAttachResultMsgSchema = z.object({
 	error: z.string().optional(),
 	data: z
 		.object({
-			backend: AiBackendSchema,
+			backend: AgentIdSchema,
 			session: AcpAiSessionSchema,
 			state: AiSessionStateSchema.optional(),
 			runtimeState: AiSessionRuntimeStateSchema.optional(),
@@ -471,7 +483,7 @@ export const AiSessionDetachResultMsgSchema = z.object({
 	error: z.string().optional(),
 	data: z
 		.object({
-			backend: AiBackendSchema,
+			backend: AgentIdSchema,
 			sessionId: z.string(),
 			ok: z.literal(true),
 		})
@@ -489,7 +501,7 @@ export const AiSessionResumeResultMsgSchema = z.object({
 	error: z.string().optional(),
 	data: z
 		.object({
-			backend: AiBackendSchema,
+			backend: AgentIdSchema,
 			session: AcpAiSessionSchema,
 			state: AiSessionStateSchema.optional(),
 			runtimeState: AiSessionRuntimeStateSchema.optional(),
@@ -508,7 +520,7 @@ export const AiSessionForkResultMsgSchema = z.object({
 	error: z.string().optional(),
 	data: z
 		.object({
-			backend: AiBackendSchema,
+			backend: AgentIdSchema,
 			session: AcpAiSessionSchema,
 			state: AiSessionStateSchema.optional(),
 			runtimeState: AiSessionRuntimeStateSchema.optional(),
@@ -527,7 +539,7 @@ export const AiSessionCloseResultMsgSchema = z.object({
 	error: z.string().optional(),
 	data: z
 		.object({
-			backend: AiBackendSchema,
+			backend: AgentIdSchema,
 			sessionId: z.string(),
 			ok: z.literal(true),
 		})
@@ -545,7 +557,7 @@ export const AiSessionConfigSetResultMsgSchema = z.object({
 	error: z.string().optional(),
 	data: z
 		.object({
-			backend: AiBackendSchema,
+			backend: AgentIdSchema,
 			sessionId: z.string(),
 			configOptions: z.array(AiSessionConfigOptionSchema),
 		})
@@ -563,7 +575,7 @@ export const AiSessionModeSetResultMsgSchema = z.object({
 	error: z.string().optional(),
 	data: z
 		.object({
-			backend: AiBackendSchema,
+			backend: AgentIdSchema,
 			sessionId: z.string(),
 			modeId: z.string(),
 			ok: z.literal(true),
@@ -582,7 +594,7 @@ export const AiAttachmentWriteResultMsgSchema = z.object({
 	error: z.string().optional(),
 	data: z
 		.object({
-			backend: AiBackendSchema,
+			backend: AgentIdSchema,
 			sessionId: z.string(),
 			path: z.string(),
 			name: z.string(),

@@ -5,9 +5,9 @@ import type {
 	AcpAiSession,
 	AcpMessage,
 	AcpPromptRequest,
+	AgentId,
 	AiAttachmentWriteMsg,
 	AiAttachmentWriteResultMsg,
-	AiBackend,
 	AiEvent,
 	AiSession,
 	AiSessionCreateMsg,
@@ -49,7 +49,7 @@ type RuntimePatch = Partial<
 	updatedAt?: number;
 };
 type AttachedSessionSnapshot = {
-	backend: AiBackend;
+	backend: AgentId;
 	session: AcpAiSession;
 	state: AiSessionState;
 	runtimeState?: AiSessionRuntimeState;
@@ -201,7 +201,7 @@ export class AgentsManager {
 	 * the watcher's gate: only sessions surfaced from disk are removed this way,
 	 * never a Shellular-managed runtime.
 	 */
-	private removeExternalRuntimeState(agentId: AiBackend, sessionId: string) {
+	private removeExternalRuntimeState(agentId: AgentId, sessionId: string) {
 		const key = this.sessionKey(agentId, sessionId);
 		if (!this.externalSessions.has(key)) return;
 		this.externalSessions.delete(key);
@@ -210,7 +210,7 @@ export class AgentsManager {
 		this.broadcastActivityRemoved(agentId, sessionId);
 	}
 
-	private broadcastActivityRemoved(agentId: AiBackend, sessionId: string) {
+	private broadcastActivityRemoved(agentId: AgentId, sessionId: string) {
 		const event: AiEvent = {
 			type: "session.removed",
 			properties: { sessionId },
@@ -310,7 +310,7 @@ export class AgentsManager {
 	}
 
 	private broadcastRuntimeState(
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		state: AiSessionRuntimeState,
 		message?: string,
@@ -351,7 +351,7 @@ export class AgentsManager {
 		);
 	}
 
-	setAgentEnabled(agentId: AiBackend, enabled: boolean) {
+	setAgentEnabled(agentId: AgentId, enabled: boolean) {
 		const descriptor = this.descriptors.get(agentId);
 		if (!descriptor) throw new AgentUnavailableError(agentId, "unknown agent");
 		const config = readAgentsConfig();
@@ -415,7 +415,7 @@ export class AgentsManager {
 		return this.getManagedAgentInfo(descriptor);
 	}
 
-	removeCustomAgent(agentId: AiBackend) {
+	removeCustomAgent(agentId: AgentId) {
 		const config = readAgentsConfig();
 		const custom = config.custom.filter((agent) => agent.id !== agentId);
 		if (custom.length === config.custom.length) {
@@ -513,7 +513,7 @@ export class AgentsManager {
 		}
 	}
 
-	listActivities(agentId?: AiBackend) {
+	listActivities(agentId?: AgentId) {
 		const now = Date.now();
 		return [...this.sessionRuntimeStates.values()]
 			.filter((activity) => !agentId || activity.agentId === agentId)
@@ -530,7 +530,7 @@ export class AgentsManager {
 			.sort((a, b) => b.updatedAt - a.updatedAt);
 	}
 
-	dismissActivity(agentId: AiBackend, sessionId: string) {
+	dismissActivity(agentId: AgentId, sessionId: string) {
 		const key = this.sessionKey(agentId, sessionId);
 		this.dismissedSessions.add(key);
 		this.sessionRuntimeStates.delete(key);
@@ -551,7 +551,7 @@ export class AgentsManager {
 		}
 	}
 
-	async connectAgent(clientId: string, agentId: AiBackend) {
+	async connectAgent(clientId: string, agentId: AgentId) {
 		const descriptor = this.descriptors.get(agentId);
 		if (!descriptor) {
 			throw new AgentUnavailableError(agentId, "unknown agent");
@@ -577,7 +577,7 @@ export class AgentsManager {
 
 	private async connectSessionAgent(
 		clientId: string,
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 	) {
 		const key = this.sessionKey(agentId, sessionId);
@@ -601,7 +601,7 @@ export class AgentsManager {
 
 	async listSessions(
 		clientId: string,
-		agentId: AiBackend,
+		agentId: AgentId,
 		cwd?: string,
 		cursor?: string,
 	): Promise<{ sessions: AiSession[]; nextCursor?: string }> {
@@ -615,7 +615,7 @@ export class AgentsManager {
 
 	async createSession(
 		clientId: string,
-		agentId: AiBackend,
+		agentId: AgentId,
 		cwd: string,
 		options: Parameters<ACP["createSession"]>[1] = {},
 	) {
@@ -634,7 +634,7 @@ export class AgentsManager {
 
 	async loadSession(
 		clientId: string,
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		cwd: string,
 		options: Partial<
@@ -656,7 +656,7 @@ export class AgentsManager {
 
 	async attachSession(
 		clientId: string,
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		cwd: string,
 		options: Partial<
@@ -737,14 +737,14 @@ export class AgentsManager {
 		});
 	}
 
-	detachSession(clientId: string, agentId: AiBackend, sessionId: string) {
+	detachSession(clientId: string, agentId: AgentId, sessionId: string) {
 		this.detachSessionClient(agentId, sessionId, clientId);
 		this.scheduleSessionRuntimeCleanup(agentId, sessionId);
 	}
 
 	async resumeSession(
 		clientId: string,
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		cwd: string,
 		options: Partial<
@@ -763,7 +763,7 @@ export class AgentsManager {
 
 	async forkSession(
 		clientId: string,
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		cwd: string,
 		options: Partial<
@@ -781,7 +781,7 @@ export class AgentsManager {
 		return result;
 	}
 
-	async closeSession(clientId: string, agentId: AiBackend, sessionId: string) {
+	async closeSession(clientId: string, agentId: AgentId, sessionId: string) {
 		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
 		const response = await agent.closeSession({ sessionId });
 		this.sessionAgents.delete(sessionId);
@@ -794,7 +794,7 @@ export class AgentsManager {
 
 	async prompt(
 		clientId: string,
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		content: string | unknown[],
 	) {
@@ -843,7 +843,7 @@ export class AgentsManager {
 
 	private async ensureSessionRuntimeLoaded(
 		clientId: string,
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 	) {
 		const key = this.sessionKey(agentId, sessionId);
@@ -866,7 +866,7 @@ export class AgentsManager {
 		if (load) await load;
 	}
 
-	async cancel(clientId: string, agentId: AiBackend, sessionId: string) {
+	async cancel(clientId: string, agentId: AgentId, sessionId: string) {
 		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
 		this.setSessionRuntimeState(agentId, sessionId, {
 			status: "stopping",
@@ -897,7 +897,7 @@ export class AgentsManager {
 
 	async replyPermission(
 		clientId: string,
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		permissionId: string,
 		optionId: string | undefined,
@@ -911,7 +911,7 @@ export class AgentsManager {
 
 	async setSessionConfigOption(
 		clientId: string,
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		configId: string,
 		value: string | boolean,
@@ -926,7 +926,7 @@ export class AgentsManager {
 
 	async setSessionMode(
 		clientId: string,
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		modeId: string,
 	) {
@@ -954,7 +954,7 @@ export class AgentsManager {
 		this.sessionAgents.clear();
 	}
 
-	getAvailableAgents(): AiBackend[] {
+	getAvailableAgents(): AgentId[] {
 		this.reloadDescriptors();
 		return [...this.descriptors.values()].flatMap((descriptor) =>
 			this.isAgentEnabled(descriptor.id) && isAgentAvailable(descriptor)
@@ -964,7 +964,7 @@ export class AgentsManager {
 	}
 
 	private subscribers = new Set<
-		(clientId: string, backend: AiBackend, event: AiEvent) => void
+		(clientId: string, backend: AgentId, event: AiEvent) => void
 	>();
 	private sessionClientIds = new Map<string, string>();
 	private knownClients = new Set<string>();
@@ -974,7 +974,7 @@ export class AgentsManager {
 	private permissionListenerCleanups = new Map<string, () => void>();
 
 	subscribe(
-		emitter: (clientId: string, backend: AiBackend, event: AiEvent) => void,
+		emitter: (clientId: string, backend: AgentId, event: AiEvent) => void,
 	): () => void {
 		this.subscribers.add(emitter);
 		return () => this.subscribers.delete(emitter);
@@ -1749,7 +1749,7 @@ export class AgentsManager {
 			.sort((a, b) => b.updatedAt - a.updatedAt);
 	}
 
-	private emit(clientId: string, backend: AiBackend, event: AiEvent) {
+	private emit(clientId: string, backend: AgentId, event: AiEvent) {
 		const state = this.applyEventRuntimeState(backend, event);
 		const sessionId = event.properties.sessionId;
 		const revision =
@@ -1790,7 +1790,7 @@ export class AgentsManager {
 	}
 
 	private setSessionSnapshot(
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		snapshot: AttachedSessionSnapshot,
 	) {
@@ -1799,7 +1799,7 @@ export class AgentsManager {
 	}
 
 	private upsertSnapshotMessage(
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		message: AcpMessage,
 	) {
@@ -1824,7 +1824,7 @@ export class AgentsManager {
 
 	private refreshSessionSnapshot(
 		clientId: string,
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		cwd: string,
 		options: Partial<
@@ -1900,7 +1900,7 @@ export class AgentsManager {
 	}
 
 	private emitSessionSnapshot(
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		snapshot: {
 			messages: AcpMessage[];
@@ -1923,7 +1923,7 @@ export class AgentsManager {
 		);
 	}
 
-	private createManagedRuntime(agentId: AiBackend): ACP {
+	private createManagedRuntime(agentId: AgentId): ACP {
 		const descriptor = this.descriptors.get(agentId);
 		if (!descriptor) {
 			throw new AgentUnavailableError(agentId, "unknown agent");
@@ -1948,7 +1948,7 @@ export class AgentsManager {
 	}
 
 	private attachSessionClient(
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		clientId: string,
 	) {
@@ -1962,7 +1962,7 @@ export class AgentsManager {
 	}
 
 	private detachSessionClient(
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		clientId: string,
 	) {
@@ -1981,7 +1981,7 @@ export class AgentsManager {
 				this.attachedSessionClients.delete(key);
 				const [agentId, sessionId] = this.parseSessionKey(key);
 				if (agentId && sessionId) {
-					this.scheduleSessionRuntimeCleanup(agentId as AiBackend, sessionId);
+					this.scheduleSessionRuntimeCleanup(agentId as AgentId, sessionId);
 				}
 			}
 		}
@@ -1992,7 +1992,7 @@ export class AgentsManager {
 		return index < 0 ? ["", ""] : [key.slice(0, index), key.slice(index + 1)];
 	}
 
-	private cancelSessionRuntimeCleanup(agentId: AiBackend, sessionId: string) {
+	private cancelSessionRuntimeCleanup(agentId: AgentId, sessionId: string) {
 		const key = this.sessionKey(agentId, sessionId);
 		const timer = this.sessionRuntimeCleanupTimers.get(key);
 		if (!timer) return;
@@ -2000,7 +2000,7 @@ export class AgentsManager {
 		this.sessionRuntimeCleanupTimers.delete(key);
 	}
 
-	private scheduleSessionRuntimeCleanup(agentId: AiBackend, sessionId: string) {
+	private scheduleSessionRuntimeCleanup(agentId: AgentId, sessionId: string) {
 		const key = this.sessionKey(agentId, sessionId);
 		if (!this.sessionRuntimes.has(key)) return;
 		if (this.attachedSessionClients.get(key)?.size) return;
@@ -2016,7 +2016,7 @@ export class AgentsManager {
 		this.sessionRuntimeCleanupTimers.set(key, timer);
 	}
 
-	private destroySessionRuntime(agentId: AiBackend, sessionId: string) {
+	private destroySessionRuntime(agentId: AgentId, sessionId: string) {
 		const key = this.sessionKey(agentId, sessionId);
 		this.cancelSessionRuntimeCleanup(agentId, sessionId);
 		const agent = this.sessionRuntimes.get(key);
@@ -2026,7 +2026,7 @@ export class AgentsManager {
 	}
 
 	private getEventTargetClientIds(
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		fallbackClientId: string,
 	): string[] {
@@ -2037,11 +2037,11 @@ export class AgentsManager {
 		return fallbackClientId ? [fallbackClientId] : [];
 	}
 
-	private getSessionRevision(agentId: AiBackend, sessionId: string) {
+	private getSessionRevision(agentId: AgentId, sessionId: string) {
 		return this.sessionRevisions.get(this.sessionKey(agentId, sessionId)) ?? 0;
 	}
 
-	private nextSessionRevision(agentId: AiBackend, sessionId: string) {
+	private nextSessionRevision(agentId: AgentId, sessionId: string) {
 		const key = this.sessionKey(agentId, sessionId);
 		const next = (this.sessionRevisions.get(key) ?? 0) + 1;
 		this.sessionRevisions.set(key, next);
@@ -2057,7 +2057,7 @@ export class AgentsManager {
 	}
 
 	private setSessionRuntimeState(
-		agentId: AiBackend,
+		agentId: AgentId,
 		sessionId: string,
 		patch: RuntimePatch,
 	): AiSessionRuntimeState {
@@ -2104,7 +2104,7 @@ export class AgentsManager {
 	}
 
 	private rememberSessionRuntimeMetadata(
-		agentId: AiBackend,
+		agentId: AgentId,
 		session: AiSession,
 	): AiSessionRuntimeState | undefined {
 		if (!session.id) return undefined;
@@ -2132,7 +2132,7 @@ export class AgentsManager {
 	}
 
 	private applyEventRuntimeState(
-		agentId: AiBackend,
+		agentId: AgentId,
 		event: AiEvent,
 	): AiSessionRuntimeState | undefined {
 		const sessionId = event.properties.sessionId;
@@ -2267,7 +2267,7 @@ function normalizePromptContent(
 }
 
 function createAgentRuntime(
-	agentId: AiBackend,
+	agentId: AgentId,
 	descriptor: AgentDescriptor,
 ): ACP {
 	switch (agentId) {

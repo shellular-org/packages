@@ -1,9 +1,9 @@
-import type { AiBackend } from "@shellular/protocol";
+import type { AgentId } from "@shellular/protocol";
 import { npxCommand } from "@/config";
 import { commandExists } from "@/utils";
 import type { AgentDescriptor, AgentInfo } from "./types";
 
-export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
+export const BUILTIN_AGENT_DESCRIPTORS: Record<AgentId, AgentDescriptor> = {
 	codex: {
 		id: "codex",
 		name: "Codex",
@@ -18,6 +18,11 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 			Homebrew: {
 				os: ["macos", "linux"],
 				command: "brew install codex",
+			},
+			Shell: {
+				os: ["macos", "linux"],
+				command:
+					"curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
 			},
 		},
 		spawn: {
@@ -168,7 +173,7 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AiBackend, AgentDescriptor> = {
 	hermes: {
 		id: "hermes",
 		name: "Hermes",
-		title: "Hermes (beta)",
+		title: "Hermes",
 		agentExecutable: "hermes",
 		installationCommands: {
 			Shell: {

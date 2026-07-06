@@ -8,7 +8,7 @@ import {
 import { open } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { AiBackend, AiSessionRuntimeStatus } from "@shellular/protocol";
+import type { AgentId, AiSessionRuntimeStatus } from "@shellular/protocol";
 
 import { logger } from "@/logger";
 import { isAgentAliveInCwd, liveAgentCwds } from "./process-scanner";
@@ -39,7 +39,7 @@ import { isAgentAliveInCwd, liveAgentCwds } from "./process-scanner";
  */
 
 export type ExternalSessionUpdate = {
-	agentId: AiBackend;
+	agentId: AgentId;
 	sessionId: string;
 	status: AiSessionRuntimeStatus;
 	updatedAt: number;
@@ -64,7 +64,7 @@ export type ExternalSessionUpdate = {
 };
 
 type WatchTarget = {
-	agentId: AiBackend;
+	agentId: AgentId;
 	/** Root directory to watch recursively. */
 	root: string;
 	/** Parse a single jsonl file into an update, or undefined to skip. */
@@ -620,7 +620,7 @@ export class SessionWatcher {
 
 	constructor(
 		private readonly onUpdate: (update: ExternalSessionUpdate) => void,
-		private readonly onRemove: (agentId: AiBackend, sessionId: string) => void,
+		private readonly onRemove: (agentId: AgentId, sessionId: string) => void,
 	) {}
 
 	start() {

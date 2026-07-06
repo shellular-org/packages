@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { readlinkSync } from "node:fs";
 
-import type { AiBackend } from "@shellular/protocol";
+import type { AgentId } from "@shellular/protocol";
 
 import { logger } from "@/logger";
 
@@ -40,7 +40,7 @@ function execFileAsync(
 }
 
 /** True if a process command line is a real agent CLI (not an .app bundle). */
-function isAgentCommand(agent: AiBackend, command: string): boolean {
+function isAgentCommand(agent: AgentId, command: string): boolean {
 	const lower = command.toLowerCase().replace(/\\/g, "/");
 	if (lower.includes(".app/contents/")) return false;
 	// Match on the executable (argv[0]) only — the rest is arguments like
@@ -68,7 +68,7 @@ function isAgentCommand(agent: AiBackend, command: string): boolean {
  * check come back negative and hid live-but-idle sessions. `ps` reads the
  * process table directly and lists them, so we scan its output ourselves.
  */
-async function candidatePids(agent: AiBackend): Promise<Map<number, string>> {
+async function candidatePids(agent: AgentId): Promise<Map<number, string>> {
 	const result = new Map<number, string>();
 	try {
 		// -A: all processes; -ww: don't truncate the command column.
@@ -136,7 +136,7 @@ async function pidCwdsMacos(pids: number[]): Promise<Map<number, string>> {
  * when no process is found, or when per-process cwds can't be read on this
  * platform (Windows) — in which case proactive discovery is simply skipped.
  */
-export async function liveAgentCwds(agent: AiBackend): Promise<Set<string>> {
+export async function liveAgentCwds(agent: AgentId): Promise<Set<string>> {
 	const candidates = await candidatePids(agent);
 	if (candidates.size === 0) return new Set();
 
@@ -165,7 +165,7 @@ export async function liveAgentCwds(agent: AiBackend): Promise<Set<string>> {
  * finished rather than being wrongly removed).
  */
 export async function isAgentAliveInCwd(
-	agent: AiBackend,
+	agent: AgentId,
 	cwd?: string,
 ): Promise<boolean> {
 	if (!cwd) return true;

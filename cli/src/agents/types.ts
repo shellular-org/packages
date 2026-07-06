@@ -2,7 +2,7 @@ import type * as acp from "@agentclientprotocol/sdk";
 import type {
 	AcpAiSession,
 	AcpMessage,
-	AiBackend,
+	AgentId,
 	AiEvent,
 } from "@shellular/protocol";
 
@@ -23,7 +23,7 @@ export interface AgentSpawnCommand {
 export type SUPPORTED_OS = "windows" | "macos" | "linux" | "all";
 
 export interface AgentDescriptor {
-	id: AiBackend;
+	id: AgentId;
 	name: string;
 	title: string;
 	version?: string;
@@ -61,7 +61,7 @@ export interface AgentDescriptor {
 
 export interface AgentInfo {
 	id: string;
-	backend?: AiBackend;
+	backend?: AgentId;
 	name: string;
 	title: string;
 	version?: string;

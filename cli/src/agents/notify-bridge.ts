@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AiBackend, AiSessionRuntimeStatus } from "@shellular/protocol";
+import type { AgentId, AiSessionRuntimeStatus } from "@shellular/protocol";
 
 import { config } from "@/config";
 import { logger } from "@/logger";
@@ -31,7 +31,7 @@ import { logger } from "@/logger";
  */
 
 export type NotifyEvent = {
-	agentId: AiBackend;
+	agentId: AgentId;
 	sessionId: string;
 	status: AiSessionRuntimeStatus;
 	message?: string;
