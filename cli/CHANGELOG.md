@@ -1,5 +1,13 @@
 # shellular
 
+## 0.0.43
+
+### Patch Changes
+
+- 8e319ac: refactor: rename AiBackend to AgentId, and add codex shell install method
+- Updated dependencies [8e319ac]
+  - @shellular/protocol@0.0.24
+
 ## 0.0.42
 
 ### Patch Changes
