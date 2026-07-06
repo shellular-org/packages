@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 
 import { getBootLockData } from "@/boot-lock";
-import { npxCommand } from "@/config";
+import { config, npxCommand } from "@/config";
 import { logger } from "@/logger";
+import { getUpdateInfo } from "@/update-check";
 import { flatten } from "@/utils";
 
 function runCommand(cmd: string, args: string[], log = false): Promise<void> {
@@ -59,15 +60,27 @@ export async function updateAndStartShellular(): Promise<void> {
 
 	const optionsArgs = flatten(Object.entries(options));
 
+	// Resolve the exact version to install instead of relying on the `@latest`
+	// Pinning to `@<version>` (e.g.`shellular@0.0.41`) is unambiguous
+	// and forces the right copy every time.
+	const { latest } = await getUpdateInfo(config.VERSION);
+	if (!latest) {
+		throw new Error(
+			"Could not resolve the latest Shellular version from npm; aborting update.",
+		);
+	}
+	const spec = `shellular@${latest}`;
+	logger.log(`Resolved latest version: ${latest}`);
+
 	if (isInstalledGlobally) {
-		// update to the latest version globally
-		await runCommand("npm", ["install", "-g", "shellular@latest"], true);
+		// update to the resolved version globally
+		await runCommand("npm", ["install", "-g", spec], true);
 
 		// log the updated version
 		await runCommand("shellular", ["--version"], true);
 
 		// stop the daemon if it's running
-		await runCommand("shellular", ["stop", "--no-delete"], true);
+		await runCommand("shellular", ["stop"], true);
 
 		// start the daemon
 		await runCommand(
@@ -77,15 +90,15 @@ export async function updateAndStartShellular(): Promise<void> {
 		);
 	} else {
 		// stop in case it's running
-		await runCommand(npxCommand, ["shellular", "stop", "--no-delete"], true);
+		await runCommand(npxCommand, ["shellular", "stop"], true);
 
 		// update and log the updated version
-		await runCommand(npxCommand, ["-y", "shellular@latest", "--version"], true);
+		await runCommand(npxCommand, ["-y", spec, "--version"], true);
 
-		// update to the latest version and start the daemon
+		// start the daemon from the resolved (pinned) version
 		await runCommand(
 			npxCommand,
-			["-y", "shellular@latest", "start", "--no-log-stream"],
+			["-y", spec, ...optionsArgs, "start", "--no-log-stream"],
 			true,
 		);
 	}
