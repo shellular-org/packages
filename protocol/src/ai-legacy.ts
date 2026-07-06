@@ -14,15 +14,6 @@ const _AiBackendSchema = z.enum([
 ]);
 export const AiBackendSchema = z.union([_AiBackendSchema, z.string()]);
 export type AiBackend = z.infer<typeof _AiBackendSchema> | (string & {});
-export const AI_BACKENDS: AiBackend[] = [
-	"opencode",
-	"codex",
-	"claude-code",
-	"copilot",
-	"cursor",
-	"pi",
-	"hermes",
-];
 
 // ─── Session ──────────────────────────────────────────────────────────────────
 
