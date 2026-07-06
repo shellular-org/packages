@@ -1,5 +1,11 @@
 # shellular
 
+## 0.0.42
+
+### Patch Changes
+
+- fcd0008: fix(update): resolve and pin Shellular version during update process
+
 ## 0.0.41
 
 ### Patch Changes
