@@ -19,6 +19,11 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AgentId, AgentDescriptor> = {
 				os: ["macos", "linux"],
 				command: "brew install codex",
 			},
+			Shell: {
+				os: ["macos", "linux"],
+				command:
+					"curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+			},
 		},
 		spawn: {
 			command: npxCommand,
