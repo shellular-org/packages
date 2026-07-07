@@ -121,7 +121,7 @@ async function pickSession(agent: ACP): Promise<acp.SessionInfo> {
 	console.log("\nListing sessions...");
 	// Some agents (e.g. Grok Build) scope their session list to the working
 	// directory, so pass the cwd we were launched from rather than {}.
-	const sessions = await agent.listSessions({ cwd: process.cwd() });
+	const sessions = await agent.listSessions({});
 
 	if (sessions.length === 0) {
 		throw new Error("No sessions found.");
