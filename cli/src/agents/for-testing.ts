@@ -6,6 +6,7 @@ import type { ACP } from "./base";
 import { ClaudeCode } from "./claude-code";
 import { Codex } from "./codex";
 import { Cursor } from "./cursor";
+import { GrokBuild } from "./grok-build";
 import { Hermes } from "./hermes";
 import { OpenCode } from "./opencode";
 import { Pi } from "./pi";
@@ -73,7 +74,7 @@ function renderUpdate(notification: acp.SessionNotification) {
 async function pickAgent(): Promise<ACP> {
 	while (true) {
 		const choice = await ask(
-			"Choose agent (1=Codex, 2=OpenCode, 3=ClaudeCode, 4=Cursor, 5=Pi, 6=Hermes): ",
+			"Choose agent (1=Codex, 2=OpenCode, 3=ClaudeCode, 4=Cursor, 5=Pi, 6=Hermes, 7=GrokBuild): ",
 		);
 		if (choice === "1") {
 			const agent = Codex.create();
@@ -105,6 +106,11 @@ async function pickAgent(): Promise<ACP> {
 			if (!agent) throw new Error("Hermes not found. Is it installed?");
 			return agent;
 		}
+		if (choice === "7") {
+			const agent = GrokBuild.create();
+			if (!agent) throw new Error("GrokBuild not found. Is it installed?");
+			return agent;
+		}
 		console.log("Invalid choice, try again.");
 	}
 }
@@ -113,7 +119,9 @@ async function pickAgent(): Promise<ACP> {
 
 async function pickSession(agent: ACP): Promise<acp.SessionInfo> {
 	console.log("\nListing sessions...");
-	const sessions = await agent.listSessions({});
+	// Some agents (e.g. Grok Build) scope their session list to the working
+	// directory, so pass the cwd we were launched from rather than {}.
+	const sessions = await agent.listSessions({ cwd: process.cwd() });
 
 	if (sessions.length === 0) {
 		throw new Error("No sessions found.");
