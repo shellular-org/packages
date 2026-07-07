@@ -32,6 +32,11 @@ const _config = {
 	// the daemon log glob and so `logs --self-updates` is just a dir listing.
 	SELF_UPDATE_LOGS_DIR: path.join(SHELLULAR_DIR, "logs", "self-updates"),
 	CLIENTS_FILE: path.join(SHELLULAR_DIR, "clients.json"),
+	// One JSON file per persisted terminal session (buffer/cwd/title), restored
+	// across CLI restarts. A directory (not a single file) so each terminal's
+	// debounced snapshot writes touch only its own file and removing a killed
+	// terminal is a single unlink.
+	TERMINALS_DIR: path.join(SHELLULAR_DIR, "terminals"),
 	MACHINE_ID: machineId,
 	PLATFORM: process.platform,
 	USERNAME: username,
@@ -51,6 +56,10 @@ export function ensureConfig() {
 
 	if (!fs.existsSync(_config.SELF_UPDATE_LOGS_DIR)) {
 		fs.mkdirSync(_config.SELF_UPDATE_LOGS_DIR, { recursive: true });
+	}
+
+	if (!fs.existsSync(_config.TERMINALS_DIR)) {
+		fs.mkdirSync(_config.TERMINALS_DIR, { recursive: true });
 	}
 }
 
