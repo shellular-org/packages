@@ -192,6 +192,26 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AgentId, AgentDescriptor> = {
 			args: ["acp"],
 		},
 	},
+	"grok-build": {
+		id: "grok-build",
+		name: "Grok Build",
+		title: "Grok Build",
+		agentExecutable: "grok",
+		installationCommands: {
+			Shell: {
+				os: ["macos", "linux"],
+				command: "curl -fsSL https://x.ai/cli/install.sh | bash",
+			},
+			PowerShell: {
+				os: ["windows"],
+				command: "irm https://x.ai/cli/install.ps1 | iex",
+			},
+		},
+		spawn: {
+			command: "grok",
+			args: ["agent", "stdio"],
+		},
+	},
 };
 
 export function isAgentAvailable(agent: AgentDescriptor): boolean {

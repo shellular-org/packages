@@ -27,6 +27,8 @@ import { Codex } from "./codex";
 import { Copilot } from "./copilot";
 import { Cursor } from "./cursor";
 import { AgentUnavailableError } from "./errors";
+import { GrokActiveSessionsWatcher } from "./grok-active-sessions-watcher";
+import { GrokBuild } from "./grok-build";
 import { Hermes } from "./hermes";
 import { NotifyBridge, type NotifyEvent } from "./notify-bridge";
 import { OpenCode } from "./opencode";
@@ -171,6 +173,7 @@ export class AgentsManager {
 	>();
 	private sessionAgents = new Map<string, string>();
 	private sessionWatcher?: SessionWatcher;
+	private grokActiveSessionsWatcher?: GrokActiveSessionsWatcher;
 	private notifyBridge?: NotifyBridge;
 	// Sessions whose runtime state was sourced from on-disk watching rather than
 	// a Shellular-managed runtime. Used so the recency/expiry rules can treat
@@ -183,6 +186,7 @@ export class AgentsManager {
 	constructor() {
 		this.reloadDescriptors();
 		this.startSessionWatcher();
+		this.startGrokActiveSessionsWatcher();
 		this.startNotifyBridge();
 	}
 
@@ -194,6 +198,33 @@ export class AgentsManager {
 				this.removeExternalRuntimeState(agentId, sessionId),
 		);
 		this.sessionWatcher.start();
+	}
+
+	/**
+	 * Watches Grok Build's `active_sessions.json`, which Grok maintains listing the
+	 * sessions currently open in a `grok` CLI. Grok gives us presence directly (an
+	 * entry means the CLI is open, its removal means it closed), so unlike the
+	 * jsonl-tailing SessionWatcher this just surfaces each active session and
+	 * removes it when it disappears. We report it as a persistent external session
+	 * (it stays on the home view until dismissed or the CLI closes); a Grok ACP
+	 * notification via the notify bridge upgrades it to running/permission when the
+	 * session is attached.
+	 */
+	private startGrokActiveSessionsWatcher() {
+		if (this.grokActiveSessionsWatcher) return;
+		this.grokActiveSessionsWatcher = new GrokActiveSessionsWatcher(
+			(session) =>
+				this.applyExternalRuntimeState({
+					agentId: "grok-build",
+					sessionId: session.sessionId,
+					status: "finished",
+					updatedAt: session.updatedAt,
+					workspacePath: session.cwd,
+				}),
+			(agentId, sessionId) =>
+				this.removeExternalRuntimeState(agentId, sessionId),
+		);
+		this.grokActiveSessionsWatcher.start();
 	}
 
 	/**
@@ -937,6 +968,8 @@ export class AgentsManager {
 	destroy() {
 		this.sessionWatcher?.destroy();
 		this.sessionWatcher = undefined;
+		this.grokActiveSessionsWatcher?.destroy();
+		this.grokActiveSessionsWatcher = undefined;
 		this.notifyBridge?.destroy();
 		this.notifyBridge = undefined;
 		for (const agent of this.agents.values()) {
@@ -2285,6 +2318,8 @@ function createAgentRuntime(
 			return Cursor.create();
 		case "hermes":
 			return Hermes.create();
+		case "grok-build":
+			return GrokBuild.create();
 		default:
 			if (descriptor.source === "custom") {
 				return new ACP(descriptor);

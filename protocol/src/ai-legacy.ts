@@ -11,6 +11,7 @@ const _AiBackendSchema = z.enum([
 	"cursor",
 	"pi",
 	"hermes",
+	"grok-build",
 ]);
 export const AiBackendSchema = z.union([_AiBackendSchema, z.string()]);
 export type AiBackend = z.infer<typeof _AiBackendSchema> | (string & {});

@@ -26,6 +26,7 @@ export const AGENT_IDS = [
 	"cursor",
 	"pi",
 	"hermes",
+	"grok-build",
 ];
 
 export const AcpAgentConnectionStates = [
