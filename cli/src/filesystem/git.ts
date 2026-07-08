@@ -1,6 +1,4 @@
-import { execFile } from "node:child_process";
 import path from "node:path";
-import { promisify } from "node:util";
 
 import type {
 	GitBranch,
@@ -13,7 +11,8 @@ import type {
 	GitWorkingTreeStatus,
 } from "@shellular/protocol";
 
-const execFileAsync = promisify(execFile);
+import { execFileAsync } from "@/utils";
+
 const gitRootCache = new Map<string, string>();
 const MAX_GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 

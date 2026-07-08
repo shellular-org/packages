@@ -28,9 +28,9 @@ const PersistedTerminalSchema = z.object({
 
 export type PersistedTerminal = z.infer<typeof PersistedTerminalSchema>;
 
-// Map a terminalId to a safe filename. terminalId is `${clientId}-term-N`; the
-// clientId is arbitrary, so replace anything outside a conservative set. The raw
-// ids are stored inside the JSON, so restore never parses the filename back.
+// Map a terminalId to a safe filename. terminalId is `${clientId}-term-${nanoid}`;
+// the clientId is arbitrary, so replace anything outside a conservative set. The
+// raw ids are stored inside the JSON, so restore never parses the filename back.
 function fileNameFor(terminalId: string): string {
 	const safe = terminalId.replace(/[^a-zA-Z0-9._-]/g, "_");
 	return `${safe}.json`;

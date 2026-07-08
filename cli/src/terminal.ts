@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -14,16 +13,16 @@ import XtermHeadless, { type Terminal } from "@xterm/headless";
 import { nanoid } from "nanoid";
 import nodePty from "node-pty";
 
-import { config } from "./config";
-import type { Connection } from "./connection";
-import { logger } from "./logger";
+import { config } from "@/config";
+import type { Connection } from "@/connection";
+import { logger } from "@/logger";
+import { execFileAsync, mapGetOrInsert } from "@/utils";
 import {
 	type PersistedTerminal,
 	readPersistedTerminals,
 	removeTerminal as removePersistedTerminal,
 	writeTerminal,
 } from "./terminal-store";
-import { mapGetOrInsert } from "./utils";
 
 const { Terminal: HeadlessTerminal } = XtermHeadless;
 
@@ -33,13 +32,28 @@ interface TerminalEntry {
 	clientId: string;
 	headless: Terminal;
 	serializer: SerializeAddon;
-	/** Directory the terminal was spawned in; the live cwd is read from the OS. */
+	/**
+	 * Last-known working directory. Kept current by OSC 7 sequences the shell
+	 * emits on each prompt (the accurate, push-based path — see wireCwdDetection),
+	 * falling back to a periodic OS-level pid probe for shells without shell
+	 * integration.
+	 */
 	cwd: string;
+	/**
+	 * True once the shell has reported its cwd via OSC 7. While true we trust the
+	 * pushed value and skip the pid probe entirely, matching VS Code's split
+	 * between CwdDetection (OSC, authoritative) and NaiveCwdDetection (poll).
+	 */
+	cwdFromOsc: boolean;
+	/** Epoch ms of the last pid probe; throttles the fallback OS call. */
+	cwdCheckedAt: number;
 	title?: string;
 	cols: number;
 	rows: number;
 	/** Debounce timer for persisting buffer snapshots (see scheduleSnapshot). */
 	persistTimer?: ReturnType<typeof setTimeout>;
+	/** Disposes the OSC 7 handler when the terminal exits. */
+	oscDisposable?: { dispose(): void };
 }
 
 const shell =
@@ -106,25 +120,41 @@ const PERSIST_DEBOUNCE_MS = 1000;
 
 // Printed after the restored scrollback so the user can see where the previous
 // (now-dead) shell ended and the freshly-spawned one begins, like VS Code.
-const RESTORE_MARKER =
-	"\r\n\x1b[2m─── History restored (shell restarted) ───\x1b[0m\r\n";
+const RESTORE_MARKER_TEXT = "─── History restored ───";
+const RESTORE_MARKER = `\r\n\x1b[2m${RESTORE_MARKER_TEXT}\x1b[0m\r\n`;
 
-// Neither node-pty nor xterm-headless exposes the shell's cwd, so read it from
-// the OS via the pid: the /proc symlink on Linux, `lsof` on macOS. Returns null
-// on failure so callers fall back to the last-known cwd.
-function readProcessCwd(pid: number): string | null {
+// cwd detection, VS Code style. Two paths, in order of preference:
+//
+//   1. OSC 7 (wireCwdDetection) — the shell pushes its cwd on every prompt via
+//      an escape sequence in the PTY stream. Accurate and event-driven; this is
+//      what VS Code calls CwdDetection. Active whenever the user's shell has
+//      shell integration (the default zsh/bash on modern macOS, fish, etc.).
+//   2. Pid probe (readProcessCwd) — ask the OS for the shell process's cwd. Used
+//      only as a fallback for shells that emit no OSC 7. This is VS Code's
+//      NaiveCwdDetection. We run it OUT OF BAND (fire-and-forget, throttled) so a
+//      slow probe never blocks the event loop — VS Code's own fallback is a
+//      non-blocking syscall for the same reason.
+
+// Reads the shell process's cwd from the OS by pid: the /proc symlink on Linux,
+// `lsof` on macOS. Async so the macOS subprocess never blocks the event loop
+// (freezing every terminal, sysmon, and the WS connection). Returns null on
+// failure so callers keep the last-known cwd.
+async function readProcessCwd(pid: number): Promise<string | null> {
 	try {
 		if (process.platform === "linux") {
-			return fs.readlinkSync(`/proc/${pid}/cwd`);
+			return await fs.promises.readlink(`/proc/${pid}/cwd`);
 		}
 		if (process.platform === "darwin") {
 			// `lsof -a -d cwd -Fn -p <pid>` prints the cwd on a line prefixed with "n".
-			const out = execFileSync(
-				"lsof",
-				["-a", "-d", "cwd", "-Fn", "-p", String(pid)],
-				{ encoding: "utf-8" },
-			);
-			for (const line of out.split("\n")) {
+			const { stdout } = await execFileAsync("lsof", [
+				"-a",
+				"-d",
+				"cwd",
+				"-Fn",
+				"-p",
+				String(pid),
+			]);
+			for (const line of stdout.split("\n")) {
 				if (line.startsWith("n")) return line.slice(1);
 			}
 		}
@@ -134,12 +164,64 @@ function readProcessCwd(pid: number): string | null {
 	return null;
 }
 
+// Parses the path out of an OSC 7 payload: `file://<host>/absolute/path`. The
+// host segment (usually the local hostname or empty) is ignored; a bare path
+// without the file:// scheme is accepted too, as some shells emit it. Returns
+// null if it isn't a usable absolute path.
+function parseOsc7Cwd(payload: string): string | null {
+	try {
+		if (payload.startsWith("file://")) {
+			const cwd = decodeURIComponent(new URL(payload).pathname);
+			return cwd || null;
+		}
+		if (payload.startsWith("/")) return payload;
+	} catch {
+		// Malformed URL — ignore.
+	}
+	return null;
+}
+
+// Registers the OSC 7 handler that keeps entry.cwd current from the shell's own
+// prompt reports (the preferred, push-based path). Marks cwdFromOsc so the pid
+// probe can bow out. Returns false so the sequence still passes to other
+// handlers/the app.
+function wireCwdDetection(entry: TerminalEntry): void {
+	entry.oscDisposable = entry.headless.parser.registerOscHandler(7, (data) => {
+		const cwd = parseOsc7Cwd(data);
+		if (cwd) {
+			entry.cwd = cwd;
+			entry.cwdFromOsc = true;
+		}
+		return false;
+	});
+}
+
+// Minimum spacing between pid probes. Only used for shells without OSC 7; a
+// slightly stale cwd only matters at restore time (rare), so throttling is safe.
+const CWD_PROBE_INTERVAL_MS = 5000;
+
+// Fire-and-forget refresh of entry.cwd via the pid probe, for shells that don't
+// push cwd over OSC 7. Throttled and non-blocking: it updates entry.cwd for the
+// NEXT snapshot rather than the current one, so the persist path never awaits a
+// subprocess. No-op once OSC 7 has ever reported (we trust the pushed value).
+function refreshCwdIfStale(entry: TerminalEntry): void {
+	if (entry.cwdFromOsc) return;
+	const now = Date.now();
+	if (now - entry.cwdCheckedAt < CWD_PROBE_INTERVAL_MS) return;
+	entry.cwdCheckedAt = now;
+	void readProcessCwd(entry.pty.pid).then((liveCwd) => {
+		// A late OSC 7 report may have arrived while the probe ran; don't clobber it.
+		if (liveCwd && !entry.cwdFromOsc) entry.cwd = liveCwd;
+	});
+}
+
 function toPersisted(
 	entry: TerminalEntry,
 	terminalId: string,
 ): PersistedTerminal {
-	const liveCwd = readProcessCwd(entry.pty.pid);
-	if (liveCwd) entry.cwd = liveCwd;
+	// Kick off a background cwd refresh for the fallback path; the current cwd
+	// (from OSC 7 or a prior probe) is what gets written now.
+	refreshCwdIfStale(entry);
 	return {
 		clientId: entry.clientId,
 		terminalId,
@@ -213,6 +295,9 @@ function createTerminal({
 		headless: headless,
 		serializer,
 		cwd,
+		cwdFromOsc: false,
+		// 0 forces a live-cwd probe on the first persist (create/restore/wire).
+		cwdCheckedAt: 0,
 		cols,
 		rows,
 	};
@@ -221,19 +306,27 @@ function createTerminal({
 // Registers the PTY/headless event handlers for a terminal and inserts it into
 // the in-memory map. Shared by fresh creates and restored terminals so both
 // stream output, track titles, persist snapshots, and clean up on exit
-// identically. `emitCreated`, when set, is called once the entry is wired (used
-// by create to send TERMINAL_CREATE_RESULT after registration).
+// identically.
 function wireTerminal(
 	entry: TerminalEntry,
 	terminalId: string,
 	clientTerminals: Map<string, TerminalEntry>,
+	// Restored terminals persist their own (marker-free) snapshot before wiring
+	// and pass true here to skip this immediate re-persist. Skipping avoids baking
+	// the presentational RESTORE_MARKER into the file, where it would otherwise
+	// stack a fresh marker onto the buffer on every subsequent restart.
+	skipInitialPersist = false,
 ): void {
 	const { clientId } = entry;
 	clientTerminals.set(terminalId, entry);
 
+	// Start listening for the shell's OSC 7 cwd reports (preferred path). Wired
+	// before the pty streams so the first prompt's report is captured.
+	wireCwdDetection(entry);
+
 	// A terminal that exists is a terminal to restore: persist it immediately so
 	// even a crash before the first snapshot debounce still brings it back.
-	persistTerminal(entry, terminalId);
+	if (!skipInitialPersist) persistTerminal(entry, terminalId);
 
 	entry.headless.onTitleChange((title) => {
 		entry.title = title;
@@ -260,6 +353,7 @@ function wireTerminal(
 
 	entry.pty.onExit(({ exitCode }) => {
 		if (entry.persistTimer) clearTimeout(entry.persistTimer);
+		entry.oscDisposable?.dispose();
 		clientTerminals.delete(terminalId);
 		entry.headless.dispose();
 		// The shell exited on its own — the user is done with it, so drop the
@@ -424,6 +518,7 @@ export function initTerminalHandler(conn: Connection, workDir: string) {
 		const entry = clientTerminals.get(msg.data.terminalId);
 		if (entry) {
 			if (entry.persistTimer) clearTimeout(entry.persistTimer);
+			entry.oscDisposable?.dispose();
 			entry.pty.kill();
 			entry.headless.dispose();
 			clientTerminals.delete(msg.data.terminalId);
@@ -483,16 +578,21 @@ export function restoreTerminals(workDir: string): void {
 			continue;
 		}
 
-		// Seed the headless buffer with the saved scrollback, then a marker so the
-		// user sees where the previous shell ended. This is written only to the
-		// headless mirror (not the live pty) so it becomes scrollback the app
-		// receives on attach; the fresh shell's own prompt follows underneath.
-		if (saved.snapshot) entry.headless.write(saved.snapshot);
-		entry.headless.write(RESTORE_MARKER);
 		entry.title = saved.title;
-
 		const clientTerminals = getClientTerminals(saved.clientId);
-		wireTerminal(entry, saved.terminalId, clientTerminals);
+
+		// Seed the headless buffer with the saved scrollback, then a marker so the
+		// user sees where the previous shell ended. Both are written only to the
+		// headless mirror (not the live pty) so they become scrollback the app
+		// receives on attach; the fresh shell's own prompt follows underneath.
+		if (saved.snapshot) {
+			entry.headless.write(saved.snapshot);
+		}
+		entry.headless.write(RESTORE_MARKER);
+
+		// skipInitialPersist: the snapshot we'd write here still holds the freshly
+		// injected marker; leave persistence to the first real PTY output.
+		wireTerminal(entry, saved.terminalId, clientTerminals, true);
 
 		restored++;
 	}
