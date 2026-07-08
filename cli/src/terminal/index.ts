@@ -22,7 +22,7 @@ import {
 	readPersistedTerminals,
 	removeTerminal as removePersistedTerminal,
 	writeTerminal,
-} from "./terminal-store";
+} from "./persistance";
 
 const { Terminal: HeadlessTerminal } = XtermHeadless;
 
