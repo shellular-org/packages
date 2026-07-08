@@ -1,5 +1,11 @@
 # @shellular/protocol
 
+## 0.0.25
+
+### Patch Changes
+
+- 0c27774: feat: add support for Grok Build
+
 ## 0.0.24
 
 ### Patch Changes

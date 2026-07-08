@@ -1,5 +1,14 @@
 # shellular
 
+## 0.0.44
+
+### Patch Changes
+
+- 0c27774: feat: add support for Grok Build
+- 9c8a975: feat(terminal): implement terminal session restoration across CLI restarts
+- Updated dependencies [0c27774]
+  - @shellular/protocol@0.0.25
+
 ## 0.0.43
 
 ### Patch Changes
