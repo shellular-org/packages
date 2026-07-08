@@ -1,6 +1,10 @@
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import process from "node:process";
+import { promisify } from "node:util";
+
+/** Promise-returning execFile; resolves `{ stdout, stderr }`, rejects on nonzero exit. */
+export const execFileAsync = promisify(execFile);
 
 export function mapGetOrInsert<K, V>(
 	map: Map<K, V>,
