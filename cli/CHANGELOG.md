@@ -1,5 +1,13 @@
 # shellular
 
+## 0.0.45
+
+### Patch Changes
+
+- a46e941: feat(users): implement account allowlist management and user identity handling
+- Updated dependencies [a46e941]
+  - @shellular/protocol@0.0.26
+
 ## 0.0.44
 
 ### Patch Changes
