@@ -32,6 +32,12 @@ const _config = {
 	// the daemon log glob and so `logs --self-updates` is just a dir listing.
 	SELF_UPDATE_LOGS_DIR: path.join(SHELLULAR_DIR, "logs", "self-updates"),
 	CLIENTS_FILE: path.join(SHELLULAR_DIR, "clients.json"),
+	// Allowlist of accounts permitted to connect, keyed by account email OR
+	// stable user ID. When non-empty it gates every join *before* the per-device
+	// approvals in CLIENTS_FILE, so revoking an entry locks out all of that
+	// person's devices at once. A user ID entry matches the account regardless of
+	// which linked provider email a given device happened to sign in with.
+	USERS_FILE: path.join(SHELLULAR_DIR, "users.json"),
 	// One JSON file per persisted terminal session (buffer/cwd/title), restored
 	// across CLI restarts. A directory (not a single file) so each terminal's
 	// debounced snapshot writes touch only its own file and removing a killed
