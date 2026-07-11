@@ -65,8 +65,25 @@ export const SessionErrorMsgSchema = z.object({
 });
 export type SessionErrorMsg = z.infer<typeof SessionErrorMsgSchema>;
 
+/**
+ * The authenticated account behind a connecting client. Established by the
+ * server from the caller's session — never from client-supplied input — so the
+ * CLI host can trust it when deciding whether to approve a connection.
+ */
+export const ClientUserInfoSchema = z.object({
+	id: z.string().min(1),
+	email: z.email(),
+});
+export type ClientUserInfo = z.infer<typeof ClientUserInfoSchema>;
+
 export const ClientInfoSchema = z.object({
 	hostId: z.string().min(7).max(32),
+	/**
+	 * Absent for clients that connected over the legacy unauthenticated
+	 * websocket path (pre-auth CLI/app builds). Consumers must tolerate its
+	 * absence rather than assume an identity.
+	 */
+	user: ClientUserInfoSchema.optional(),
 	clientId: z.string().min(7).max(32),
 	appVersion: z.string().min(1).max(32),
 	platform: z.enum(["android", "browser", "ios"]),
@@ -78,6 +95,26 @@ export const ClientInfoSchema = z.object({
 	deviceManufacturer: z.string().min(1).max(128),
 });
 export type ClientInfo = z.infer<typeof ClientInfoSchema>;
+
+/**
+ * What a client is allowed to *ask* for. `user` is omitted deliberately: it is
+ * an assertion of identity, and the server derives it from the authenticated
+ * session. Parsing request bodies with this schema means a spoofed `user` in
+ * the payload is dropped before it can reach a token or the CLI's approval
+ * prompt.
+ */
+export const ClientInfoRequestSchema = ClientInfoSchema.omit({ user: true });
+export type ClientInfoRequest = z.infer<typeof ClientInfoRequestSchema>;
+
+/**
+ * Client info for an authenticated connection, where `user` is guaranteed
+ * present. Use this to type values downstream of the server's identity
+ * injection so the compiler enforces that the lookup happened.
+ */
+export const AuthedClientInfoSchema = ClientInfoSchema.extend({
+	user: ClientUserInfoSchema,
+});
+export type AuthedClientInfo = z.infer<typeof AuthedClientInfoSchema>;
 
 export const SessionClientJoinedMsgSchema = z.object({
 	id: z.string().optional(),

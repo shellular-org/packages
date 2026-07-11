@@ -1,6 +1,6 @@
 import fs from "node:fs";
 
-import type { ClientInfo } from "@shellular/protocol";
+import { type ClientInfo, ClientUserInfoSchema } from "@shellular/protocol";
 import { z } from "zod";
 
 import { config } from "@/config";
@@ -9,6 +9,9 @@ import { logger } from "@/logger";
 const KnownClientSchema = z.object({
 	clientId: z.string(),
 	hostId: z.string().optional(),
+	// Optional so clients recorded before this field existed still parse, and so
+	// legacy unauthenticated clients (which never carry a user) round-trip.
+	user: ClientUserInfoSchema.optional(),
 	platform: z.string(),
 	appVersion: z.string(),
 	deviceModel: z.string().optional(),

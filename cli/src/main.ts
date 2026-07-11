@@ -6,6 +6,7 @@ import path from "node:path";
 import { checkbox, confirm } from "@inquirer/prompts";
 import {
 	type AiAvailabilityResultMsg,
+	type ClientUserInfo,
 	type HostInfo,
 	type HostUpdateMsg,
 	MsgType,
@@ -54,6 +55,15 @@ import { initTerminalHandler, restoreTerminals } from "@/terminal";
 import { checkForUpdate, getUpdateInfo } from "@/update-check";
 import { showSelfUpdateLogs } from "@/update-logs";
 import { runSelfUpdate } from "@/update-runner";
+import {
+	addAllowedUser,
+	checkUserGate,
+	classifyEntry,
+	isUserAllowlistActive,
+	normalizeEntry,
+	readAllowedUsers,
+	removeAllowedUser,
+} from "@/users";
 import { updateAndStartShellular } from "./update-and-start";
 
 const DEFAULT_SERVER_URL = "wss://api.shellular.dev";
@@ -221,6 +231,97 @@ function createProgram(): Command {
 			});
 		});
 
+	const users = program
+		.command("users")
+		.description(
+			"Manage the account allowlist. While it is non-empty, only clients signed in with a listed account may connect, and unauthenticated clients are always rejected. Each entry is either an account email or a stable user ID.",
+		);
+
+	users
+		.command("list", { isDefault: true })
+		.description("List allowed accounts")
+		.action(async () => {
+			const allowed = await readAllowedUsers();
+			if (allowed.length === 0) {
+				logger.log("No account allowlist — any approved client may connect.");
+				logger.log(
+					`Add one with \`${chalk.cyan("npx shellular users add <email-or-id>")}\` to restrict access.\n`,
+				);
+				logWhereToFindIdentity();
+				return;
+			}
+
+			logger.log(
+				chalk.green(
+					`Account allowlist is active (${allowed.length} ${allowed.length === 1 ? "entry" : "entries"}).`,
+				),
+			);
+			logger.log(
+				chalk.gray(
+					"Unauthenticated clients are rejected while it is active.\n",
+				),
+			);
+			for (const entry of allowed) {
+				const tag =
+					classifyEntry(entry) === "email"
+						? chalk.gray("(email)")
+						: chalk.gray("(user ID)");
+				logger.log(`  - ${chalk.magentaBright(entry)} ${tag}`);
+			}
+		});
+
+	users
+		.command("add <email-or-id>")
+		.description("Allow an account (by email or user ID) to connect")
+		.action(async (value: string) => {
+			const normalized = normalizeEntry(value);
+			if (!isValidAllowlistEntry(normalized)) {
+				logger.error(
+					chalk.red(`"${value}" is not a valid email address or user ID.\n`),
+				);
+				logWhereToFindIdentity();
+				process.exitCode = 1;
+				return;
+			}
+
+			const wasEmpty = !(await isUserAllowlistActive());
+			if (!(await addAllowedUser(normalized))) {
+				logger.log(`${chalk.magentaBright(normalized)} is already allowed.`);
+				return;
+			}
+
+			logger.log(chalk.green(`Allowed ${chalk.magentaBright(normalized)}.`));
+
+			// Turning the allowlist on is the moment existing devices can start
+			// getting rejected, so say so plainly rather than let it surprise them.
+			if (wasEmpty) {
+				logger.warn(
+					`\nThe account allowlist is now active. Clients signed in with any other account — and all unauthenticated clients — will be rejected on their next connection.`,
+				);
+			}
+		});
+
+	users
+		.command("remove <email-or-id>")
+		.description("Revoke an account, disconnecting all of its devices")
+		.action(async (value: string) => {
+			const normalized = normalizeEntry(value);
+			if (!(await removeAllowedUser(normalized))) {
+				logger.error(
+					chalk.red(`${normalized} is not in the account allowlist.`),
+				);
+				process.exitCode = 1;
+				return;
+			}
+
+			logger.log(chalk.green(`Revoked ${chalk.magentaBright(normalized)}.`));
+			if (!(await isUserAllowlistActive())) {
+				logger.warn(
+					"\nThe account allowlist is now empty, so it no longer gates connections. Any approved client may connect again.",
+				);
+			}
+		});
+
 	program
 		.command("clients")
 		.description("Manage client device approvals")
@@ -250,6 +351,7 @@ function createProgram(): Command {
 
 				const clientInfoFormatted = (c: (typeof all)[0]) => `
     ${formatClientDeviceInfo(c)}
+    ${formatClientUser(c)}
     ${chalk.gray(`App v${c.appVersion}`)}. ${chalk.gray(`first seen: ${new Date(c.firstSeen).toLocaleString()}`)}`;
 
 				const choices = all.map((c) => ({
@@ -330,6 +432,42 @@ function formatClientDeviceInfo({
 	return isEmulator
 		? `${deviceName} ${chalk.yellowBright("[Emulator]")}`
 		: deviceName;
+}
+
+function isLikelyEmail(value: string): boolean {
+	return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+/**
+ * A valid allowlist entry is either an email or a user ID. We can't validate an
+ * ID against the server, so we only reject obviously-broken input: an email
+ * shape that's malformed, or an ID with whitespace/`@` that would never match.
+ */
+function isValidAllowlistEntry(value: string): boolean {
+	if (classifyEntry(value) === "email") {
+		return isLikelyEmail(value);
+	}
+	return value.length > 0 && !/\s/.test(value);
+}
+
+/** Where a host can grab their account email or user ID to allowlist. */
+function logWhereToFindIdentity() {
+	logger.log(
+		chalk.gray(
+			`Find your account email and user ID under the Account tab in the Shellular app, or at ${chalk.underline("https://app.shellular.dev")}.`,
+		),
+	);
+}
+
+/**
+ * The signed-in account behind a client. Clients that connected over the legacy
+ * path proved no identity at all, which is a fact the host should see before
+ * approving them — so it is called out rather than left blank.
+ */
+function formatClientUser({ user }: { user?: ClientUserInfo }): string {
+	return user
+		? chalk.magentaBright(user.email)
+		: chalk.yellowBright("[Unauthenticated]");
 }
 
 async function runCli({
@@ -582,6 +720,7 @@ async function runCli({
 						const { clientId } = msg.data;
 
 						const deviceSummary = formatClientDeviceInfo(msg.data);
+						const userSummary = formatClientUser(msg.data);
 
 						// Approve the joining client, attaching freshly re-checked update
 						// info (TTL-cached). The server merges this into session.hostInfo
@@ -610,6 +749,21 @@ async function runCli({
 								data: { clientId, approved: false },
 							});
 						};
+
+						// The account allowlist gates *before* per-device approvals: one
+						// account spans many devices, so allowlisting it must cover all of
+						// them and revoking it must evict all of them — even devices
+						// previously approved by clientId.
+						const gate = await checkUserGate(msg.data);
+						if (!gate.allowed) {
+							reject();
+							logger.warn(
+								gate.reason === "unauthenticated"
+									? `Rejected unauthenticated client ${clientId} (${deviceSummary}): an account allowlist is active. Run \`${chalk.cyan("npx shellular users")}\` to review it.`
+									: `Rejected client ${clientId} (${deviceSummary}, ${userSummary}): not in the account allowlist. Run \`${chalk.cyan("npx shellular users add <email-or-id>")}\` to allow it.`,
+							);
+							return;
+						}
 
 						const approval = getClientApproval(clientId);
 						if (approval === true) {
@@ -642,7 +796,7 @@ async function runCli({
 						if (!isDaemon) {
 							// Foreground: ask the user interactively
 							const allow = await confirmWrapper(
-								`Allow ${chalk.cyan(clientId)} (${deviceSummary}) to connect?`,
+								`Allow ${chalk.cyan(clientId)} (${deviceSummary}, ${userSummary}) to connect?`,
 							);
 							if (allow) {
 								upsertClient(msg.data, true);
@@ -654,7 +808,7 @@ async function runCli({
 							// Daemon: auto-reject, instruct user to run shellular clients
 							reject();
 							logger.warn(
-								`Unknown client ${clientId} (${deviceSummary}) tried to connect. Run \`${chalk.cyan("npx shellular clients")}\` to approve.`,
+								`Unknown client ${clientId} (${deviceSummary}, ${userSummary}) tried to connect. Run \`${chalk.cyan("npx shellular clients")}\` to approve.`,
 							);
 						}
 					},
@@ -665,6 +819,7 @@ async function runCli({
 						{
 							clientId: msg.data.clientId,
 							hostId: msg.data.hostId,
+							user: msg.data.user,
 							appVersion: msg.data.appVersion,
 							platform: msg.data.platform,
 							deviceModel: msg.data.deviceModel,
@@ -674,13 +829,16 @@ async function runCli({
 						true,
 					);
 					const deviceSummary = formatClientDeviceInfo(msg.data);
+					const userSummary = formatClientUser(msg.data);
 					agentsManager.notifyClient(msg.data.clientId);
 
+					logger.log();
 					logger.log(
 						chalk.green(
 							`✓ Client ${msg.data.clientId} connected on ${new Date().toLocaleString()}`,
 						),
 					);
+					logger.log(`  - ${chalk.green("User:")} ${userSummary}`);
 					logger.log(`  - ${chalk.green("Device:")} ${deviceSummary}`);
 					logger.log(
 						`  - ${chalk.green("App Version:")} v${msg.data.appVersion}\n`,

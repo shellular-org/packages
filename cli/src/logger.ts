@@ -2,6 +2,7 @@ import { config } from "./config";
 
 class Logger {
 	private paddingLeft: number;
+	private static levelsWithTimestamp = new Set(["debug", "warn", "error"]);
 
 	constructor({ paddingLeft = 2 }: { paddingLeft?: number } = {}) {
 		this.paddingLeft = paddingLeft - 1;
@@ -37,9 +38,11 @@ class Logger {
 
 	private _log(level: "log" | "debug" | "warn" | "error", args: unknown[]) {
 		const logLevelTag = level === "log" ? "" : `[${level}]`;
-		const prefix = logLevelTag
-			? `${this.padding} ${logLevelTag}`
-			: this.padding;
+		let prefix = logLevelTag ? `${this.padding} ${logLevelTag}` : this.padding;
+		if (Logger.levelsWithTimestamp.has(level)) {
+			prefix += ` <${new Date().toUTCString()}>`;
+		}
+
 		console[level](prefix, ...args);
 	}
 }
