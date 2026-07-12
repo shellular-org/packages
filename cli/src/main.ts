@@ -765,6 +765,17 @@ async function runCli({
 							return;
 						}
 
+						// A positive allowlist match trumps the per-device approval flow: the
+						// host has explicitly trusted this account, so every one of its
+						// devices connects — even a never-before-seen one — without falling
+						// through to the unknown-client policy (which would auto-reject in a
+						// daemon). Record it as approved so `shellular clients` reflects it.
+						if (gate.allowlisted) {
+							upsertClient(msg.data, true);
+							await approve();
+							return;
+						}
+
 						const approval = getClientApproval(clientId);
 						if (approval === true) {
 							// Previously approved — auto-allow silently
