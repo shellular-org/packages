@@ -132,7 +132,7 @@ export async function isUserAllowlistActive(): Promise<boolean> {
 }
 
 export type UserGateResult =
-	| { allowed: true }
+	| { allowed: true; allowlisted: boolean }
 	| { allowed: false; reason: "unauthenticated" | "not-allowlisted" };
 
 /**
@@ -147,13 +147,18 @@ export type UserGateResult =
  *
  * With the allowlist active, a client that proved no identity (legacy
  * unauthenticated path) can never satisfy it, so it is rejected.
+ *
+ * `allowlisted` on the success result distinguishes a *positive* allowlist match
+ * (the account is explicitly trusted) from "allowed because the allowlist is
+ * inactive". A positive match is a stronger signal than per-device approval, so
+ * callers use it to auto-approve even a never-before-seen device.
  */
 export async function checkUserGate(
 	clientInfo: ClientInfo,
 ): Promise<UserGateResult> {
 	const allowed = await readAllowedUsers();
 	if (allowed.length === 0) {
-		return { allowed: true };
+		return { allowed: true, allowlisted: false };
 	}
 
 	const user = clientInfo.user;
@@ -166,7 +171,7 @@ export async function checkUserGate(
 		allowed.includes(normalizeEntry(user.id));
 
 	return matches
-		? { allowed: true }
+		? { allowed: true, allowlisted: true }
 		: { allowed: false, reason: "not-allowlisted" };
 }
 
