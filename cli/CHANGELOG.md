@@ -1,5 +1,11 @@
 # shellular
 
+## 0.0.46
+
+### Patch Changes
+
+- d99904e: fix: A positive allowlist match trumps the per-device approval flow
+
 ## 0.0.45
 
 ### Patch Changes
