@@ -1,5 +1,14 @@
 # @shellular/protocol
 
+## 0.0.27
+
+- d0fae9c: fix(protocol): auth is now mandatory for new versions
+  - NOTE: THIS VERSION WAS MANUALLY PUBLISHED BY me (github.com/biraj21)
+  - removed user field from ClientInfoSchema
+  - and hence also removed ClientInfoRequestSchema
+  - added ServerCloseCodeAndReason object to use between client, server and CLI
+  - this breaks things in CLI, so the CLI build should fail. CLI will be updated in the next multi-region PR to use this protocol change.
+
 ## 0.0.26
 
 ### Patch Changes
@@ -29,7 +38,6 @@
 ### Patch Changes
 
 - 6067397: feat: show shellular version in app, and update
-
   - Add `showSelfUpdateLogs` function to display self-update logs with live streaming of the latest log file.
   - Introduce `runSelfUpdate` function to handle self-update execution, ensuring proper detachment from the parent process.
   - Update `pm2` and remove unused dependencies
@@ -86,7 +94,6 @@
 ### Patch Changes
 
 - abef551: fix: session attach/detach with multi-client support, lazy session snapshots, and runtime cleanup
-
   - Add AI_SESSION_ATTACH and AI_SESSION_DETACH for explicit session lifecycle management
   - Implement session snapshots with revision tracking for efficient state sync
   - Add runtime cleanup timers to prevent memory leaks from idle sessions

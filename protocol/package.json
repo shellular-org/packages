@@ -1,6 +1,6 @@
 {
   "name": "@shellular/protocol",
-  "version": "0.0.26",
+  "version": "0.0.27",
   "description": "Shellular wire protocol — shared Zod schemas and TypeScript types.",
   "type": "module",
   "main": "./dist/index.cjs",
