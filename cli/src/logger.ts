@@ -1,8 +1,17 @@
+import { format, stripVTControlCharacters } from "node:util";
+
+import type { LocalCliLogEntry } from "@shellular/protocol";
+
 import { config } from "./config";
+
+const MAX_LOG_ENTRIES = 500;
 
 class Logger {
 	private paddingLeft: number;
 	private static levelsWithTimestamp = new Set(["debug", "warn", "error"]);
+	private entries: LocalCliLogEntry[] = [];
+	private listeners = new Set<(entry: LocalCliLogEntry) => void>();
+	private nextId = 1;
 
 	constructor({ paddingLeft = 2 }: { paddingLeft?: number } = {}) {
 		this.paddingLeft = paddingLeft - 1;
@@ -14,6 +23,15 @@ class Logger {
 		}
 
 		return " ".repeat(this.paddingLeft);
+	}
+
+	getEntries(): LocalCliLogEntry[] {
+		return [...this.entries];
+	}
+
+	subscribe(listener: (entry: LocalCliLogEntry) => void): () => void {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
 	}
 
 	log(...args: unknown[]) {
@@ -44,6 +62,18 @@ class Logger {
 		}
 
 		console[level](prefix, ...args);
+
+		const entry: LocalCliLogEntry = {
+			id: this.nextId++,
+			timestamp: new Date().toISOString(),
+			level,
+			message: stripVTControlCharacters(format(...args)),
+		};
+		this.entries.push(entry);
+		if (this.entries.length > MAX_LOG_ENTRIES) {
+			this.entries.splice(0, this.entries.length - MAX_LOG_ENTRIES);
+		}
+		for (const listener of this.listeners) listener(entry);
 	}
 }
 

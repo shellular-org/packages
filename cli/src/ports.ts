@@ -9,7 +9,7 @@ import {
 } from "@shellular/protocol";
 
 import { config } from "./config";
-import type { Connection } from "./connection";
+import type { HostConnection } from "./connection";
 import { logger } from "./logger";
 
 const { PLATFORM: platform } = config;
@@ -57,7 +57,7 @@ function readPortlessUrls(): Map<number, string> {
 	return map;
 }
 
-export function initPortsHandler(conn: Connection) {
+export function initPortsHandler(conn: HostConnection) {
 	conn.on(MsgType.PORTS_LIST, (msg) => {
 		const { clientId } = msg;
 

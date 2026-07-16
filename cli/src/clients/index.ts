@@ -61,6 +61,18 @@ export function deleteKnownClient(clientId: string): boolean {
 	return true;
 }
 
+export function setKnownClientApproval(
+	clientId: string,
+	approved: boolean,
+): boolean {
+	const clients = readKnownClients();
+	const client = clients[clientId];
+	if (!client) return false;
+	clients[clientId] = { ...client, approved };
+	writeKnownClients(clients);
+	return true;
+}
+
 /**
  * Returns `true` if the client is approved, `false` if explicitly rejected,
  * or `null` if the client is not yet known.

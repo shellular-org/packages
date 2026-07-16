@@ -5,6 +5,7 @@ export * from "./client";
 export * from "./filesystem";
 export * from "./host";
 export * from "./http";
+export * from "./local-control";
 export * from "./ports";
 export * from "./session";
 export * from "./sysmon";

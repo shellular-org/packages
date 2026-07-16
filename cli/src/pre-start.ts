@@ -1,5 +1,3 @@
-import process from "node:process";
-
 import { getOrRegisterHostId } from "@/config";
 import { logger } from "@/logger";
 import { ServerUrl } from "@/server-url";
@@ -24,6 +22,6 @@ export async function preStart(
 			"Error with host registration:",
 			err instanceof Error ? err.message : String(err),
 		);
-		process.exit(1);
+		throw err;
 	}
 }

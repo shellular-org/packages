@@ -14,7 +14,7 @@ import { nanoid } from "nanoid";
 import nodePty from "node-pty";
 
 import { config } from "@/config";
-import type { Connection } from "@/connection";
+import type { HostConnection } from "@/connection";
 import { logger } from "@/logger";
 import { execFileAsync, mapGetOrInsert } from "@/utils";
 import {
@@ -97,7 +97,7 @@ const STRIPPED_ENV_VARS = [
 // Active WebSocket connection to relay server — updated on every (re)connect, nulled on disconnect.
 // PTY async callbacks (onData/onExit) route through this so they always reach
 // the current connection rather than the one captured at spawn time.
-let activeConn: Connection | null = null;
+let activeConn: HostConnection | null = null;
 
 // PTYs persist like tmux sessions: once spawned they live until the shell exits,
 // the client explicitly closes them, or the daemon process restarts. There is no
@@ -368,7 +368,7 @@ function wireTerminal(
 	});
 }
 
-export function initTerminalHandler(conn: Connection, workDir: string) {
+export function initTerminalHandler(conn: HostConnection, workDir: string) {
 	// Track the current active connection so PTY async callbacks always use
 	// the latest socket rather than the one captured at spawn time.
 	activeConn = conn;

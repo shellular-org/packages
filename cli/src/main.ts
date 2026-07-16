@@ -5,10 +5,10 @@ import path from "node:path";
 
 import { checkbox, confirm } from "@inquirer/prompts";
 import {
-	type AiAvailabilityResultMsg,
 	type ClientUserInfo,
 	type HostInfo,
 	type HostUpdateMsg,
+	LOCAL_CONTROL_PROTOCOL_VERSION,
 	MsgType,
 	type SessionClientJoinMsg,
 	type SessionClientLeftMsg,
@@ -18,9 +18,16 @@ import { Command } from "commander";
 import qrcode from "qrcode-terminal";
 import { AgentsManager } from "@/agents";
 import {
-	ensureSingleInstance,
+	activateExistingInstance,
+	claimSingleInstance,
+	LocalActivationError,
+	type LocalActivationRequest,
+	type LocalActivationResult,
 	releaseBootLock,
+	reportExistingInstance,
+	startInstanceControlServer,
 	updateBootLock,
+	waitForExistingInstance,
 } from "@/boot-lock";
 import { startCaffeinate, stopCaffeinate } from "@/caffeinate";
 import {
@@ -32,6 +39,7 @@ import {
 } from "@/clients";
 import { config, ensureConfig } from "@/config";
 import { connectWithReconnect } from "@/connection";
+import { ConnectionHub } from "@/connection-hub";
 import {
 	type DaemonOptions,
 	type DaemonStartOptions,
@@ -45,6 +53,7 @@ import {
 } from "@/daemon";
 import { getKeyBase64, initEncryption } from "@/encryption";
 import { initFilesystemHandler } from "@/filesystem";
+import { LocalControlServer } from "@/local-server";
 import { logger } from "@/logger";
 import { initPortsHandler } from "@/ports";
 import { preStart } from "@/pre-start";
@@ -99,6 +108,10 @@ type CliOptions = {
 	dir: string;
 	unknownClients: UnknownClientApprovalPolicy;
 	qr: boolean;
+	startLocal: boolean;
+	port: number;
+	activateExistingOnly: boolean;
+	waitForExisting: number;
 };
 
 type ClientsCommandOptions = {
@@ -114,7 +127,16 @@ type DaemonStopOptions = {
  * In this mode, certain behaviors are adjusted, such as how client approvals are handled and what notifications are shown,
  * to better suit a background service context.
  */
-type RunCliOptions = CliOptions & { isDaemon?: boolean };
+type RunCliOptions = Omit<
+	CliOptions,
+	"startLocal" | "port" | "activateExistingOnly" | "waitForExisting"
+> & {
+	startLocal?: boolean;
+	port?: number;
+	activateExistingOnly?: boolean;
+	waitForExisting?: number;
+	isDaemon?: boolean;
+};
 
 function createProgram(): Command {
 	const program = new Command()
@@ -126,6 +148,36 @@ function createProgram(): Command {
 		.option("--server <url>", "Shellular server URL", DEFAULT_SERVER_URL)
 		.option("--dir <path>", "Working directory", os.homedir())
 		.option("--no-qr", "Do not display QR code in terminal")
+		.option(
+			"--start-local",
+			"Start the authenticated desktop loopback listener",
+		)
+		.option(
+			"--port <port>",
+			"Local desktop listener port (0 chooses a free port)",
+			(value) => {
+				const port = Number(value);
+				if (!Number.isInteger(port) || port < 0 || port > 65535)
+					throw new Error(`Invalid port: ${value}`);
+				return port;
+			},
+			0,
+		)
+		.option(
+			"--activate-existing-only",
+			"Enable local access only through an already-running CLI",
+		)
+		.option(
+			"--wait-for-existing <milliseconds>",
+			"Wait for an existing CLI before enabling local access",
+			(value) => {
+				const milliseconds = Number(value);
+				if (!Number.isInteger(milliseconds) || milliseconds < 0)
+					throw new Error(`Invalid wait duration: ${value}`);
+				return milliseconds;
+			},
+			0,
+		)
 		.option(
 			"--unknown-clients <policy>",
 			`unknown clients approval policy (${NEW_CLIENT_APPROVAL_POLICIES.join(", ")})`,
@@ -476,18 +528,113 @@ async function runCli({
 	unknownClients: unknownClientsApproval,
 	isDaemon = false,
 	qr: showQr,
+	startLocal = false,
+	port = 0,
+	activateExistingOnly = false,
+	waitForExisting = 0,
 }: RunCliOptions): Promise<void> {
 	const serverUrl = new ServerUrl(server);
 	const workDir = path.resolve(dir);
+	if (activateExistingOnly && !startLocal) {
+		logger.error(
+			`SHELLULAR_LOCAL_ERROR ${JSON.stringify({ code: "START_FAILED", message: "--activate-existing-only requires --start-local" })}`,
+		);
+		process.exitCode = 1;
+		return;
+	}
+	const existingLock = activateExistingOnly
+		? await waitForExistingInstance(waitForExisting)
+		: null;
+	if (activateExistingOnly && !existingLock) {
+		logger.error(
+			`SHELLULAR_LOCAL_ERROR ${JSON.stringify({ code: "CLI_NOT_RUNNING", message: "The development workspace CLI is not running yet." })}`,
+		);
+		process.exitCode = 1;
+		return;
+	}
+	const claim = existingLock
+		? ({ kind: "existing", lock: existingLock } as const)
+		: claimSingleInstance({
+				serverUrl: serverUrl.toWebSocketUrl(),
+				workDir,
+				localEnabled: false,
+			});
+	if (claim.kind === "existing") {
+		if (!startLocal) {
+			reportExistingInstance(claim.lock);
+			process.exitCode = 1;
+			return;
+		}
+		const token = process.env.SHELLULAR_LOCAL_TOKEN ?? "";
+		if (!token) {
+			logger.error(
+				`SHELLULAR_LOCAL_ERROR ${JSON.stringify({ code: "START_FAILED", message: "SHELLULAR_LOCAL_TOKEN is required with --start-local" })}`,
+			);
+			process.exitCode = 1;
+			return;
+		}
+		try {
+			const result = await activateExistingInstance(claim.lock, {
+				port,
+				token,
+				source: config.SHELLULAR_DEV
+					? "development"
+					: process.env.SHELLULAR_LOCAL_SOURCE === "global"
+						? "global"
+						: "npx",
+				ownerId: process.env.SHELLULAR_LOCAL_OWNER_ID,
+			});
+			logger.log(`SHELLULAR_LOCAL_RESULT ${JSON.stringify(result)}`);
+			return;
+		} catch (error) {
+			const activationError =
+				error instanceof LocalActivationError
+					? error
+					: new LocalActivationError(
+							"START_FAILED",
+							error instanceof Error ? error.message : String(error),
+						);
+			logger.error(
+				`SHELLULAR_LOCAL_ERROR ${JSON.stringify({
+					code: activationError.code,
+					message: activationError.message,
+					currentVersion: activationError.currentVersion,
+				})}`,
+			);
+			process.exitCode = 1;
+			return;
+		}
+	}
 
-	ensureSingleInstance({
-		serverUrl: serverUrl.toWebSocketUrl(),
-		workDir,
+	let resolveActivationHandler!: (
+		handler: (
+			request: LocalActivationRequest,
+		) => Promise<LocalActivationResult>,
+	) => void;
+	const activationHandler = new Promise<
+		(request: LocalActivationRequest) => Promise<LocalActivationResult>
+	>((resolve) => {
+		resolveActivationHandler = resolve;
 	});
-
-	const { hostId } = await preStart({ server });
-
+	const instanceControlServer = await startInstanceControlServer(
+		claim.lock,
+		async (request) => (await activationHandler)(request),
+	);
+	process.once("exit", releaseBootLock);
 	await initEncryption();
+
+	let remoteAvailable = true;
+	let hostId: string;
+	try {
+		hostId = (await preStart({ server })).hostId;
+	} catch (error) {
+		if (!startLocal) throw error;
+		remoteAvailable = false;
+		hostId = `local_${config.MACHINE_ID.replace(/[^a-zA-Z0-9]/g, "").slice(0, 24)}`;
+		logger.warn(
+			"Remote registration is unavailable; continuing in local-only mode.",
+		);
+	}
 
 	const line = chalk.gray("─".repeat(34));
 	const label = (key: string, value: string) =>
@@ -537,16 +684,143 @@ async function runCli({
 	};
 
 	const agentsManager = new AgentsManager();
+	const connectionHub = new ConnectionHub();
+	const localConnection = connectionHub.asHostConnection();
+	let localServer: LocalControlServer | null = null;
+	let localStartPromise: Promise<LocalActivationResult> | null = null;
+	let remoteState:
+		| "connecting"
+		| "connected"
+		| "reconnecting"
+		| "disconnected" = remoteAvailable ? "connecting" : "disconnected";
+	initTerminalHandler(localConnection, workDir);
+	initFilesystemHandler(localConnection, workDir);
+	initSysmonHandler(localConnection);
+	initBatteryStream(localConnection);
+	initProxyHandler(localConnection);
+	initPortsHandler(localConnection);
+	agentsManager.handleConnection(localConnection);
+	localConnection.on(MsgType.SESSION_CLIENT_JOINED, (msg) => {
+		upsertClient(msg.data, true);
+		agentsManager.notifyClient(msg.data.clientId);
+		localConnection.send({
+			type: MsgType.AI_AVAILABILITY_RESULT,
+			clientId: msg.data.clientId,
+			data: { backends: agentsManager.getAvailableAgents() },
+		});
+	});
 
+	const disableLocalServer = () => {
+		const server = localServer;
+		localServer = null;
+		server?.close();
+		updateBootLock({
+			localEnabled: false,
+			localProtocolVersion: undefined,
+			localPort: undefined,
+		});
+	};
+	const ensureLocalServer = async (
+		request: LocalActivationRequest,
+	): Promise<LocalActivationResult> => {
+		if (localServer) {
+			if (request.port !== 0 && request.port !== localServer.listeningPort)
+				throw new LocalActivationError(
+					"PORT_IN_USE",
+					`Local access is already running on port ${localServer.listeningPort}.`,
+				);
+			localServer.reconfigure({ token: request.token, source: request.source });
+			return {
+				state: "already-running",
+				pid: process.pid,
+				port: localServer.listeningPort,
+				cliVersion: config.VERSION,
+				localProtocolVersion: LOCAL_CONTROL_PROTOCOL_VERSION,
+			};
+		}
+		if (localStartPromise) return localStartPromise;
+		localStartPromise = (async () => {
+			const server = new LocalControlServer({
+				port: request.port,
+				token: request.token,
+				hostInfo,
+				hub: connectionHub,
+				source: request.source,
+				lifecycle: process.env.SHELLULAR_LOCAL_OWNER_ID
+					? "app-owned"
+					: "attached",
+				getRemoteState: () => remoteState,
+				onStop: () => process.kill(process.pid, "SIGTERM"),
+				onDisable: disableLocalServer,
+			});
+			try {
+				const localPort = await server.start();
+				localServer = server;
+				updateBootLock({
+					localEnabled: true,
+					localProtocolVersion: LOCAL_CONTROL_PROTOCOL_VERSION,
+					localPort,
+				});
+				return {
+					state: "started",
+					pid: process.pid,
+					port: localPort,
+					cliVersion: config.VERSION,
+					localProtocolVersion: LOCAL_CONTROL_PROTOCOL_VERSION,
+				};
+			} catch (error) {
+				server.close();
+				const code =
+					(error as NodeJS.ErrnoException).code === "EADDRINUSE"
+						? "PORT_IN_USE"
+						: "START_FAILED";
+				throw new LocalActivationError(
+					code,
+					error instanceof Error ? error.message : String(error),
+				);
+			} finally {
+				localStartPromise = null;
+			}
+		})();
+		return localStartPromise;
+	};
+	resolveActivationHandler(ensureLocalServer);
+
+	if (startLocal) {
+		const token = process.env.SHELLULAR_LOCAL_TOKEN ?? "";
+		if (!token)
+			throw new Error("SHELLULAR_LOCAL_TOKEN is required with --start-local");
+		await ensureLocalServer({
+			port,
+			token,
+			source: config.SHELLULAR_DEV
+				? "development"
+				: process.env.SHELLULAR_LOCAL_SOURCE === "global"
+					? "global"
+					: "npx",
+			ownerId: process.env.SHELLULAR_LOCAL_OWNER_ID,
+		});
+	}
+
+	let cleanedUp = false;
 	const cleanup = () => {
+		if (cleanedUp) return;
+		cleanedUp = true;
 		logger.log("Cleaning up resources...");
 		stopCaffeinate();
 		releaseBootLock();
 		agentsManager.destroy();
+		localServer?.close();
+		instanceControlServer.close();
+		connectionHub.close();
 	};
 
-	process.on("SIGINT", cleanup); // Ctrl+C
-	process.on("SIGTERM", cleanup); // kill / docker stop
+	const exitCleanly = () => {
+		cleanup();
+		process.exit(0);
+	};
+	process.once("SIGINT", exitCleanly); // Ctrl+C
+	process.once("SIGTERM", exitCleanly); // kill / docker stop / watch restart
 	process.on("beforeExit", cleanup);
 
 	process.on("uncaughtException", (err) => {
@@ -568,11 +842,17 @@ async function runCli({
 	// of when the app reconnects — TERMINAL_LIST/ATTACH then find them in memory.
 	restoreTerminals(workDir);
 
+	if (!remoteAvailable) return;
 	connectWithReconnect(
 		serverUrl.toWebSocketUrl(),
 		hostInfo,
 		async (conn, isFirst) => {
 			try {
+				remoteState = "connected";
+				connectionHub.attachRemote(conn);
+				conn.once("disconnected", () => {
+					remoteState = "reconnecting";
+				});
 				updateBootLock({ connectionId: conn.sessionId });
 				cleanupProxy();
 
@@ -632,15 +912,6 @@ async function runCli({
 						),
 					);
 				}
-
-				// Register handlers
-				initTerminalHandler(conn, workDir);
-				initFilesystemHandler(conn, workDir);
-				initSysmonHandler(conn);
-				initBatteryStream(conn);
-				initProxyHandler(conn);
-				initPortsHandler(conn);
-				agentsManager.handleConnection(conn);
 
 				conn.on(MsgType.SESSION_ERROR, (data) => {
 					logger.error(
@@ -826,22 +1097,8 @@ async function runCli({
 				);
 
 				conn.on(MsgType.SESSION_CLIENT_JOINED, (msg) => {
-					upsertClient(
-						{
-							clientId: msg.data.clientId,
-							hostId: msg.data.hostId,
-							user: msg.data.user,
-							appVersion: msg.data.appVersion,
-							platform: msg.data.platform,
-							deviceModel: msg.data.deviceModel,
-							deviceIsEmulator: msg.data.deviceIsEmulator,
-							deviceManufacturer: msg.data.deviceManufacturer,
-						},
-						true,
-					);
 					const deviceSummary = formatClientDeviceInfo(msg.data);
 					const userSummary = formatClientUser(msg.data);
-					agentsManager.notifyClient(msg.data.clientId);
 
 					logger.log();
 					logger.log(
@@ -854,14 +1111,6 @@ async function runCli({
 					logger.log(
 						`  - ${chalk.green("App Version:")} v${msg.data.appVersion}\n`,
 					);
-
-					// let the client know which AI backends are available
-					const availableAIBackendsMsg: AiAvailabilityResultMsg = {
-						type: MsgType.AI_AVAILABILITY_RESULT,
-						clientId: msg.data.clientId,
-						data: { backends: agentsManager.getAvailableAgents() },
-					};
-					conn.send(availableAIBackendsMsg);
 				});
 
 				conn.on(MsgType.SESSION_CLIENT_LEFT, (data: SessionClientLeftMsg) => {
@@ -885,7 +1134,17 @@ async function main(): Promise<void> {
 		const program = createProgram();
 		await program.parseAsync(process.argv);
 	} catch (err) {
-		logger.error(chalk.red(`${String(err)}`));
+		if (err instanceof LocalActivationError) {
+			logger.error(
+				`SHELLULAR_LOCAL_ERROR ${JSON.stringify({
+					code: err.code,
+					message: err.message,
+					currentVersion: err.currentVersion,
+				})}`,
+			);
+		} else {
+			logger.error(chalk.red(`${String(err)}`));
+		}
 		process.exit(1);
 	}
 }

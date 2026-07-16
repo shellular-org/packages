@@ -23,6 +23,10 @@ export class ConnectedClients {
 		return Array.from(this.connectedClients.keys());
 	}
 
+	get(clientId: string): ClientInfo | undefined {
+		return this.connectedClients.get(clientId);
+	}
+
 	removeAll(): void {
 		this.connectedClients.clear();
 	}

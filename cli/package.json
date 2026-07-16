@@ -5,8 +5,10 @@
 	"main": "dist/main.js",
 	"scripts": {
 		"dev": "cross-env SHELLULAR_DEV=true tsx --watch src/main.ts",
+		"activate:local": "cross-env SHELLULAR_DEV=true tsx src/main.ts --start-local --no-qr",
 		"start": "tsx src/main.ts",
 		"build": "tsc && tsup",
+		"test": "pnpm run build && tsx --test src/**/*.test.ts",
 		"prepublishOnly": "pnpm run build",
 		"ci:publish": "pnpm publish --access public",
 		"try-run": "pnpm run build && node dist/main.js"

@@ -3,7 +3,7 @@ import { Agent as HttpAgent, request as httpRequest } from "node:http";
 import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 import { MsgType } from "@shellular/protocol";
 import WebSocket from "ws";
-import type { Connection } from "./connection";
+import type { HostConnection } from "./connection";
 import { encryptBytes } from "./encryption";
 
 const ALLOWED_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
@@ -207,11 +207,12 @@ function drainResponse(res: http.IncomingMessage, onDone: () => void) {
 }
 
 function maybePauseForBackpressure(
-	conn: Connection,
+	conn: HostConnection,
+	clientId: string,
 	res: http.IncomingMessage,
 ) {
 	if (
-		conn.ws.bufferedAmount < WS_BACKPRESSURE_HIGH_WATER ||
+		conn.getBufferedAmount(clientId) < WS_BACKPRESSURE_HIGH_WATER ||
 		backpressuredResponses.has(res)
 	) {
 		return;
@@ -226,13 +227,13 @@ function maybePauseForBackpressure(
 			return;
 		}
 
-		if (conn.ws.readyState !== WebSocket.OPEN) {
+		if (!conn.isOpen(clientId)) {
 			backpressuredResponses.delete(res);
 			res.destroy(new Error("Proxy WebSocket closed"));
 			return;
 		}
 
-		if (conn.ws.bufferedAmount <= WS_BACKPRESSURE_LOW_WATER) {
+		if (conn.getBufferedAmount(clientId) <= WS_BACKPRESSURE_LOW_WATER) {
 			backpressuredResponses.delete(res);
 			res.resume();
 			return;
@@ -306,7 +307,7 @@ function buildProxyBinaryFrame(
 }
 
 function sendHttpResponseData(
-	conn: Connection,
+	conn: HostConnection,
 	clientId: string,
 	requestId: string,
 	chunkIndex: number,
@@ -328,10 +329,11 @@ function sendHttpResponseData(
 			clientId,
 			plaintext,
 		),
+		clientId,
 	);
 }
 
-export function initProxyHandler(conn: Connection) {
+export function initProxyHandler(conn: HostConnection) {
 	// ─── HTTP tunneling ───────────────────────────────────────
 
 	conn.on(MsgType.HTTP_REQUEST, (msg) => {
@@ -486,7 +488,7 @@ export function initProxyHandler(conn: Connection) {
 						res.destroy(new Error("Failed to send proxy response data"));
 						return;
 					}
-					maybePauseForBackpressure(conn, res);
+					maybePauseForBackpressure(conn, clientId, res);
 				});
 
 				res.on("end", () => {

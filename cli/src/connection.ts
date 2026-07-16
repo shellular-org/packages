@@ -95,13 +95,42 @@ export interface DisconnectInfo {
 	reason: string;
 }
 
-type OutgoingMsg = HostToClientMsg | HostToServerMsg;
-type SendableMsg = {
+export type OutgoingMsg = HostToClientMsg | HostToServerMsg;
+export type SendableMsg = {
 	[TType in OutgoingMsg["type"]]: Omit<
 		Extract<OutgoingMsg, { type: TType }>,
 		"id"
 	>;
 }[OutgoingMsg["type"]];
+
+export function decodeHostIncoming(raw: string): HostIncomingMsg | null {
+	const baseMsg = parseMessage(raw, BaseMsgSchema);
+	if (!baseMsg.data) return null;
+	if (PLAINTEXT_TYPES.has(baseMsg.data.type)) {
+		return parseMessage(baseMsg.data, HostIncomingMsgSchema).data ?? null;
+	}
+	if (baseMsg.data.type !== MsgType.ENCRYPTED) return null;
+	const envelope = parseMessage(baseMsg.data, EncryptedMsgSchema).data;
+	if (!envelope) return null;
+	const plaintext = decrypt(envelope.nonce, envelope.ciphertext);
+	if (!plaintext) return null;
+	return parseMessage(plaintext, HostIncomingMsgSchema).data ?? null;
+}
+
+export function encodeHostOutgoing(msg: SendableMsg): string {
+	const id = `host_${nanoid()}`;
+	const msgWithId = { id, ...msg } as OutgoingMsg;
+	if (PLAINTEXT_TYPES.has(msg.type)) return JSON.stringify(msgWithId);
+	const { nonce, ciphertext } = encrypt(JSON.stringify(msgWithId));
+	const clientId = "clientId" in msg ? msg.clientId : undefined;
+	return JSON.stringify({
+		id,
+		type: MsgType.ENCRYPTED,
+		...(clientId ? { clientId } : {}),
+		nonce,
+		ciphertext,
+	});
+}
 
 export class Connection extends EventEmitter {
 	hostInfo: HostInfo;
@@ -109,6 +138,7 @@ export class Connection extends EventEmitter {
 	ws: WebSocket;
 	private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 	clients: ConnectedClients;
+	private incomingSink: ((msg: HostIncomingMsg) => boolean) | null = null;
 
 	constructor(serverUrl: string | URL, hostInfo: HostInfo) {
 		super();
@@ -122,6 +152,18 @@ export class Connection extends EventEmitter {
 		}
 
 		this.ws = new WebSocket(wsUrl.toString());
+	}
+
+	setIncomingSink(sink: ((msg: HostIncomingMsg) => boolean) | null): void {
+		this.incomingSink = sink;
+	}
+
+	isOpen(): boolean {
+		return this.ws.readyState === WebSocket.OPEN;
+	}
+
+	getBufferedAmount(): number {
+		return this.ws.bufferedAmount;
 	}
 
 	on(
@@ -752,7 +794,8 @@ export class Connection extends EventEmitter {
 
 		// SAFETY: IncomingMsgSchema validated the message. The generic emit
 		// avoids exhaustive overload matching on every MsgType variant.
-		return super.emit(msg.type, msg) as boolean;
+		const handledBySink = this.incomingSink?.(msg) ?? false;
+		return (super.emit(msg.type, msg) as boolean) || handledBySink;
 	}
 
 	private wrapListener<TArgs extends unknown[]>(
@@ -892,7 +935,7 @@ export class Connection extends EventEmitter {
 		}
 	}
 
-	sendBinary(data: Uint8Array | Buffer): boolean {
+	sendBinary(data: Uint8Array | Buffer, _clientId?: string): boolean {
 		if (this.ws.readyState !== WebSocket.OPEN) {
 			return false;
 		}
@@ -933,6 +976,14 @@ export class Connection extends EventEmitter {
 		this.ws.close();
 	}
 }
+
+export type HostConnection = Pick<
+	Connection,
+	"on" | "once" | "send" | "sendBinary" | "clients"
+> & {
+	isOpen(clientId?: string): boolean;
+	getBufferedAmount(clientId?: string): number;
+};
 
 export async function connect(
 	serverUrl: string,

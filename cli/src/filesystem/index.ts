@@ -30,7 +30,7 @@ import {
 	type ProjectInfoResultMsg,
 } from "@shellular/protocol";
 
-import type { Connection } from "@/connection";
+import type { HostConnection } from "@/connection";
 import {
 	computeEntryGitStatus,
 	findGitRoot,
@@ -79,7 +79,7 @@ function findNearestExistingDir(targetPath: string): string | null {
 	}
 }
 
-export function initFilesystemHandler(conn: Connection, rootDir: string) {
+export function initFilesystemHandler(conn: HostConnection, rootDir: string) {
 	conn.on(MsgType.FS_LIST, async (msg: FsListMsg) => {
 		const { clientId } = msg;
 		const dirPath = safePath(rootDir, msg.data.path);

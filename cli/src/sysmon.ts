@@ -6,7 +6,7 @@ import {
 	type SysmonResultMsg,
 } from "@shellular/protocol";
 import { execFileAsync } from "@/utils";
-import type { Connection } from "./connection";
+import type { HostConnection } from "./connection";
 
 type MemoryStats = {
 	total: number;
@@ -299,7 +299,7 @@ async function getBattery(): Promise<{
 
 const BATTERY_INTERVAL_MS = 30_000;
 
-export function initBatteryStream(conn: Connection) {
+export function initBatteryStream(conn: HostConnection) {
 	const intervals = new Map<string, ReturnType<typeof setInterval>>();
 
 	async function sendBattery(clientId: string) {
@@ -332,7 +332,7 @@ export function initBatteryStream(conn: Connection) {
 	});
 }
 
-export function initSysmonHandler(conn: Connection) {
+export function initSysmonHandler(conn: HostConnection) {
 	conn.on(MsgType.SYSMON_GET, async (msg) => {
 		try {
 			const cpus = os.cpus();

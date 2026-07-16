@@ -19,7 +19,7 @@ import type {
 import { AcpContentBlockSchema, MsgType } from "@shellular/protocol";
 
 import { config } from "@/config";
-import type { Connection } from "@/connection";
+import type { HostConnection } from "@/connection";
 import { BUILTIN_AGENT_DESCRIPTORS, isAgentAvailable } from "./agents";
 import { ACP } from "./base";
 import { ClaudeCode } from "./claude-code";
@@ -1013,7 +1013,7 @@ export class AgentsManager {
 		return () => this.subscribers.delete(emitter);
 	}
 
-	handleConnection(conn: Connection) {
+	handleConnection(conn: HostConnection) {
 		// This adapter keeps the current app protocol stable while the internals
 		// move to ACP. Future UI work can consume listAgents/connectAgent directly.
 		const unsubscribe = this.subscribe((clientId, backend, event) => {
