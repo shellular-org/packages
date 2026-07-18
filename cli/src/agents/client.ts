@@ -16,7 +16,7 @@ type SessionUpdateListener = (
 ) => void | Promise<void>;
 export type PermissionListener = (event: PermissionRequestEvent) => void;
 
-export class AcpClient implements acp.Client {
+export class AcpClient {
 	private pendingPermissions = new Map<string, PendingPermission>();
 	private sessionUpdateListeners = new Map<
 		acp.SessionId,
