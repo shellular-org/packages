@@ -17,8 +17,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
-    "typecheck": "tsc --noEmit",
+    "vendor-acp": "node scripts/vendor-acp-schemas.mjs",
+    "build": "pnpm run vendor-acp && tsup",
+    "typecheck": "pnpm run vendor-acp && tsc --noEmit",
     "prepublishOnly": "pnpm run build",
     "ci:publish": "pnpm publish --access public"
   },
@@ -29,7 +30,7 @@
   "author": "Shellular <team@shellular.dev>",
   "license": "AGPL-3.0-only",
   "dependencies": {
-    "@agentclientprotocol/sdk": "0.26.0",
+    "@agentclientprotocol/sdk": "^1.2.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
