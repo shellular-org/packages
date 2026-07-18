@@ -1,6 +1,6 @@
 import fs from "node:fs";
 
-import type { ClientInfo } from "@shellular/protocol";
+import type { AuthedClientInfo } from "@shellular/protocol";
 import { z } from "zod";
 
 import { config } from "@/config";
@@ -154,7 +154,7 @@ export type UserGateResult =
  * callers use it to auto-approve even a never-before-seen device.
  */
 export async function checkUserGate(
-	clientInfo: ClientInfo,
+	clientInfo: AuthedClientInfo,
 ): Promise<UserGateResult> {
 	const allowed = await readAllowedUsers();
 	if (allowed.length === 0) {

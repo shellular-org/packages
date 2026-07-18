@@ -1,6 +1,9 @@
 import fs from "node:fs";
 
-import { type ClientInfo, ClientUserInfoSchema } from "@shellular/protocol";
+import {
+	type AuthedClientInfo,
+	ClientUserInfoSchema,
+} from "@shellular/protocol";
 import { z } from "zod";
 
 import { config } from "@/config";
@@ -74,7 +77,7 @@ export function getClientApproval(clientId: string): boolean | null {
 	return client.approved;
 }
 
-export function upsertClient(info: ClientInfo, approved: boolean): void {
+export function upsertClient(info: AuthedClientInfo, approved: boolean): void {
 	const clients = readKnownClients();
 	const now = new Date().toISOString();
 	const existing = clients[info.clientId];

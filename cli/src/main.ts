@@ -66,8 +66,6 @@ import {
 } from "@/users";
 import { updateAndStartShellular } from "./update-and-start";
 
-const DEFAULT_SERVER_URL = "wss://api.shellular.dev";
-
 ensureConfig();
 
 const NEW_CLIENT_APPROVAL_POLICIES = [
@@ -123,7 +121,7 @@ function createProgram(): Command {
 		.version(config.VERSION)
 		.showHelpAfterError()
 		.allowExcessArguments(false)
-		.option("--server <url>", "Shellular server URL", DEFAULT_SERVER_URL)
+		.option("--server <url>", "Shellular server URL", config.DEFAULT_SERVER_URL)
 		.option("--dir <path>", "Working directory", os.homedir())
 		.option("--no-qr", "Do not display QR code in terminal")
 		.option(
@@ -377,6 +375,11 @@ function createProgram(): Command {
 				writeKnownClients(updated);
 				logger.log(chalk.green("Client approvals saved."));
 			} catch (err) {
+				if (err instanceof Error && err.name === "ExitPromptError") {
+					logger.log("👋 until next time!");
+					return;
+				}
+
 				logger.error(
 					chalk.red(
 						`Error managing clients: ${err instanceof Error ? err.message : String(err)}`,
@@ -481,7 +484,7 @@ async function runCli({
 	const workDir = path.resolve(dir);
 
 	ensureSingleInstance({
-		serverUrl: serverUrl.toWebSocketUrl(),
+		serverUrl: serverUrl.toApiUrl(),
 		workDir,
 	});
 
@@ -496,7 +499,14 @@ async function runCli({
 	logger.log();
 	logger.log(chalk.bold.cyan(`Shellular CLI v${config.VERSION}`));
 	logger.log(line);
-	logger.log(label("Server:", chalk.underline(serverUrl.toWebSocketUrl())));
+
+	const centralServerUrl = serverUrl.toApiUrl();
+	const serverUrlFormatted =
+		new URL(centralServerUrl).origin ===
+		new URL(config.DEFAULT_SERVER_URL).origin
+			? "default"
+			: chalk.underline(centralServerUrl);
+	logger.log(label("Server:", serverUrlFormatted));
 	logger.log(
 		label(
 			"Unknown clients:",
@@ -569,7 +579,7 @@ async function runCli({
 	restoreTerminals(workDir);
 
 	connectWithReconnect(
-		serverUrl.toWebSocketUrl(),
+		serverUrl.toApiUrl(),
 		hostInfo,
 		async (conn, isFirst) => {
 			try {
