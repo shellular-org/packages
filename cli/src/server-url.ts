@@ -4,22 +4,22 @@ export class ServerUrl {
 	constructor(serverUrl: string) {
 		if (serverUrl.startsWith(":")) {
 			serverUrl = `http://localhost${serverUrl}`;
-		} else if (serverUrl.startsWith("ws://")) {
-			serverUrl = serverUrl.replace(/^ws:\/\//, "http://");
-		} else if (serverUrl.startsWith("wss://")) {
-			serverUrl = serverUrl.replace(/^wss:\/\//, "https://");
-		} else if (
-			!serverUrl.startsWith("http://") &&
-			!serverUrl.startsWith("https://")
-		) {
-			serverUrl = `http://${serverUrl}`;
 		}
 
+		let url: URL;
 		try {
-			this.url = new URL(serverUrl);
+			url = new URL(serverUrl);
 		} catch {
 			throw new Error(`Invalid server URL: ${serverUrl}`);
 		}
+
+		if (url.protocol !== "http:" && url.protocol !== "https:") {
+			const err = new Error(`Unsupported protocol: ${url.protocol}`);
+			err.name = "UnsupportedProtocolError";
+			throw err;
+		}
+
+		this.url = url;
 	}
 
 	toApiUrl({ path }: { path?: string } = {}): string {

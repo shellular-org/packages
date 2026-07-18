@@ -27,6 +27,7 @@ const _config = {
 	SHELLULAR_DEV: process.env.SHELLULAR_DEV === "true",
 	SHELLULAR_DIR,
 	CONFIG_FILE,
+	DEFAULT_SERVER_URL: "https://server.shellular.dev",
 	LOGS_DIR: path.join(SHELLULAR_DIR, "logs"),
 	// Self-update worker logs live in their own subdir so they don't mix into
 	// the daemon log glob and so `logs --self-updates` is just a dir listing.
@@ -49,6 +50,9 @@ const _config = {
 	HOSTNAME: os.hostname(),
 	EXT_SRC_DIR: path.join(dirname, "..", "vscode-extension"),
 	EXT_OUT_DIR: path.join(dirname, "..", "dist"),
+	RELAY_CACHE_FILE: path.join(SHELLULAR_DIR, "relay-cache.json"),
+	/** How long a disk-cached relay choice is trusted before we re-probe. */
+	RELAY_CACHE_TTL_MS: 24 * 60 * 60 * 1000,
 } as const;
 
 export function ensureConfig() {
