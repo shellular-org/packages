@@ -5,7 +5,6 @@ import path from "node:path";
 
 import { checkbox, confirm } from "@inquirer/prompts";
 import {
-	type AiAvailabilityResultMsg,
 	type ClientUserInfo,
 	type HostInfo,
 	type HostUpdateMsg,
@@ -830,7 +829,7 @@ async function runCli({
 					},
 				);
 
-				conn.on(MsgType.SESSION_CLIENT_JOINED, (msg) => {
+				conn.on(MsgType.SESSION_CLIENT_JOINED, async (msg) => {
 					upsertClient(
 						{
 							clientId: msg.data.clientId,
@@ -859,14 +858,6 @@ async function runCli({
 					logger.log(
 						`  - ${chalk.green("App Version:")} v${msg.data.appVersion}\n`,
 					);
-
-					// let the client know which AI backends are available
-					const availableAIBackendsMsg: AiAvailabilityResultMsg = {
-						type: MsgType.AI_AVAILABILITY_RESULT,
-						clientId: msg.data.clientId,
-						data: { backends: agentsManager.getAvailableAgents() },
-					};
-					conn.send(availableAIBackendsMsg);
 				});
 
 				conn.on(MsgType.SESSION_CLIENT_LEFT, (data: SessionClientLeftMsg) => {

@@ -20,7 +20,8 @@ import { AcpContentBlockSchema, MsgType } from "@shellular/protocol";
 
 import { config } from "@/config";
 import type { Connection } from "@/connection";
-import { BUILTIN_AGENT_DESCRIPTORS, isAgentAvailable } from "./agents";
+import { commandsExist } from "@/utils";
+import { BUILTIN_AGENT_DESCRIPTORS } from "./agents";
 import { ACP } from "./base";
 import { ClaudeCode } from "./claude-code";
 import { Codex } from "./codex";
@@ -365,24 +366,62 @@ export class AgentsManager {
 		}
 	}
 
-	listAgents() {
-		this.reloadDescriptors();
-		return [...this.descriptors.values()]
-			.filter(
-				(descriptor) =>
-					this.isAgentEnabled(descriptor.id) && isAgentAvailable(descriptor),
-			)
-			.map((descriptor) => this.getManagedAgentInfo(descriptor));
+	/**
+	 * Resolves which agent executables are installed, in one shell spawn.
+	 *
+	 * Every caller that needs availability for more than one descriptor should go
+	 * through this and pass the result down, rather than probing per descriptor:
+	 * a probe spawns a login shell (~170ms), so per-descriptor checks used to
+	 * serialize into seconds of blocked event loop on the first connection.
+	 */
+	/** Availability for a single descriptor, in the shape getManagedAgentInfo wants. */
+	private async resolveInstalledFor(
+		descriptor: AgentDescriptor,
+	): Promise<Map<string, boolean>> {
+		const found = await commandsExist([descriptor.agentExecutable]);
+
+		return new Map([
+			[
+				descriptor.id,
+				!descriptor.disabled && found.get(descriptor.agentExecutable) === true,
+			],
+		]);
 	}
 
-	listManagedAgents() {
-		this.reloadDescriptors();
-		return [...this.descriptors.values()].map((descriptor) =>
-			this.getManagedAgentInfo(descriptor),
+	private async resolveInstalled(): Promise<Map<string, boolean>> {
+		const executables = [...this.descriptors.values()].map(
+			(descriptor) => descriptor.agentExecutable,
+		);
+		const found = await commandsExist(executables);
+		return new Map(
+			[...this.descriptors.values()].map((descriptor) => [
+				descriptor.id,
+				!descriptor.disabled && found.get(descriptor.agentExecutable) === true,
+			]),
 		);
 	}
 
-	setAgentEnabled(agentId: AgentId, enabled: boolean) {
+	async listAgents() {
+		this.reloadDescriptors();
+		const installed = await this.resolveInstalled();
+		return [...this.descriptors.values()]
+			.filter(
+				(descriptor) =>
+					this.isAgentEnabled(descriptor.id) &&
+					installed.get(descriptor.id) === true,
+			)
+			.map((descriptor) => this.getManagedAgentInfo(descriptor, installed));
+	}
+
+	async listManagedAgents() {
+		this.reloadDescriptors();
+		const installed = await this.resolveInstalled();
+		return [...this.descriptors.values()].map((descriptor) =>
+			this.getManagedAgentInfo(descriptor, installed),
+		);
+	}
+
+	async setAgentEnabled(agentId: AgentId, enabled: boolean) {
 		const descriptor = this.descriptors.get(agentId);
 		if (!descriptor) throw new AgentUnavailableError(agentId, "unknown agent");
 		const config = readAgentsConfig();
@@ -397,10 +436,13 @@ export class AgentsManager {
 		this.reloadDescriptors();
 		const updated = this.descriptors.get(agentId);
 		if (!updated) throw new AgentUnavailableError(agentId, "unknown agent");
-		return this.getManagedAgentInfo(updated);
+		return this.getManagedAgentInfo(
+			updated,
+			await this.resolveInstalledFor(updated),
+		);
 	}
 
-	addCustomAgent(input: CustomAcpAgentInput) {
+	async addCustomAgent(input: CustomAcpAgentInput) {
 		const config = readAgentsConfig();
 		const existingIds = new Set([
 			...Object.keys(BUILTIN_AGENT_DESCRIPTORS),
@@ -415,10 +457,13 @@ export class AgentsManager {
 		const descriptor = this.descriptors.get(normalized.id);
 		if (!descriptor)
 			throw new AgentUnavailableError(normalized.id, "unknown agent");
-		return this.getManagedAgentInfo(descriptor);
+		return this.getManagedAgentInfo(
+			descriptor,
+			await this.resolveInstalledFor(descriptor),
+		);
 	}
 
-	updateCustomAgent(input: CustomAcpAgentInput) {
+	async updateCustomAgent(input: CustomAcpAgentInput) {
 		const config = readAgentsConfig();
 		const currentIndex = config.custom.findIndex(
 			(agent) => agent.id === input.id,
@@ -443,7 +488,10 @@ export class AgentsManager {
 		const descriptor = this.descriptors.get(normalized.id);
 		if (!descriptor)
 			throw new AgentUnavailableError(normalized.id, "unknown agent");
-		return this.getManagedAgentInfo(descriptor);
+		return this.getManagedAgentInfo(
+			descriptor,
+			await this.resolveInstalledFor(descriptor),
+		);
 	}
 
 	removeCustomAgent(agentId: AgentId) {
@@ -485,10 +533,13 @@ export class AgentsManager {
 
 	private getManagedAgentInfo(
 		descriptor: AgentDescriptor,
+		// Availability resolved once by the caller (see resolveInstalled), so this
+		// stays synchronous instead of spawning a login shell per descriptor.
+		installedByAgent: Map<string, boolean>,
 	): ManagedAcpAgentInfo {
 		const runtime = this.agents.get(descriptor.id);
 		const runtimeInfo = runtime?.getInfo();
-		const installed = isAgentAvailable(descriptor);
+		const installed = installedByAgent.get(descriptor.id) === true;
 		const enabled = this.isAgentEnabled(descriptor.id);
 		const state = installed
 			? (runtimeInfo?.state ?? "exited")
@@ -987,10 +1038,12 @@ export class AgentsManager {
 		this.sessionAgents.clear();
 	}
 
-	getAvailableAgents(): AgentId[] {
+	async getAvailableAgents(): Promise<AgentId[]> {
 		this.reloadDescriptors();
+		const installed = await this.resolveInstalled();
 		return [...this.descriptors.values()].flatMap((descriptor) =>
-			this.isAgentEnabled(descriptor.id) && isAgentAvailable(descriptor)
+			this.isAgentEnabled(descriptor.id) &&
+			installed.get(descriptor.id) === true
 				? [descriptor.id]
 				: [],
 		);
@@ -1035,15 +1088,6 @@ export class AgentsManager {
 			});
 		});
 
-		conn.on(MsgType.AI_AVAILABILITY, (msg) => {
-			conn.send({
-				type: MsgType.AI_AVAILABILITY_RESULT,
-				clientId: msg.clientId,
-				respTo: msg.id,
-				data: { backends: this.getAvailableAgents() },
-			});
-		});
-
 		conn.on(MsgType.AI_SESSION_LIST, async (msg) => {
 			try {
 				const backend = msg.data?.backend;
@@ -1074,8 +1118,8 @@ export class AgentsManager {
 			}
 		});
 
-		conn.on(MsgType.AI_AGENTS_LIST, (msg) => {
-			const agents = this.listAgents();
+		conn.on(MsgType.AI_AGENTS_LIST, async (msg) => {
+			const agents = await this.listAgents();
 			conn.send({
 				type: MsgType.AI_AGENTS_LIST_RESULT,
 				clientId: msg.clientId,
@@ -1084,18 +1128,21 @@ export class AgentsManager {
 			});
 		});
 
-		conn.on(MsgType.AI_AGENTS_MANAGE_LIST, (msg) => {
+		conn.on(MsgType.AI_AGENTS_MANAGE_LIST, async (msg) => {
 			conn.send({
 				type: MsgType.AI_AGENTS_MANAGE_LIST_RESULT,
 				clientId: msg.clientId,
 				respTo: msg.id,
-				data: { ok: true, agents: this.listManagedAgents() },
+				data: { ok: true, agents: await this.listManagedAgents() },
 			});
 		});
 
-		conn.on(MsgType.AI_AGENTS_ENABLE_SET, (msg) => {
+		conn.on(MsgType.AI_AGENTS_ENABLE_SET, async (msg) => {
 			try {
-				const agent = this.setAgentEnabled(msg.data.backend, msg.data.enabled);
+				const agent = await this.setAgentEnabled(
+					msg.data.backend,
+					msg.data.enabled,
+				);
 				conn.send({
 					type: MsgType.AI_AGENTS_ENABLE_SET_RESULT,
 					clientId: msg.clientId,
@@ -1113,9 +1160,9 @@ export class AgentsManager {
 			}
 		});
 
-		conn.on(MsgType.AI_AGENTS_CUSTOM_ADD, (msg) => {
+		conn.on(MsgType.AI_AGENTS_CUSTOM_ADD, async (msg) => {
 			try {
-				const agent = this.addCustomAgent(msg.data);
+				const agent = await this.addCustomAgent(msg.data);
 				conn.send({
 					type: MsgType.AI_AGENTS_CUSTOM_ADD_RESULT,
 					clientId: msg.clientId,
@@ -1133,9 +1180,9 @@ export class AgentsManager {
 			}
 		});
 
-		conn.on(MsgType.AI_AGENTS_CUSTOM_UPDATE, (msg) => {
+		conn.on(MsgType.AI_AGENTS_CUSTOM_UPDATE, async (msg) => {
 			try {
-				const agent = this.updateCustomAgent(msg.data);
+				const agent = await this.updateCustomAgent(msg.data);
 				conn.send({
 					type: MsgType.AI_AGENTS_CUSTOM_UPDATE_RESULT,
 					clientId: msg.clientId,
@@ -1153,14 +1200,14 @@ export class AgentsManager {
 			}
 		});
 
-		conn.on(MsgType.AI_AGENTS_CUSTOM_REMOVE, (msg) => {
+		conn.on(MsgType.AI_AGENTS_CUSTOM_REMOVE, async (msg) => {
 			try {
 				this.removeCustomAgent(msg.data.backend);
 				conn.send({
 					type: MsgType.AI_AGENTS_CUSTOM_REMOVE_RESULT,
 					clientId: msg.clientId,
 					respTo: msg.id,
-					data: { ok: true, agents: this.listManagedAgents() },
+					data: { ok: true, agents: await this.listManagedAgents() },
 				});
 			} catch (err) {
 				conn.send({
@@ -1757,9 +1804,11 @@ export class AgentsManager {
 		clientId: string,
 		workspace?: string,
 	): Promise<AiSession[]> {
+		const installed = await this.resolveInstalled();
 		const results = await Promise.allSettled(
 			[...this.descriptors.values()].flatMap((descriptor) =>
-				this.isAgentEnabled(descriptor.id) && isAgentAvailable(descriptor)
+				this.isAgentEnabled(descriptor.id) &&
+				installed.get(descriptor.id) === true
 					? [
 							this.connectAgent(clientId, descriptor.id).then(
 								async (agent) => ({
