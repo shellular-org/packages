@@ -51,7 +51,7 @@ import { preStart } from "@/pre-start";
 import { cleanupProxy, initProxyHandler } from "@/proxy";
 import { ServerUrl } from "@/server-url";
 import { initBatteryStream, initSysmonHandler } from "@/sysmon";
-import { initTerminalHandler, restoreTerminals } from "@/terminal";
+import { initTerminalHandler } from "@/terminal";
 import { checkForUpdate, getUpdateInfo } from "@/update-check";
 import { showSelfUpdateLogs } from "@/update-logs";
 import { runSelfUpdate } from "@/update-runner";
@@ -572,11 +572,6 @@ async function runCli({
 	});
 
 	startCaffeinate();
-
-	// Re-spawn terminals that survived the last CLI exit (VS Code–style restore).
-	// Done once at boot, before connecting, so restored terminals exist regardless
-	// of when the app reconnects — TERMINAL_LIST/ATTACH then find them in memory.
-	restoreTerminals(workDir);
 
 	connectWithReconnect(
 		serverUrl.toApiUrl(),

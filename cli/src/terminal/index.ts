@@ -19,7 +19,7 @@ import { logger } from "@/logger";
 import { execFileAsync, mapGetOrInsert } from "@/utils";
 import {
 	type PersistedTerminal,
-	readPersistedTerminals,
+	readPersistedTerminalsForClient,
 	removeTerminal as removePersistedTerminal,
 	writeTerminal,
 } from "./persistance";
@@ -50,10 +50,29 @@ interface TerminalEntry {
 	title?: string;
 	cols: number;
 	rows: number;
+	/**
+	 * The restored scrollback exactly as read from disk, for a terminal re-spawned
+	 * from a persisted record; undefined for a freshly created one.
+	 *
+	 * The "History restored" divider is deliberately NOT written into `headless`:
+	 * everything in that buffer round-trips through serialize() into the persisted
+	 * file, so a divider written there would come back as history on the next boot
+	 * and stack another one every restart. The divider is added at attach time
+	 * instead, so the file stays clean no matter how often the CLI restarts.
+	 *
+	 * Held verbatim rather than as an offset into the serialized buffer: the
+	 * serializer re-emits the WHOLE buffer as it grows, so an offset recorded at
+	 * restore time drifts, and slicing at it can cut an escape sequence in half —
+	 * leaving the tail (`0m`) to render as literal text. Concatenating whole
+	 * strings is safe by construction.
+	 */
+	restoredHistory?: string;
 	/** Debounce timer for persisting buffer snapshots (see scheduleSnapshot). */
 	persistTimer?: ReturnType<typeof setTimeout>;
 	/** Disposes the OSC 7 handler when the terminal exits. */
 	oscDisposable?: { dispose(): void };
+	/** Disposes the ED (clear) handler when the terminal exits. */
+	clearDisposable?: { dispose(): void };
 }
 
 const shell =
@@ -121,7 +140,79 @@ const PERSIST_DEBOUNCE_MS = 1000;
 // Printed after the restored scrollback so the user can see where the previous
 // (now-dead) shell ended and the freshly-spawned one begins, like VS Code.
 const RESTORE_MARKER_TEXT = "─── History restored ───";
-const RESTORE_MARKER = `\r\n\x1b[2m${RESTORE_MARKER_TEXT}\x1b[0m\r\n`;
+// Leading \x1b[0m matters: the restored scrollback can end with an SGR attribute
+// still open (a colored prompt awaiting input leaves e.g. \x1b[31m active). We
+// reset before styling the divider so it renders dim rather than inheriting that
+// color, and reset again after so the divider never leaks its own styling into
+// the new session's output.
+const RESTORE_MARKER = `\r\n\x1b[0m\x1b[2m${RESTORE_MARKER_TEXT}\x1b[0m\r\n`;
+
+/**
+ * Keeps the most recent `maxLines` lines of a snapshot, dropping the oldest.
+ * Cuts on a line boundary so an escape sequence is never split in half.
+ *
+ * Snapshots usually end in a newline, which makes split() yield a trailing ""
+ * that would otherwise consume one line of the budget; it is set aside and
+ * re-attached so the cap is spent entirely on real content.
+ */
+function trimToLastLines(snapshot: string, maxLines: number): string {
+	const lines = snapshot.split("\n");
+	const trailer = lines[lines.length - 1] === "" ? lines.pop() : undefined;
+	if (lines.length <= maxLines) return snapshot;
+	const kept = lines.slice(-maxLines).join("\n");
+	return trailer === undefined ? kept : `${kept}\n`;
+}
+
+/**
+ * Joins carried-over history to the current session's output on a line break.
+ *
+ * A snapshot normally ends mid-line, at the live prompt the dead shell left
+ * behind ("user@host ~ $ "), with no trailing newline. Concatenating directly
+ * would run the new session's first prompt onto that same line — two prompts on
+ * one line. Only added when the history does not already end in a newline, so a
+ * snapshot captured just after output does not gain a blank line.
+ */
+function joinScrollback(history: string, live: string): string {
+	if (!history) return live;
+	if (!live) return history;
+	return /\r?\n$/.test(history) ? history + live : `${history}\r\n${live}`;
+}
+
+/**
+ * The terminal's full scrollback for persistence: restored history followed by
+ * this session's own output. No divider — see TerminalEntry.restoredHistory.
+ *
+ * Trimmed here rather than at restore time. restoredHistory lives OUTSIDE the
+ * headless buffer, so MAX_REPLAY_SCROLLBACK does not bound it; capping only on
+ * the way in would still let each file exceed the cap by a whole live buffer
+ * (history + live), which then becomes the next run's history.
+ */
+function serializeForPersist(entry: TerminalEntry): string {
+	const live = entry.serializer.serialize();
+	if (!entry.restoredHistory) return live;
+	return trimToLastLines(
+		joinScrollback(entry.restoredHistory, live),
+		MAX_REPLAY_SCROLLBACK,
+	);
+}
+
+/**
+ * The terminal's scrollback for sending to a client: the same content, with the
+ * divider marking where the previous (now-dead) shell ended.
+ *
+ * Both halves are serialized independently and concatenated whole, so the join
+ * can never land inside an escape sequence — splicing at a recorded byte offset
+ * used to cut `\x1b[0m` in half and render a literal `0m`.
+ */
+function serializeForClient(entry: TerminalEntry): string {
+	const live = entry.serializer.serialize();
+	if (!entry.restoredHistory) return live;
+	// The divider opens with its own newline, so strip a trailing one from the
+	// history to avoid a blank line; joinScrollback then supplies the break
+	// between the divider and the new session.
+	const history = entry.restoredHistory.replace(/\r?\n$/, "");
+	return joinScrollback(history + RESTORE_MARKER, live);
+}
 
 // cwd detection, VS Code style. Two paths, in order of preference:
 //
@@ -196,6 +287,33 @@ function wireCwdDetection(entry: TerminalEntry): void {
 	});
 }
 
+// Drops the carried-over history when the user clears the terminal.
+//
+// `restoredHistory` lives OUTSIDE the headless buffer (see TerminalEntry), so
+// clearing the terminal empties the buffer but leaves that string untouched —
+// and every later serialize would prepend it again, resurrecting pre-clear
+// output that the user explicitly wiped. Watching ED (CSI J) lets us invalidate
+// it at the same moment xterm clears the buffer.
+//
+// Only ED2 (clear viewport) and ED3 (clear scrollback) count: `clear` emits
+// \x1b[3J\x1b[H\x1b[2J. ED0/ED1 are partial erases (below/above the cursor) that
+// leave scrollback intact, and apps like vim use them constantly for redraws —
+// treating those as a clear would discard history mid-session.
+function wireClearDetection(entry: TerminalEntry): void {
+	entry.clearDisposable = entry.headless.parser.registerCsiHandler(
+		{ final: "J" },
+		(params) => {
+			const mode = params[0];
+			const value = typeof mode === "number" ? mode : 0;
+			if (value === 2 || value === 3) {
+				entry.restoredHistory = undefined;
+			}
+			// Return false so xterm still performs the erase itself.
+			return false;
+		},
+	);
+}
+
 // Minimum spacing between pid probes. Only used for shells without OSC 7; a
 // slightly stale cwd only matters at restore time (rare), so throttling is safe.
 const CWD_PROBE_INTERVAL_MS = 5000;
@@ -228,7 +346,7 @@ function toPersisted(
 		shell: entry.shell,
 		cwd: entry.cwd,
 		title: entry.title,
-		snapshot: entry.serializer.serialize(),
+		snapshot: serializeForPersist(entry),
 		cols: entry.cols,
 		rows: entry.rows,
 		updatedAt: new Date().toISOString(),
@@ -298,6 +416,8 @@ function createTerminal({
 		cwdFromOsc: false,
 		// 0 forces a live-cwd probe on the first persist (create/restore/wire).
 		cwdCheckedAt: 0,
+		// Set by restoreTerminalsForClient; a fresh terminal has no prior history.
+		restoredHistory: undefined,
 		cols,
 		rows,
 	};
@@ -311,11 +431,6 @@ function wireTerminal(
 	entry: TerminalEntry,
 	terminalId: string,
 	clientTerminals: Map<string, TerminalEntry>,
-	// Restored terminals persist their own (marker-free) snapshot before wiring
-	// and pass true here to skip this immediate re-persist. Skipping avoids baking
-	// the presentational RESTORE_MARKER into the file, where it would otherwise
-	// stack a fresh marker onto the buffer on every subsequent restart.
-	skipInitialPersist = false,
 ): void {
 	const { clientId } = entry;
 	clientTerminals.set(terminalId, entry);
@@ -323,10 +438,14 @@ function wireTerminal(
 	// Start listening for the shell's OSC 7 cwd reports (preferred path). Wired
 	// before the pty streams so the first prompt's report is captured.
 	wireCwdDetection(entry);
+	// Invalidates carried-over history when the user clears the terminal.
+	wireClearDetection(entry);
 
 	// A terminal that exists is a terminal to restore: persist it immediately so
-	// even a crash before the first snapshot debounce still brings it back.
-	if (!skipInitialPersist) persistTerminal(entry, terminalId);
+	// even a crash before the first snapshot debounce still brings it back. Safe
+	// for restored terminals too — the buffer holds only real shell output, never
+	// the divider.
+	persistTerminal(entry, terminalId);
 
 	entry.headless.onTitleChange((title) => {
 		entry.title = title;
@@ -354,6 +473,7 @@ function wireTerminal(
 	entry.pty.onExit(({ exitCode }) => {
 		if (entry.persistTimer) clearTimeout(entry.persistTimer);
 		entry.oscDisposable?.dispose();
+		entry.clearDisposable?.dispose();
 		clientTerminals.delete(terminalId);
 		entry.headless.dispose();
 		// The shell exited on its own — the user is done with it, so drop the
@@ -372,6 +492,12 @@ export function initTerminalHandler(conn: Connection, workDir: string) {
 	// Track the current active connection so PTY async callbacks always use
 	// the latest socket rather than the one captured at spawn time.
 	activeConn = conn;
+
+	// Restore a client's terminals only once it is actually connected, so the
+	// restored PTYs have somewhere to stream to. Idempotent across reconnects.
+	conn.on(MsgType.SESSION_CLIENT_JOINED, (msg) => {
+		restoreTerminalsForClient(msg.data.clientId, workDir);
+	});
 
 	conn.on(MsgType.TERMINAL_CREATE, (msg) => {
 		const { clientId } = msg;
@@ -465,7 +591,9 @@ export function initTerminalHandler(conn: Connection, workDir: string) {
 			entry.rows = nextRows;
 		} catch {}
 
-		const snapshot = entry.serializer.serialize();
+		// Restored history + divider + this session's output. The divider exists
+		// only in this outgoing copy, never in the buffer or the persisted file.
+		const snapshot = serializeForClient(entry);
 		const respMsg: TerminalAttachResultMsg = {
 			type: MsgType.TERMINAL_ATTACH_RESULT,
 			clientId,
@@ -519,6 +647,7 @@ export function initTerminalHandler(conn: Connection, workDir: string) {
 		if (entry) {
 			if (entry.persistTimer) clearTimeout(entry.persistTimer);
 			entry.oscDisposable?.dispose();
+			entry.clearDisposable?.dispose();
 			entry.pty.kill();
 			entry.headless.dispose();
 			clientTerminals.delete(msg.data.terminalId);
@@ -542,20 +671,40 @@ export function initTerminalHandler(conn: Connection, workDir: string) {
 	});
 }
 
+// Clients whose persisted terminals have already been restored in this process.
+// Restore is driven by SESSION_CLIENT_JOINED, which fires again on every CLI
+// reconnect and on every app re-join, so without this a flapping connection
+// would re-spawn shells that are already live in memory.
+const restoredClients = new Set<string>();
+
 /**
  * Re-spawns the terminals that were alive (and not closed/killed) when the CLI
- * last exited. Call ONCE at daemon startup, before clients connect. Each stored
- * terminal is restored into a fresh login shell in its last cwd, with its saved
- * scrollback replayed as history followed by a restore marker — VS Code style.
- * The dead shell's live process state cannot survive a restart; only the buffer,
- * cwd, and title carry over.
+ * last exited, for ONE client — called when that client connects, not at boot.
+ *
+ * Restoring lazily (rather than for everyone at startup) matters because
+ * wireTerminal immediately starts emitting TERMINAL_DATA/TERMINAL_TITLE, and
+ * doing that with no client attached sends events into the void. A terminal
+ * already live in memory is left alone; only ids present on disk but absent
+ * from memory are restored.
  */
-export function restoreTerminals(workDir: string): void {
-	const persisted = readPersistedTerminals();
+export function restoreTerminalsForClient(
+	clientId: string,
+	workDir: string,
+): void {
+	if (restoredClients.has(clientId)) return;
+	restoredClients.add(clientId);
+
+	const persisted = readPersistedTerminalsForClient(clientId);
 	if (persisted.length === 0) return;
+
+	const clientTerminals = getClientTerminals(clientId);
 
 	let restored = 0;
 	for (const saved of persisted) {
+		// Already live in memory (e.g. survived a CLI reconnect) — restoring it
+		// again would spawn a duplicate shell and clobber the live entry.
+		if (clientTerminals.has(saved.terminalId)) continue;
+
 		// If the saved cwd no longer exists (deleted between runs), fall back to
 		// the daemon's working dir rather than failing to spawn.
 		const cwd = saved.cwd && fs.existsSync(saved.cwd) ? saved.cwd : workDir;
@@ -563,7 +712,7 @@ export function restoreTerminals(workDir: string): void {
 		let entry: TerminalEntry;
 		try {
 			entry = createTerminal({
-				clientId: saved.clientId,
+				clientId,
 				rows: saved.rows,
 				cols: saved.cols,
 				cwd,
@@ -579,25 +728,23 @@ export function restoreTerminals(workDir: string): void {
 		}
 
 		entry.title = saved.title;
-		const clientTerminals = getClientTerminals(saved.clientId);
 
-		// Seed the headless buffer with the saved scrollback, then a marker so the
-		// user sees where the previous shell ended. Both are written only to the
-		// headless mirror (not the live pty) so they become scrollback the app
-		// receives on attach; the fresh shell's own prompt follows underneath.
-		if (saved.snapshot) {
-			entry.headless.write(saved.snapshot);
-		}
-		entry.headless.write(RESTORE_MARKER);
+		// Hold the saved scrollback aside instead of writing it into the headless
+		// buffer: the buffer then contains only the fresh shell's own output, and
+		// the two are joined (with the divider, for clients) at serialize time.
+		// Keeping them separate is what makes the join safe — see restoredHistory.
+		// Bounded on the persist path (serializeForPersist), so the file cannot grow
+		// across restarts.
+		entry.restoredHistory = saved.snapshot || undefined;
 
-		// skipInitialPersist: the snapshot we'd write here still holds the freshly
-		// injected marker; leave persistence to the first real PTY output.
-		wireTerminal(entry, saved.terminalId, clientTerminals, true);
+		wireTerminal(entry, saved.terminalId, clientTerminals);
 
 		restored++;
 	}
 
 	if (restored > 0) {
-		logger.log(`♻️  Restored ${restored} terminal(s) from previous session.`);
+		logger.log(
+			`♻️  Restored ${restored} terminal(s) for client ${clientId} from previous session.`,
+		);
 	}
 }
