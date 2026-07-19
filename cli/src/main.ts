@@ -594,6 +594,14 @@ async function runCli({
 						),
 					);
 
+					logger.log(
+						"🚀",
+						chalk.cyan(
+							`New relay servers in US and EU for lower latency. Update the app to ${chalk.bold("v0.0.36")} to use them.`,
+						),
+					);
+					logger.log();
+
 					if (showQr) {
 						logger.log(
 							"📲",
