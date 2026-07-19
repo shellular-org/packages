@@ -13,7 +13,6 @@ import {
 	type AiAgentsManageListMsg,
 	type AiAttachmentWriteMsg,
 	type AiAuthSetMsg,
-	type AiAvailabilityMsg,
 	type AiCommandMsg,
 	type AiMessagesListMsg,
 	type AiPermissionReplyMsg,
@@ -291,10 +290,7 @@ export class Connection extends EventEmitter {
 		eventName: typeof MsgType.WS_CLOSE,
 		listener: (msg: WsCloseMsg) => void,
 	): this;
-	on(
-		eventName: typeof MsgType.AI_AVAILABILITY,
-		listener: (msg: AiAvailabilityMsg) => void,
-	): this;
+
 	on(
 		eventName: typeof MsgType.AI_SESSION_LIST,
 		listener: (msg: AiSessionListMsg) => void,
@@ -571,10 +567,7 @@ export class Connection extends EventEmitter {
 		eventName: typeof MsgType.WS_CLOSE,
 		listener: (msg: WsCloseMsg) => void,
 	): this;
-	once(
-		eventName: typeof MsgType.AI_AVAILABILITY,
-		listener: (msg: AiAvailabilityMsg) => void,
-	): this;
+
 	once(
 		eventName: "disconnected",
 		listener: (info: DisconnectInfo) => void,
@@ -651,10 +644,6 @@ export class Connection extends EventEmitter {
 	emit(eventName: typeof MsgType.WS_OPEN, msg: WsOpenMsg): boolean;
 	emit(eventName: typeof MsgType.WS_DATA, msg: WsDataMsg): boolean;
 	emit(eventName: typeof MsgType.WS_CLOSE, msg: WsCloseMsg): boolean;
-	emit(
-		eventName: typeof MsgType.AI_AVAILABILITY,
-		msg: AiAvailabilityMsg,
-	): boolean;
 	emit(
 		eventName: typeof MsgType.AI_SESSION_LIST,
 		msg: AiSessionListMsg,

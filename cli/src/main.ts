@@ -5,7 +5,6 @@ import path from "node:path";
 
 import { checkbox, confirm } from "@inquirer/prompts";
 import {
-	type AiAvailabilityResultMsg,
 	type ClientUserInfo,
 	type HostInfo,
 	type HostUpdateMsg,
@@ -51,7 +50,7 @@ import { preStart } from "@/pre-start";
 import { cleanupProxy, initProxyHandler } from "@/proxy";
 import { ServerUrl } from "@/server-url";
 import { initBatteryStream, initSysmonHandler } from "@/sysmon";
-import { initTerminalHandler, restoreTerminals } from "@/terminal";
+import { initTerminalHandler } from "@/terminal";
 import { checkForUpdate, getUpdateInfo } from "@/update-check";
 import { showSelfUpdateLogs } from "@/update-logs";
 import { runSelfUpdate } from "@/update-runner";
@@ -573,11 +572,6 @@ async function runCli({
 
 	startCaffeinate();
 
-	// Re-spawn terminals that survived the last CLI exit (VS Code–style restore).
-	// Done once at boot, before connecting, so restored terminals exist regardless
-	// of when the app reconnects — TERMINAL_LIST/ATTACH then find them in memory.
-	restoreTerminals(workDir);
-
 	connectWithReconnect(
 		serverUrl.toApiUrl(),
 		hostInfo,
@@ -599,6 +593,14 @@ async function runCli({
 							`Messages are ${chalk.underline("end-to-end encrypted")}.`,
 						),
 					);
+
+					logger.log(
+						"🚀",
+						chalk.cyan(
+							`New relay servers in US and EU for lower latency. Update the app to ${chalk.bold("v0.0.36")} to use them.`,
+						),
+					);
+					logger.log();
 
 					if (showQr) {
 						logger.log(
@@ -835,7 +837,7 @@ async function runCli({
 					},
 				);
 
-				conn.on(MsgType.SESSION_CLIENT_JOINED, (msg) => {
+				conn.on(MsgType.SESSION_CLIENT_JOINED, async (msg) => {
 					upsertClient(
 						{
 							clientId: msg.data.clientId,
@@ -864,14 +866,6 @@ async function runCli({
 					logger.log(
 						`  - ${chalk.green("App Version:")} v${msg.data.appVersion}\n`,
 					);
-
-					// let the client know which AI backends are available
-					const availableAIBackendsMsg: AiAvailabilityResultMsg = {
-						type: MsgType.AI_AVAILABILITY_RESULT,
-						clientId: msg.data.clientId,
-						data: { backends: agentsManager.getAvailableAgents() },
-					};
-					conn.send(availableAIBackendsMsg);
 				});
 
 				conn.on(MsgType.SESSION_CLIENT_LEFT, (data: SessionClientLeftMsg) => {
