@@ -711,6 +711,11 @@ export class AgentsManager {
 		const sessionId = result.session.id ?? result.response.sessionId;
 		this.sessionRuntimes.set(this.sessionKey(agentId, sessionId), agent);
 		this.sessionAgents.set(sessionId, agentId);
+		this.rememberSessionClient(agentId, sessionId, clientId);
+		const availableCommands = latestAvailableCommands(result.updates);
+		if (availableCommands) {
+			this.updateSnapshotState(agentId, sessionId, { availableCommands });
+		}
 		return result;
 	}
 
@@ -1036,6 +1041,7 @@ export class AgentsManager {
 		this.sessionRuntimes.clear();
 		this.sessionRuntimeCleanupTimers.clear();
 		this.sessionAgents.clear();
+		this.sessionStates.clear();
 	}
 
 	async getAvailableAgents(): Promise<AgentId[]> {
@@ -1057,6 +1063,7 @@ export class AgentsManager {
 	private attachedSessionClients = new Map<string, Set<string>>();
 	private sessionRevisions = new Map<string, number>();
 	private sessionRuntimeStates = new Map<string, AiSessionRuntimeState>();
+	private sessionStates = new Map<string, Partial<AiSessionState>>();
 	private permissionListenerCleanups = new Map<string, () => void>();
 
 	subscribe(
@@ -1849,6 +1856,16 @@ export class AgentsManager {
 				this.upsertSnapshotMessage(backend, sessionId, message as AcpMessage);
 			}
 		}
+		if (
+			typeof sessionId === "string" &&
+			event.type === "session.status" &&
+			Array.isArray(event.properties.availableCommands)
+		) {
+			this.updateSnapshotState(backend, sessionId, {
+				availableCommands: event.properties
+					.availableCommands as AiSessionState["availableCommands"],
+			});
+		}
 		const targets =
 			typeof sessionId === "string"
 				? this.getEventTargetClientIds(backend, sessionId, clientId)
@@ -1876,8 +1893,17 @@ export class AgentsManager {
 		sessionId: string,
 		snapshot: AttachedSessionSnapshot,
 	) {
-		this.sessionSnapshots.set(this.sessionKey(agentId, sessionId), snapshot);
-		return snapshot;
+		const key = this.sessionKey(agentId, sessionId);
+		const state = this.sessionStates.get(key);
+		const next = {
+			...snapshot,
+			state: {
+				...(snapshot.state ?? {}),
+				...(state ?? {}),
+			},
+		};
+		this.sessionSnapshots.set(key, next);
+		return next;
 	}
 
 	private upsertSnapshotMessage(
@@ -1900,6 +1926,28 @@ export class AgentsManager {
 		this.sessionSnapshots.set(key, {
 			...snapshot,
 			messages,
+			revision: this.getSessionRevision(agentId, sessionId),
+		});
+	}
+
+	private updateSnapshotState(
+		agentId: AiBackend,
+		sessionId: string,
+		state: Partial<AiSessionState>,
+	) {
+		const key = this.sessionKey(agentId, sessionId);
+		this.sessionStates.set(key, {
+			...(this.sessionStates.get(key) ?? {}),
+			...state,
+		});
+		const snapshot = this.sessionSnapshots.get(key);
+		if (!snapshot) return;
+		this.sessionSnapshots.set(key, {
+			...snapshot,
+			state: {
+				...snapshot.state,
+				...state,
+			},
 			revision: this.getSessionRevision(agentId, sessionId),
 		});
 	}
