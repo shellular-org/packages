@@ -96,6 +96,10 @@ export const MsgType = {
 	PROJECT_FILE_SEARCH: "project:file-search",
 	/** Response with project file search results */
 	PROJECT_FILE_SEARCH_RESULT: "project:file-search:result",
+	/** Request a paged, stable project tree snapshot */
+	PROJECT_TREE: "project:tree",
+	/** Response with one page from a project tree snapshot */
+	PROJECT_TREE_RESULT: "project:tree:result",
 	/** Request to read original file content from git */
 	GIT_READ: "git:read",
 	/** Response with original file content from git */

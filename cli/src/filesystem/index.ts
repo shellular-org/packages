@@ -28,6 +28,8 @@ import {
 	type ProjectFileSearchResultMsg,
 	type ProjectInfoMsg,
 	type ProjectInfoResultMsg,
+	type ProjectTreeMsg,
+	type ProjectTreeResultMsg,
 } from "@shellular/protocol";
 
 import type { HostConnection } from "@/connection";
@@ -42,6 +44,7 @@ import {
 	runGitOperation,
 } from "./git";
 import { searchProjectFiles } from "./project-search";
+import { ProjectTreeSnapshotStore } from "./project-tree";
 
 /**
  * Resolve a path relative to rootDir and verify it doesn't escape.
@@ -59,6 +62,28 @@ function safePath(rootDir: string, requestedPath: string): string | null {
 		return null;
 	}
 	return resolved;
+}
+
+async function safeProjectTreePath(
+	rootDir: string,
+	requestedPath: string,
+): Promise<string | null> {
+	const lexicalPath = safePath(rootDir, requestedPath);
+	if (!lexicalPath) return null;
+	try {
+		const [realRoot, realProject] = await Promise.all([
+			fs.promises.realpath(rootDir),
+			fs.promises.realpath(lexicalPath),
+		]);
+		const rootPrefix = realRoot.endsWith(path.sep)
+			? realRoot
+			: `${realRoot}${path.sep}`;
+		return realProject === realRoot || realProject.startsWith(rootPrefix)
+			? realProject
+			: null;
+	} catch {
+		return null;
+	}
 }
 
 function findNearestExistingDir(targetPath: string): string | null {
@@ -80,6 +105,7 @@ function findNearestExistingDir(targetPath: string): string | null {
 }
 
 export function initFilesystemHandler(conn: HostConnection, rootDir: string) {
+	const projectTrees = new ProjectTreeSnapshotStore();
 	conn.on(MsgType.FS_LIST, async (msg: FsListMsg) => {
 		const { clientId } = msg;
 		const dirPath = safePath(rootDir, msg.data.path);
@@ -582,6 +608,7 @@ export function initFilesystemHandler(conn: HostConnection, rootDir: string) {
 				message: msg.data.message,
 				branch: msg.data.branch,
 				force: msg.data.force,
+				diffTarget: msg.data.diffTarget,
 			});
 			const respMsg: GitOperationResultMsg = {
 				type: MsgType.GIT_OPERATION_RESULT,
@@ -655,6 +682,46 @@ export function initFilesystemHandler(conn: HostConnection, rootDir: string) {
 				error: (err as Error).message,
 			};
 			conn.send(respMsg);
+		}
+	});
+
+	conn.on(MsgType.PROJECT_TREE, async (msg: ProjectTreeMsg) => {
+		const { clientId } = msg;
+		const projectPath = await safeProjectTreePath(rootDir, msg.data.path);
+		if (!projectPath) {
+			const response: ProjectTreeResultMsg = {
+				type: MsgType.PROJECT_TREE_RESULT,
+				clientId,
+				respTo: msg.id,
+				error: "Access denied: path outside workspace",
+			};
+			conn.send(response);
+			return;
+		}
+
+		try {
+			const stat = await fs.promises.stat(projectPath);
+			if (!stat.isDirectory())
+				throw new Error("Project path is not a directory");
+			const page = await projectTrees.page(projectPath, msg.data);
+			const response: ProjectTreeResultMsg = {
+				type: MsgType.PROJECT_TREE_RESULT,
+				clientId,
+				respTo: msg.id,
+				data: {
+					path: msg.data.path,
+					...page,
+				},
+			};
+			conn.send(response);
+		} catch (error) {
+			const response: ProjectTreeResultMsg = {
+				type: MsgType.PROJECT_TREE_RESULT,
+				clientId,
+				respTo: msg.id,
+				error: (error as Error).message,
+			};
+			conn.send(response);
 		}
 	});
 

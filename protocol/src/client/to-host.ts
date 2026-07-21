@@ -52,6 +52,7 @@ import {
 	GitReadMsgSchema,
 	ProjectFileSearchMsgSchema,
 	ProjectInfoMsgSchema,
+	ProjectTreeMsgSchema,
 } from "@/filesystem";
 import { HostUpdateMsgSchema } from "@/host/update";
 import {
@@ -95,6 +96,7 @@ export const ClientToHostMsgSchema = z.discriminatedUnion("type", [
 	PortsKillMsgSchema,
 	ProjectInfoMsgSchema,
 	ProjectFileSearchMsgSchema,
+	ProjectTreeMsgSchema,
 	GitReadMsgSchema,
 	GitLogMsgSchema,
 	GitCommitFilesMsgSchema,

@@ -78,6 +78,13 @@ export type GitWorkingTreeFileDiff = z.infer<
 	typeof GitWorkingTreeFileDiffSchema
 >;
 
+export const GitDiffTargetSchema = z.enum([
+	"head-to-worktree",
+	"head-to-index",
+	"index-to-worktree",
+]);
+export type GitDiffTarget = z.infer<typeof GitDiffTargetSchema>;
+
 export const GitOperationSchema = z.enum([
 	"status",
 	"diff",
@@ -228,6 +235,7 @@ export const GitOperationMsgSchema = z.object({
 		message: z.string().optional(),
 		branch: z.string().optional(),
 		force: z.boolean().optional(),
+		diffTarget: GitDiffTargetSchema.optional(),
 	}),
 });
 export type GitOperationMsg = z.infer<typeof GitOperationMsgSchema>;
@@ -505,3 +513,40 @@ export const ProjectFileSearchResultMsgSchema = z.object({
 export type ProjectFileSearchResultMsg = z.infer<
 	typeof ProjectFileSearchResultMsgSchema
 >;
+
+export const ProjectTreeMsgSchema = z.object({
+	id: z.string(),
+	type: z.literal(MsgType.PROJECT_TREE),
+	clientId: z.string(),
+	data: z.object({
+		path: z.string(),
+		snapshotId: z.string().optional(),
+		cursor: z.number().int().nonnegative().optional(),
+		pageSize: z.number().int().min(100).max(5000).optional(),
+		refresh: z.boolean().optional(),
+	}),
+});
+export type ProjectTreeMsg = z.infer<typeof ProjectTreeMsgSchema>;
+
+export const ProjectTreeResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.PROJECT_TREE_RESULT),
+	clientId: z.string(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			path: z.string(),
+			snapshotId: z.string(),
+			entries: z.array(
+				z.object({
+					relativePath: z.string(),
+					type: z.enum(["directory", "file"]),
+					gitStatus: GitStatusSchema.nullable().optional(),
+				}),
+			),
+			nextCursor: z.number().int().nonnegative().optional(),
+		})
+		.optional(),
+});
+export type ProjectTreeResultMsg = z.infer<typeof ProjectTreeResultMsgSchema>;

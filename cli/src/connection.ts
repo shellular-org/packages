@@ -63,6 +63,7 @@ import {
 	type PortsListMsg,
 	type ProjectFileSearchMsg,
 	type ProjectInfoMsg,
+	type ProjectTreeMsg,
 	parseMessage,
 	ServerCloseCodeAndReason,
 	type SessionClientJoinedMsg,
@@ -289,6 +290,10 @@ export class Connection extends EventEmitter {
 	on(
 		eventName: typeof MsgType.PROJECT_FILE_SEARCH,
 		listener: (msg: ProjectFileSearchMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.PROJECT_TREE,
+		listener: (msg: ProjectTreeMsg) => void,
 	): this;
 	on(
 		eventName: typeof MsgType.GIT_READ,
@@ -568,6 +573,10 @@ export class Connection extends EventEmitter {
 		listener: (msg: ProjectFileSearchMsg) => void,
 	): this;
 	once(
+		eventName: typeof MsgType.PROJECT_TREE,
+		listener: (msg: ProjectTreeMsg) => void,
+	): this;
+	once(
 		eventName: typeof MsgType.GIT_READ,
 		listener: (msg: GitReadMsg) => void,
 	): this;
@@ -671,6 +680,7 @@ export class Connection extends EventEmitter {
 		eventName: typeof MsgType.PROJECT_FILE_SEARCH,
 		msg: ProjectFileSearchMsg,
 	): boolean;
+	emit(eventName: typeof MsgType.PROJECT_TREE, msg: ProjectTreeMsg): boolean;
 	emit(eventName: typeof MsgType.GIT_READ, msg: GitReadMsg): boolean;
 	emit(eventName: typeof MsgType.GIT_LOG, msg: GitLogMsg): boolean;
 	emit(
