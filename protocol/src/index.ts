@@ -7,6 +7,7 @@ export * from "./host";
 export * from "./http";
 export * from "./local-control";
 export * from "./ports";
+export * from "./server";
 export * from "./session";
 export * from "./sysmon";
 export * from "./terminal";

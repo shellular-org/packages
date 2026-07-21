@@ -189,6 +189,7 @@ async function createTicket(clientId: string): Promise<Ticket> {
 					deviceModel: "Test Mac",
 					deviceIsEmulator: false,
 					deviceManufacturer: "Test",
+					user: { id: "u_test", email: "test@example.com" },
 				},
 			}),
 		},

@@ -70,6 +70,17 @@ export function removeTerminal(terminalId: string): void {
 }
 
 /**
+ * Reads the persisted terminals belonging to a single client. Restore is
+ * per-client and happens when that client connects, so this avoids parsing (and
+ * holding in memory) the snapshots of every other client on the machine.
+ */
+export function readPersistedTerminalsForClient(
+	clientId: string,
+): PersistedTerminal[] {
+	return readPersistedTerminals().filter((t) => t.clientId === clientId);
+}
+
+/**
  * Reads every persisted terminal. Files that are missing/corrupt are skipped
  * (and cleaned up) so a schema change or partial write can never crash restore.
  */

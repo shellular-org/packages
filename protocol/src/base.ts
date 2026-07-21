@@ -116,8 +116,6 @@ export const MsgType = {
 	GIT_OPERATION: "git:operation",
 	/** Response with working tree git operation results */
 	GIT_OPERATION_RESULT: "git:operation:result",
-	AI_AVAILABILITY: "ai:availability",
-	AI_AVAILABILITY_RESULT: "ai:availability:result",
 	AI_SESSION_LIST: "ai:session:list",
 	AI_SESSION_LIST_RESULT: "ai:session:list:result",
 	AI_SESSION_CREATE: "ai:session:create",

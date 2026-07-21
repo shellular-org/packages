@@ -1,6 +1,6 @@
 # Shellular CLI
 
-Host agent for [Shellular](https://shellular.dev) — connects your dev machine to the Shellular relay so you can access your environment remotely from the Shellular app.
+Host agent for [Shellular](https://shellular.dev) — connects your dev machine to the Shellular server so you can access your environment remotely from the Shellular app.
 
 ## Features
 
@@ -57,11 +57,11 @@ npx shellular stop
 
 ### Options
 
-| Flag                         | Default                     | Description                                                                              |
-| ---------------------------- | --------------------------- | ---------------------------------------------------------------------------------------- |
-| `--server <url>`             | `wss://api.shellular.dev`   | Relay server WebSocket URL                                                               |
-| `--dir <path>`               | OS home directory (`$HOME`) | Root directory exposed to the client                                                     |
-| `--unknown-clients <policy>` | `requires-approval`         | How unknown clients are handled: `always-reject`, `always-allow`, or `requires-approval` |
+| Flag                         | Default                        | Description                                                                              |
+| ---------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------- |
+| `--server <url>`             | `https://server.shellular.dev` | Shellular server URL (CLI resolves the nearest relay to connect to)                      |
+| `--dir <path>`               | OS home directory (`$HOME`)    | Root directory exposed to the client                                                     |
+| `--unknown-clients <policy>` | `requires-approval`            | How unknown clients are handled: `always-reject`, `always-allow`, or `requires-approval` |
 
 `--unknown-clients` only applies to clients that are not already in the local approvals file.
 

@@ -13,7 +13,6 @@ import {
 	type AiAgentsManageListMsg,
 	type AiAttachmentWriteMsg,
 	type AiAuthSetMsg,
-	type AiAvailabilityMsg,
 	type AiCommandMsg,
 	type AiMessagesListMsg,
 	type AiPermissionReplyMsg,
@@ -65,6 +64,7 @@ import {
 	type ProjectFileSearchMsg,
 	type ProjectInfoMsg,
 	parseMessage,
+	ServerCloseCodeAndReason,
 	type SessionClientJoinedMsg,
 	type SessionClientJoinMsg,
 	type SessionClientLeftMsg,
@@ -87,6 +87,11 @@ import { ConnectedClients } from "@/clients/connected";
 import { config } from "@/config";
 import { decrypt, encrypt } from "@/encryption";
 import { logger } from "@/logger";
+import {
+	HostResolveError,
+	invalidateTokenCache,
+	resolveTokenAndRelay,
+} from "@/relay";
 
 const HEARTBEAT_INTERVAL_MS = 25_000;
 
@@ -95,6 +100,39 @@ export interface DisconnectInfo {
 	reason: string;
 }
 
+/**
+ * The relay closed the socket before the host handshake completed. `code` is the
+ * WebSocket close code (see ServerCloseCodeAndReason). The reconnect loop uses it to
+ * treat a HOST_AUTH_FAILED (4007) close — an identity mismatch, i.e. a permanent CLI
+ * bug — as non-retryable, distinct from a generic transient close.
+ */
+export class HandshakeCloseError extends Error {
+	constructor(
+		message: string,
+		readonly code: number,
+	) {
+		super(message);
+		this.name = "HandshakeCloseError";
+	}
+}
+
+/**
+ * The relay rejected the WebSocket *upgrade* itself (before any WS frames), with an
+ * HTTP status. `status` lets the reconnect loop distinguish a 401 (token
+ * missing/expired/invalid — re-mint and retry) from other rejections.
+ */
+export class UpgradeRejectedError extends Error {
+	constructor(
+		message: string,
+		readonly status: number,
+	) {
+		super(message);
+		this.name = "UpgradeRejectedError";
+	}
+}
+
+// Exported: the local WebSocket server (connection-hub.ts) is a second consumer
+// of the host transport's message types, alongside the relay path.
 export type OutgoingMsg = HostToClientMsg | HostToServerMsg;
 export type SendableMsg = {
 	[TType in OutgoingMsg["type"]]: Omit<
@@ -136,20 +174,22 @@ export class Connection extends EventEmitter {
 	hostInfo: HostInfo;
 	sessionId: string;
 	ws: WebSocket;
+	/** The relay's /cli WebSocket URL this connection dialed, WITHOUT the token
+	 *  query param — safe to log (the token is only added to the dialed URL). */
+	readonly relayWsUrl: string;
 	private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 	clients: ConnectedClients;
 	private incomingSink: ((msg: HostIncomingMsg) => boolean) | null = null;
 
-	constructor(serverUrl: string | URL, hostInfo: HostInfo) {
+	constructor(relayWsUrl: string | URL, hostInfo: HostInfo, token: string) {
 		super();
 		this.hostInfo = hostInfo;
 		this.sessionId = "";
 		this.clients = new ConnectedClients();
+		this.relayWsUrl = relayWsUrl.toString();
 
-		const wsUrl = new URL(serverUrl);
-		if (hostInfo.id) {
-			wsUrl.searchParams.set("hostId", hostInfo.id);
-		}
+		const wsUrl = new URL(relayWsUrl);
+		wsUrl.searchParams.set("token", token);
 
 		this.ws = new WebSocket(wsUrl.toString());
 	}
@@ -294,10 +334,7 @@ export class Connection extends EventEmitter {
 		eventName: typeof MsgType.WS_CLOSE,
 		listener: (msg: WsCloseMsg) => void,
 	): this;
-	on(
-		eventName: typeof MsgType.AI_AVAILABILITY,
-		listener: (msg: AiAvailabilityMsg) => void,
-	): this;
+
 	on(
 		eventName: typeof MsgType.AI_SESSION_LIST,
 		listener: (msg: AiSessionListMsg) => void,
@@ -574,10 +611,7 @@ export class Connection extends EventEmitter {
 		eventName: typeof MsgType.WS_CLOSE,
 		listener: (msg: WsCloseMsg) => void,
 	): this;
-	once(
-		eventName: typeof MsgType.AI_AVAILABILITY,
-		listener: (msg: AiAvailabilityMsg) => void,
-	): this;
+
 	once(
 		eventName: "disconnected",
 		listener: (info: DisconnectInfo) => void,
@@ -654,10 +688,6 @@ export class Connection extends EventEmitter {
 	emit(eventName: typeof MsgType.WS_OPEN, msg: WsOpenMsg): boolean;
 	emit(eventName: typeof MsgType.WS_DATA, msg: WsDataMsg): boolean;
 	emit(eventName: typeof MsgType.WS_CLOSE, msg: WsCloseMsg): boolean;
-	emit(
-		eventName: typeof MsgType.AI_AVAILABILITY,
-		msg: AiAvailabilityMsg,
-	): boolean;
 	emit(
 		eventName: typeof MsgType.AI_SESSION_LIST,
 		msg: AiSessionListMsg,
@@ -822,6 +852,19 @@ export class Connection extends EventEmitter {
 
 	open() {
 		return new Promise<void>((resolve, reject) => {
+			// reject with the HTTP status if the relay rejects the upgrade (e.g. 401
+			// for an expired token). Without this listener ws collapses it into a
+			// generic "error" and the status is lost — see ws' handleUpgrade.
+			this.ws.once("unexpected-response", (_req, res) => {
+				const status = res.statusCode ?? 0;
+				reject(
+					new UpgradeRejectedError(
+						`Relay rejected the connection with HTTP ${status}.`,
+						status,
+					),
+				);
+			});
+
 			// reject if connection fails
 			this.ws.once("error", reject);
 
@@ -836,7 +879,7 @@ export class Connection extends EventEmitter {
 				}
 				const errorMsg = errorMsgPieces.join(" ");
 				logger.error(errorMsg);
-				reject(new Error(errorMsg));
+				reject(new HandshakeCloseError(errorMsg, code));
 			});
 
 			// init handshake on open
@@ -853,6 +896,7 @@ export class Connection extends EventEmitter {
 			this.ws.once("message", (raw) => {
 				this.ws.removeAllListeners("error");
 				this.ws.removeAllListeners("close");
+				this.ws.removeAllListeners("unexpected-response");
 
 				const rawStr = raw.toString();
 				const msg = parseMessage(rawStr, HostHandshakeRespMsgSchema);
@@ -985,17 +1029,100 @@ export type HostConnection = Pick<
 	getBufferedAmount(clientId?: string): number;
 };
 
+function isRetryableError(err: unknown): boolean {
+	if (
+		err instanceof HandshakeCloseError &&
+		err.code === ServerCloseCodeAndReason.HOST_AUTH_FAILED.code
+	) {
+		// HOST_AUTH_FAILED close: the token was valid but SESSION_HOST
+		// announced a different host (identity mismatch — a CLI bug).
+		return false;
+	} else if (err instanceof UpgradeRejectedError && err.status === 403) {
+		// relay forbade the upgrade
+		return false;
+	} else if (err instanceof HostResolveError) {
+		// central rejected the host at /host/token (4xx)
+		return false;
+	}
+
+	return true;
+}
+
 export async function connect(
-	serverUrl: string,
+	relayWsUrls: string[],
 	hostInfo: HostInfo,
+	token: string,
 ): Promise<Connection> {
-	const conn = new Connection(serverUrl, hostInfo);
-	await conn.open();
-	return conn;
+	let lastErr: unknown;
+
+	const relayAttempts = Array(relayWsUrls.length).fill(0);
+	const MAX_ATTEMPTS_PER_RELAY = 3;
+
+	// Try relays fastest-first; only fall through to backoff if every
+	// candidate fails this round.
+	for (let i = 0; i < relayWsUrls.length; ) {
+		relayAttempts[i]++;
+		const conn = new Connection(relayWsUrls[i], hostInfo, token);
+		try {
+			await conn.open();
+			return conn;
+		} catch (err) {
+			// open() rejected, so this socket is dead — tear it down before moving
+			// on so we don't leak a half-open WebSocket + its listeners.
+			conn.close();
+			lastErr = err;
+
+			// if it's not a retryable bug, then it's likely a permanent CLI bug.
+			// Re-minting can't fix it and every relay will reject it,
+			// so give up immediately by rethrowing (the reconnect loop stops on it).
+			if (!isRetryableError(err)) {
+				throw err;
+			}
+
+			// 401 upgrade rejection: the token is missing/expired/invalid, but the
+			// host itself is fine. Drop the cached token so the next resolve mints a
+			// fresh one; no point trying the remaining relays with the same dead
+			// token, so break out and let the caller re-resolve.
+			if (err instanceof UpgradeRejectedError && err.status === 401) {
+				invalidateTokenCache();
+				logger.warn(
+					`Relay ${relayWsUrls[i]} rejected the host token (401); will re-mint. (${err.message})`,
+				);
+				break;
+			}
+
+			logger.warn(
+				`Relay ${relayWsUrls[i]} failed: ${err instanceof Error ? err.message : err}`,
+			);
+
+			if (relayAttempts[i] >= MAX_ATTEMPTS_PER_RELAY) {
+				// We've tried this relay enough times; move on to the next one
+				i++;
+				logger.warn("Trying next relay...");
+			} else {
+				logger.warn(
+					`Retrying relay ${relayWsUrls[i]} (attempt ${relayAttempts[i]})...`,
+				);
+			}
+		}
+	}
+
+	throw lastErr ?? new Error("All relays failed");
 }
 
 const RECONNECT_DELAYS = [1000, 2000, 5000, 10000, 30000];
 
+/**
+ * Connect to the fastest relay and keep the connection alive across drops.
+ *
+ * `serverUrl` is the central server base URL (e.g. https://server.shellular.dev). Each
+ * (re)connect attempt resolves via `resolveRelay`, which reuses an in-memory host
+ * token while it's valid and only re-mints from central when it's near expiry (or
+ * was invalidated by an auth-failed close). Relay ranking is disk-cached, so no
+ * re-probing unless stale. Within an attempt we walk the fastest-first relay list,
+ * so a single relay being down fails over to the next before we back off. A
+ * permanent host-verification failure (HostResolveError) stops the loop outright.
+ */
 export function connectWithReconnect(
 	serverUrl: string,
 	hostInfo: HostInfo,
@@ -1009,7 +1136,14 @@ export function connectWithReconnect(
 		let attempt = 0;
 		while (!closing) {
 			try {
-				const conn = await connect(serverUrl, hostInfo);
+				const { relayWsUrls, token } = await resolveTokenAndRelay(serverUrl, {
+					hostId: hostInfo.id,
+					machineId: hostInfo.machineId,
+					platform: hostInfo.platform,
+				});
+
+				const conn = await connect(relayWsUrls, hostInfo, token);
+				logger.debug(`Connected to relay ${conn.relayWsUrl}`);
 
 				currentConn = conn;
 				attempt = 0;
@@ -1035,6 +1169,20 @@ export function connectWithReconnect(
 			} catch (err) {
 				if (closing) {
 					return;
+				}
+
+				// Permanent failures will never succeed on retry — stop the loop
+				// instead of backing off forever and hammering central
+				if (!isRetryableError(err)) {
+					logger.error(
+						`Non-recoverable error: ${err instanceof Error ? err.message : err}. ` +
+							"Not retrying — Please report this to the Shellular team.",
+					);
+					closing = true;
+					if (currentConn) {
+						currentConn.close();
+					}
+					process.exit(1);
 				}
 
 				const delay =

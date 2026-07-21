@@ -4,14 +4,14 @@ import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk";
 import {
-	zForkSessionResponse,
-	zInitializeResponse,
-	zListSessionsResponse,
-	zLoadSessionResponse,
-	zNewSessionResponse,
-	zResumeSessionResponse,
-	zSetSessionConfigOptionResponse,
-} from "@agentclientprotocol/sdk/dist/schema/zod.gen.js";
+	AcpForkSessionResponseSchema as zForkSessionResponse,
+	AcpInitializeResponseSchema as zInitializeResponse,
+	AcpListSessionsResponseSchema as zListSessionsResponse,
+	AcpLoadSessionResponseSchema as zLoadSessionResponse,
+	AcpNewSessionResponseSchema as zNewSessionResponse,
+	AcpResumeSessionResponseSchema as zResumeSessionResponse,
+	AcpSetConfigOptionResponseSchema as zSetSessionConfigOptionResponse,
+} from "@shellular/protocol";
 import { config } from "@/config";
 import { logger } from "@/logger";
 import { commandExists } from "@/utils";
@@ -85,7 +85,7 @@ export class ACP {
 	readonly descriptor: AgentDescriptor;
 	private readonly client: AcpClient;
 	private spawnedAgent: SpawnedAgent | null = null;
-	private connection: acp.ClientSideConnection | null = null;
+	private connection: acp.ClientConnection | null = null;
 	private initResult: acp.InitializeResponse | null = null;
 	private transcripts = new Map<string, AcpTranscript>();
 	private sessions = new Map<string, StoredSession>();
@@ -158,12 +158,17 @@ export class ACP {
 		try {
 			this.spawnedAgent = this.spawnAgent();
 
-			this.connection = new acp.ClientSideConnection(
-				() => this.client,
-				this.spawnedAgent.stream,
-			);
+			this.connection = acp
+				.client({ name: config.NAME })
+				.onRequest(acp.methods.client.session.requestPermission, (ctx) =>
+					this.client.requestPermission(ctx.params),
+				)
+				.onNotification(acp.methods.client.session.update, (ctx) =>
+					this.client.sessionUpdate(ctx.params),
+				)
+				.connect(this.spawnedAgent.stream);
 
-			const rawInit = await this.connection.initialize({
+			const rawInit = await this.agent().request(acp.methods.agent.initialize, {
 				protocolVersion: acp.PROTOCOL_VERSION,
 				clientCapabilities: {
 					// File/terminal RPCs are intentionally off for the first ACP pass.
@@ -269,7 +274,10 @@ export class ACP {
 			};
 		}
 
-		const raw = await this.requireConnection().listSessions(params);
+		const raw = await this.agent().request(
+			acp.methods.agent.session.list,
+			params,
+		);
 		const response = this.safeParse("session/list", zListSessionsResponse, raw);
 		for (const session of response.sessions) {
 			const normalized = acpSessionToAiSession(session);
@@ -322,7 +330,7 @@ export class ACP {
 		};
 		this.client.addAnySessionUpdateListener(listener);
 		try {
-			const raw = await this.requireConnection().newSession({
+			const raw = await this.agent().request(acp.methods.agent.session.new, {
 				...options,
 				cwd: absoluteCwd,
 				mcpServers: options.mcpServers ?? [],
@@ -355,7 +363,7 @@ export class ACP {
 			throw new UnsupportedCapabilityError(this.id, "session/resume");
 		}
 
-		const raw = await this.requireConnection().resumeSession({
+		const raw = await this.agent().request(acp.methods.agent.session.resume, {
 			...params,
 			cwd: path.resolve(params.cwd),
 			mcpServers: params.mcpServers ?? [],
@@ -384,7 +392,7 @@ export class ACP {
 			throw new UnsupportedCapabilityError(this.id, "session/fork");
 		}
 
-		const raw = await this.requireConnection().unstable_forkSession({
+		const raw = await this.agent().request(acp.methods.agent.session.fork, {
 			...params,
 			cwd: path.resolve(params.cwd),
 			mcpServers: params.mcpServers ?? [],
@@ -407,7 +415,10 @@ export class ACP {
 			throw new UnsupportedCapabilityError(this.id, "session/close");
 		}
 
-		const response = await this.requireConnection().closeSession(params);
+		const response = await this.agent().request(
+			acp.methods.agent.session.close,
+			params,
+		);
 		this.sessions.delete(params.sessionId);
 		this.transcripts.delete(params.sessionId);
 		this.client.cancelSessionPermissions(params.sessionId);
@@ -452,7 +463,7 @@ export class ACP {
 		this.client.addSessionUpdateListener(sessionId, listener);
 
 		try {
-			const raw = await this.requireConnection().loadSession({
+			const raw = await this.agent().request(acp.methods.agent.session.load, {
 				...params,
 				cwd: path.resolve(params.cwd),
 				mcpServers: params.mcpServers ?? [],
@@ -537,7 +548,10 @@ export class ACP {
 		this.client.addSessionUpdateListener(params.sessionId, listener);
 
 		try {
-			const response = await this.requireConnection().prompt(params);
+			const response = await this.agent().request(
+				acp.methods.agent.session.prompt,
+				params,
+			);
 			if (updateTasks.size > 0) {
 				await Promise.all(updateTasks);
 			}
@@ -571,12 +585,15 @@ export class ACP {
 	async interrupt(params: acp.CancelNotification) {
 		await this.ensureReady();
 		this.client.cancelSessionPermissions(params.sessionId);
-		return this.requireConnection().cancel(params);
+		return this.agent().notify(acp.methods.agent.session.cancel, params);
 	}
 
 	async setSessionConfigOption(params: acp.SetSessionConfigOptionRequest) {
 		await this.ensureReady();
-		const raw = await this.requireConnection().setSessionConfigOption(params);
+		const raw = await this.agent().request(
+			acp.methods.agent.session.setConfigOption,
+			params,
+		);
 		const response = this.safeParse(
 			"session/set_config_option",
 			zSetSessionConfigOptionResponse,
@@ -598,7 +615,7 @@ export class ACP {
 
 	async setSessionMode(params: acp.SetSessionModeRequest) {
 		await this.ensureReady();
-		return this.requireConnection().setSessionMode(params);
+		return this.agent().request(acp.methods.agent.session.setMode, params);
 	}
 
 	requestPendingPermissions(clientId: string) {
@@ -629,6 +646,7 @@ export class ACP {
 	}
 
 	destroy() {
+		this.connection?.close();
 		if (this.spawnedAgent) {
 			this.spawnedAgent.process.kill();
 			this.spawnedAgent = null;
@@ -739,11 +757,12 @@ export class ACP {
 		}
 	}
 
-	private requireConnection() {
+	/** Context for calling agent-side ACP methods on the live connection. */
+	private agent(): acp.ClientContext {
 		if (!this.connection) {
 			throw new AgentUnavailableError(this.id, "connection is not initialized");
 		}
-		return this.connection;
+		return this.connection.agent;
 	}
 
 	private errorMessage(err: unknown) {

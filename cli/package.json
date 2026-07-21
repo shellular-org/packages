@@ -1,6 +1,6 @@
 {
 	"name": "shellular",
-	"version": "0.0.46",
+	"version": "0.0.48",
 	"description": "Shellular CLI — host your dev environment for remote access from your phone.",
 	"main": "dist/main.js",
 	"scripts": {
@@ -33,7 +33,7 @@
 		"LICENSE"
 	],
 	"dependencies": {
-		"@agentclientprotocol/sdk": "0.26.0",
+		"@agentclientprotocol/sdk": "^1.2.1",
 		"@ff-labs/fff-node": "^0.6.4",
 		"@inquirer/prompts": "^8.4.2",
 		"@opencode-ai/sdk": "1.14.41",

@@ -1,6 +1,5 @@
 import type { AgentId } from "@shellular/protocol";
 import { npxCommand } from "@/config";
-import { commandExists } from "@/utils";
 import type { AgentDescriptor, AgentInfo } from "./types";
 
 export const BUILTIN_AGENT_DESCRIPTORS: Record<AgentId, AgentDescriptor> = {
@@ -213,10 +212,6 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AgentId, AgentDescriptor> = {
 		},
 	},
 };
-
-export function isAgentAvailable(agent: AgentDescriptor): boolean {
-	return !agent.disabled && commandExists(agent.agentExecutable);
-}
 
 export function toAgentInfo(
 	descriptor: AgentDescriptor,

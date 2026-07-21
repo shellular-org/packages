@@ -33,6 +33,7 @@ test("a stale remote leave cannot remove a newer local client route", () => {
 		deviceModel: "Test Mac",
 		deviceIsEmulator: false,
 		deviceManufacturer: "Test",
+		user: { id: "u_test", email: "test@example.com" },
 	};
 
 	hub.registerTransport(transport("remote", "remote", remoteMessages));

@@ -213,13 +213,6 @@ export type ProviderInfo = z.infer<typeof ProviderInfoSchema>;
 
 // ─── Incoming (client → CLI) ──────────────────────────────────────────────────
 
-export const AiAvailabilityMsgSchema = z.object({
-	id: z.string(),
-	type: z.literal(MsgType.AI_AVAILABILITY),
-	clientId: z.string(),
-});
-export type AiAvailabilityMsg = z.infer<typeof AiAvailabilityMsgSchema>;
-
 export const AiSessionListMsgSchema = z.object({
 	id: z.string(),
 	type: z.literal(MsgType.AI_SESSION_LIST),
@@ -462,20 +455,6 @@ export const AiQuestionRejectMsgSchema = z.object({
 export type AiQuestionRejectMsg = z.infer<typeof AiQuestionRejectMsgSchema>;
 
 // ─── Outgoing (CLI → client) ──────────────────────────────────────────────────
-
-export const AiAvailabilityResultMsgSchema = z.object({
-	id: z.string().optional(),
-	type: z.literal(MsgType.AI_AVAILABILITY_RESULT),
-	clientId: z.string(),
-	respTo: z.string().optional(),
-	error: z.string().optional(),
-	data: z.object({
-		backends: z.array(AiBackendSchema),
-	}),
-});
-export type AiAvailabilityResultMsg = z.infer<
-	typeof AiAvailabilityResultMsgSchema
->;
 
 export const AiSessionListResultMsgSchema = z.object({
 	id: z.string().optional(),

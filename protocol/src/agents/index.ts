@@ -1,9 +1,5 @@
 export * from "./acp";
 
-import {
-	zAvailableCommand as AcpAvailableCommandSchema,
-	zContentBlock as AcpContentBlockSchema,
-} from "@agentclientprotocol/sdk/dist/schema/zod.gen.js";
 import { z } from "zod";
 import {
 	AiBackendSchema,
@@ -13,6 +9,10 @@ import {
 	AiSessionSchema,
 } from "@/ai-legacy";
 import { MsgType } from "@/base";
+import {
+	zAvailableCommand as AcpAvailableCommandSchema,
+	zContentBlock as AcpContentBlockSchema,
+} from "./acp-vendored/zod.gen.js";
 
 // ─── Agent Info (Shellular-specific, not in the ACP spec) ─────────────────────
 

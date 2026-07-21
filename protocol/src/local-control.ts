@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { ClientInfoRequestSchema, HostInfoSchema } from "./session";
+import { AuthedClientInfoSchema, HostInfoSchema } from "./session";
 
 export const LOCAL_CONTROL_PROTOCOL_VERSION = 1;
 
@@ -110,7 +110,9 @@ export type LocalCliSnapshot = z.infer<typeof LocalCliSnapshotSchema>;
 
 export const LocalCliTicketRequestSchema = z.object({
 	protocolVersion: z.literal(LOCAL_CONTROL_PROTOCOL_VERSION),
-	client: ClientInfoRequestSchema.omit({ hostId: true }),
+	// Local clients authenticate like relay clients: `user` is mandatory. The
+	// desktop app omits only `hostId`, which it learns from the ticket response.
+	client: AuthedClientInfoSchema.omit({ hostId: true }),
 });
 export type LocalCliTicketRequest = z.infer<typeof LocalCliTicketRequestSchema>;
 

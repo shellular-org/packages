@@ -60,7 +60,7 @@ import { preStart } from "@/pre-start";
 import { cleanupProxy, initProxyHandler } from "@/proxy";
 import { ServerUrl } from "@/server-url";
 import { initBatteryStream, initSysmonHandler } from "@/sysmon";
-import { initTerminalHandler, restoreTerminals } from "@/terminal";
+import { initTerminalHandler } from "@/terminal";
 import { checkForUpdate, getUpdateInfo } from "@/update-check";
 import { showSelfUpdateLogs } from "@/update-logs";
 import { runSelfUpdate } from "@/update-runner";
@@ -74,8 +74,6 @@ import {
 	removeAllowedUser,
 } from "@/users";
 import { updateAndStartShellular } from "./update-and-start";
-
-const DEFAULT_SERVER_URL = "wss://api.shellular.dev";
 
 ensureConfig();
 
@@ -145,7 +143,7 @@ function createProgram(): Command {
 		.version(config.VERSION)
 		.showHelpAfterError()
 		.allowExcessArguments(false)
-		.option("--server <url>", "Shellular server URL", DEFAULT_SERVER_URL)
+		.option("--server <url>", "Shellular server URL", config.DEFAULT_SERVER_URL)
 		.option("--dir <path>", "Working directory", os.homedir())
 		.option("--no-qr", "Do not display QR code in terminal")
 		.option(
@@ -429,6 +427,11 @@ function createProgram(): Command {
 				writeKnownClients(updated);
 				logger.log(chalk.green("Client approvals saved."));
 			} catch (err) {
+				if (err instanceof Error && err.name === "ExitPromptError") {
+					logger.log("👋 until next time!");
+					return;
+				}
+
 				logger.error(
 					chalk.red(
 						`Error managing clients: ${err instanceof Error ? err.message : String(err)}`,
@@ -643,7 +646,14 @@ async function runCli({
 	logger.log();
 	logger.log(chalk.bold.cyan(`Shellular CLI v${config.VERSION}`));
 	logger.log(line);
-	logger.log(label("Server:", chalk.underline(serverUrl.toWebSocketUrl())));
+
+	const centralServerUrl = serverUrl.toApiUrl();
+	const serverUrlFormatted =
+		new URL(centralServerUrl).origin ===
+		new URL(config.DEFAULT_SERVER_URL).origin
+			? "default"
+			: chalk.underline(centralServerUrl);
+	logger.log(label("Server:", serverUrlFormatted));
 	logger.log(
 		label(
 			"Unknown clients:",
@@ -702,12 +712,9 @@ async function runCli({
 	agentsManager.handleConnection(localConnection);
 	localConnection.on(MsgType.SESSION_CLIENT_JOINED, (msg) => {
 		upsertClient(msg.data, true);
+		// AI_AVAILABILITY_RESULT was removed from the protocol; agent availability
+		// now reaches clients through the AI_AGENTS_* flow that notifyClient drives.
 		agentsManager.notifyClient(msg.data.clientId);
-		localConnection.send({
-			type: MsgType.AI_AVAILABILITY_RESULT,
-			clientId: msg.data.clientId,
-			data: { backends: agentsManager.getAvailableAgents() },
-		});
 	});
 
 	const disableLocalServer = () => {
@@ -837,14 +844,12 @@ async function runCli({
 
 	startCaffeinate();
 
-	// Re-spawn terminals that survived the last CLI exit (VS Code–style restore).
-	// Done once at boot, before connecting, so restored terminals exist regardless
-	// of when the app reconnects — TERMINAL_LIST/ATTACH then find them in memory.
-	restoreTerminals(workDir);
-
+	// Terminal restore is per-client (restoreTerminalsForClient, fired on
+	// TERMINAL_LIST/client-join) rather than once at boot, so a client that
+	// attaches late still gets its own surviving terminals re-spawned.
 	if (!remoteAvailable) return;
 	connectWithReconnect(
-		serverUrl.toWebSocketUrl(),
+		serverUrl.toApiUrl(),
 		hostInfo,
 		async (conn, isFirst) => {
 			try {
@@ -869,6 +874,14 @@ async function runCli({
 							`Messages are ${chalk.underline("end-to-end encrypted")}.`,
 						),
 					);
+
+					logger.log(
+						"🚀",
+						chalk.cyan(
+							`New relay servers in US and EU for lower latency. Update the app to ${chalk.bold("v0.0.36")} to use them.`,
+						),
+					);
+					logger.log();
 
 					if (showQr) {
 						logger.log(
@@ -1096,7 +1109,20 @@ async function runCli({
 					},
 				);
 
-				conn.on(MsgType.SESSION_CLIENT_JOINED, (msg) => {
+				conn.on(MsgType.SESSION_CLIENT_JOINED, async (msg) => {
+					upsertClient(
+						{
+							clientId: msg.data.clientId,
+							hostId: msg.data.hostId,
+							user: msg.data.user,
+							appVersion: msg.data.appVersion,
+							platform: msg.data.platform,
+							deviceModel: msg.data.deviceModel,
+							deviceIsEmulator: msg.data.deviceIsEmulator,
+							deviceManufacturer: msg.data.deviceManufacturer,
+						},
+						true,
+					);
 					const deviceSummary = formatClientDeviceInfo(msg.data);
 					const userSummary = formatClientUser(msg.data);
 

@@ -302,9 +302,28 @@ const BATTERY_INTERVAL_MS = 30_000;
 export function initBatteryStream(conn: HostConnection) {
 	const intervals = new Map<string, ReturnType<typeof setInterval>>();
 
+	function stopStream(clientId: string) {
+		const interval = intervals.get(clientId);
+		if (interval) {
+			clearInterval(interval);
+			intervals.delete(clientId);
+		}
+	}
+
 	async function sendBattery(clientId: string) {
+		// Bail before doing the work if the client already left.
+		if (!conn.clients.isConnected(clientId)) {
+			stopStream(clientId);
+			return;
+		}
 		const battery = await getBattery();
 		if (!battery) return;
+		// getBattery() is async, so the client may have disconnected (or the
+		// whole connection dropped) while we awaited it — re-check before sending.
+		if (!conn.clients.isConnected(clientId)) {
+			stopStream(clientId);
+			return;
+		}
 		const msg: BatteryUpdateMsg = {
 			type: MsgType.BATTERY_UPDATE,
 			clientId,
@@ -315,20 +334,31 @@ export function initBatteryStream(conn: HostConnection) {
 
 	conn.on(MsgType.SESSION_CLIENT_JOINED, (msg) => {
 		const { clientId } = msg.data;
+		// A re-join for a client we're already streaming to must not leak the
+		// previous interval.
+		stopStream(clientId);
 		sendBattery(clientId);
 		const interval = setInterval(
 			() => sendBattery(clientId),
 			BATTERY_INTERVAL_MS,
 		);
+		interval.unref?.();
 		intervals.set(clientId, interval);
 	});
 
 	conn.on(MsgType.SESSION_CLIENT_LEFT, (msg) => {
-		const interval = intervals.get(msg.data.clientId);
-		if (interval) {
+		stopStream(msg.data.clientId);
+	});
+
+	// initBatteryStream runs again on every reconnect with a fresh Connection.
+	// Without this, the old connection's intervals keep firing forever, sending
+	// battery updates into a dead socket.
+	conn.on("disconnected", () => {
+		for (const interval of intervals.values()) {
 			clearInterval(interval);
-			intervals.delete(msg.data.clientId);
 		}
+
+		intervals.clear();
 	});
 }
 
