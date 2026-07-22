@@ -121,35 +121,45 @@ export function initFilesystemHandler(conn: HostConnection, rootDir: string) {
 		}
 
 		try {
-			const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+			const entries = await fs.promises.readdir(dirPath, {
+				withFileTypes: true,
+			});
 			const showHidden = msg.data.showHidden ?? false;
-			const result: NonNullable<FsListResultMsg["data"]>["entries"] = entries
-				.filter((e) => showHidden || !e.name.startsWith("."))
-				.map((entry) => {
-					const fullPath = path.join(dirPath, entry.name);
-					let size = 0;
-					let modified = 0;
-					try {
-						const stat = fs.statSync(fullPath);
-						size = stat.size;
-						modified = stat.mtimeMs;
-					} catch {}
-					return {
-						name: entry.name,
-						type: entry.isDirectory()
-							? ("directory" as const)
-							: ("file" as const),
-						size,
-						modified,
-					};
-				})
-				.sort((a, b) => {
-					if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
-					return a.name.localeCompare(b.name);
-				});
+			const includeMetadata = msg.data.includeMetadata ?? true;
+			const visibleEntries = entries.filter(
+				(entry) => showHidden || !entry.name.startsWith("."),
+			);
+			const result: NonNullable<FsListResultMsg["data"]>["entries"] =
+				await Promise.all(
+					visibleEntries.map(async (entry) => {
+						const fullPath = path.join(dirPath, entry.name);
+						let size = 0;
+						let modified = 0;
+						if (includeMetadata) {
+							try {
+								const stat = await fs.promises.stat(fullPath);
+								size = stat.size;
+								modified = stat.mtimeMs;
+							} catch {}
+						}
+						return {
+							name: entry.name,
+							type: entry.isDirectory()
+								? ("directory" as const)
+								: ("file" as const),
+							size,
+							modified,
+						};
+					}),
+				);
+			result.sort((a, b) => {
+				if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+				return a.name.localeCompare(b.name);
+			});
 
 			// Annotate entries with git status if inside a git repo
-			const repoRoot = await findGitRoot(dirPath);
+			const repoRoot =
+				msg.data.includeGitStatus === false ? null : await findGitRoot(dirPath);
 			if (repoRoot) {
 				const statuses = await getFileGitStatuses(repoRoot, dirPath);
 				for (const entry of result) {

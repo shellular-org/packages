@@ -110,6 +110,67 @@ test("local encrypted requests reach filesystem, terminal, and agent handlers", 
 	}
 });
 
+test("filesystem listings support lightweight metadata and Git flags", async () => {
+	const directory = path.join(testHome, "fs-list-flags");
+	fs.mkdirSync(directory, { recursive: true });
+	fs.writeFileSync(path.join(directory, "visible.txt"), "metadata");
+	fs.writeFileSync(path.join(directory, ".hidden"), "hidden");
+	const clientId = "c_fs-list-flags";
+	const ticket = await createTicket(clientId);
+	const ws = await connect(ticket.wsUrl, ticket.ticket);
+	const key = sodium.from_base64(
+		ticket.encryptionKey,
+		sodium.base64_variants.ORIGINAL,
+	);
+
+	try {
+		const full = await sendEncryptedRequest(ws, key, {
+			id: "fs-list-full",
+			type: MsgType.FS_LIST,
+			clientId,
+			data: { path: "fs-list-flags", showHidden: true },
+		});
+		const fullEntries = (
+			full.data as { entries: Array<{ name: string; size: number }> }
+		).entries;
+		assert.equal(
+			fullEntries.find((entry) => entry.name === "visible.txt")?.size,
+			8,
+		);
+		assert.ok(fullEntries.some((entry) => entry.name === ".hidden"));
+
+		const lightweight = await sendEncryptedRequest(ws, key, {
+			id: "fs-list-lightweight",
+			type: MsgType.FS_LIST,
+			clientId,
+			data: {
+				path: "fs-list-flags",
+				showHidden: true,
+				includeMetadata: false,
+				includeGitStatus: false,
+			},
+		});
+		const lightweightEntries = (
+			lightweight.data as {
+				entries: Array<{ name: string; size: number; modified: number }>;
+			}
+		).entries;
+		assert.deepEqual(
+			lightweightEntries.map(({ name, size, modified }) => ({
+				name,
+				size,
+				modified,
+			})),
+			[
+				{ name: ".hidden", size: 0, modified: 0 },
+				{ name: "visible.txt", size: 0, modified: 0 },
+			],
+		);
+	} finally {
+		ws.close();
+	}
+});
+
 test("missing outer identity is normalized from the ticket", async () => {
 	const clientId = "c_compat-test";
 	const ticket = await createTicket(clientId);

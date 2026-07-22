@@ -111,6 +111,10 @@ export const FsListMsgSchema = z.object({
 	data: z.object({
 		path: z.string(),
 		showHidden: z.boolean().optional(),
+		/** Skip per-entry stat calls when the caller only needs names and kinds. */
+		includeMetadata: z.boolean().optional(),
+		/** Skip repository discovery and Git status collection for this listing. */
+		includeGitStatus: z.boolean().optional(),
 	}),
 });
 export type FsListMsg = z.infer<typeof FsListMsgSchema>;
