@@ -15,7 +15,11 @@ import {
 import { config } from "@/config";
 import { logger } from "@/logger";
 import { commandExists } from "@/utils";
-import { AcpClient, type PermissionListener } from "./client";
+import {
+	AcpClient,
+	type ElicitationListener,
+	type PermissionListener,
+} from "./client";
 import { AgentUnavailableError, UnsupportedCapabilityError } from "./errors";
 import {
 	AcpTranscript,
@@ -135,11 +139,42 @@ export class ACP {
 		return this.client.onPermission(clientId, listener);
 	}
 
+	onElicitation(clientId: string, listener: ElicitationListener) {
+		return this.client.onElicitation(clientId, listener);
+	}
+
+	onElicitationComplete(
+		listener: (params: acp.CompleteElicitationNotification) => void,
+	) {
+		return this.client.onElicitationComplete(listener);
+	}
+
+	replyElicitation(
+		elicitationId: string,
+		response: acp.CreateElicitationResponse,
+	) {
+		return this.client.replyElicitation(elicitationId, response);
+	}
+
+	/**
+	 * Latest slash commands the agent advertised for a session. Agents may send
+	 * `available_commands_update` after the session/load response, so this is
+	 * tracked continuously rather than scraped from a load's updates.
+	 */
+	getAvailableCommands(sessionId: string) {
+		return this.client.getAvailableCommands(sessionId);
+	}
+
+	/**
+	 * Subscribe to every session/update this runtime receives, across all of its
+	 * sessions. Runtime-wide by necessity: callers register before any session
+	 * exists and must cover sessions opened later by new/load/resume alike.
+	 * Per-session callers want `addSessionUpdateListener` instead.
+	 */
 	onSessionUpdate(
 		listener: (notification: acp.SessionNotification) => void | Promise<void>,
 	) {
-		this.client.addAnySessionUpdateListener(listener);
-		return () => this.client.removeAnySessionUpdateListener(listener);
+		return this.client.onSessionUpdate(listener);
 	}
 
 	async init(): Promise<acp.InitializeResponse> {
@@ -158,13 +193,26 @@ export class ACP {
 		try {
 			this.spawnedAgent = this.spawnAgent();
 
+			// `session/update` goes first only to keep the hottest inbound path
+			// short: the SDK walks handlers sequentially with an `await` per
+			// entry, so every handler ahead of it delays each notification by
+			// another microtask tick. This is a performance nicety, not a
+			// correctness requirement — `AcpClient.observeStream` counts
+			// notifications at the transport, so replay stays complete no matter
+			// how this chain is ordered or how many handlers are added.
 			this.connection = acp
 				.client({ name: config.NAME })
+				.onNotification(acp.methods.client.session.update, (ctx) =>
+					this.client.sessionUpdate(ctx.params),
+				)
 				.onRequest(acp.methods.client.session.requestPermission, (ctx) =>
 					this.client.requestPermission(ctx.params),
 				)
-				.onNotification(acp.methods.client.session.update, (ctx) =>
-					this.client.sessionUpdate(ctx.params),
+				.onRequest(acp.methods.client.elicitation.create, (ctx) =>
+					this.client.requestElicitation(ctx.params),
+				)
+				.onNotification(acp.methods.client.elicitation.complete, (ctx) =>
+					this.client.completeElicitation(ctx.params),
 				)
 				.connect(this.spawnedAgent.stream);
 
@@ -177,6 +225,13 @@ export class ACP {
 					fs: {
 						readTextFile: false,
 						writeTextFile: false,
+					},
+					// Structured user-input requests (agent question forms, MCP server
+					// elicitations, sign-in URLs). UNSTABLE in ACP v1; the app renders
+					// forms from the requested JSON schema and opens url-mode links.
+					elicitation: {
+						form: {},
+						url: {},
 					},
 				},
 				clientInfo: {
@@ -324,37 +379,31 @@ export class ACP {
 	) {
 		await this.ensureReady();
 		const absoluteCwd = path.resolve(cwd);
-		const updates: acp.SessionNotification[] = [];
-		const listener = (notification: acp.SessionNotification) => {
-			updates.push(notification);
+		const raw = await this.agent().request(acp.methods.agent.session.new, {
+			...options,
+			cwd: absoluteCwd,
+			mcpServers: options.mcpServers ?? [],
+		});
+		const response = this.safeParse("session/new", zNewSessionResponse, raw);
+		const session = newAiSessionFromResponse(response, absoluteCwd);
+		this.sessions.set(response.sessionId, {
+			session,
+			messages: [],
+		});
+		this.transcripts.set(
+			response.sessionId,
+			this.createTranscript(response.sessionId),
+		);
+		// No session/update listener here: session/new creates an empty session,
+		// so there is no replay or turn to capture. `available_commands_update` is
+		// an async readiness signal with no ordering guarantee against this
+		// response, so it is read from the connection's continuous tracking (and
+		// delivered later as a status event if it has not arrived yet).
+		return {
+			response,
+			session,
+			availableCommands: this.getAvailableCommands(response.sessionId),
 		};
-		this.client.addAnySessionUpdateListener(listener);
-		try {
-			const raw = await this.agent().request(acp.methods.agent.session.new, {
-				...options,
-				cwd: absoluteCwd,
-				mcpServers: options.mcpServers ?? [],
-			});
-			const response = this.safeParse("session/new", zNewSessionResponse, raw);
-			const session = newAiSessionFromResponse(response, absoluteCwd);
-			this.sessions.set(response.sessionId, {
-				session,
-				messages: [],
-			});
-			this.transcripts.set(
-				response.sessionId,
-				this.createTranscript(response.sessionId),
-			);
-			return {
-				response,
-				session,
-				updates: updates.filter(
-					(update) => update.sessionId === response.sessionId,
-				),
-			};
-		} finally {
-			this.client.removeAnySessionUpdateListener(listener);
-		}
 	}
 
 	async resumeSession(params: acp.ResumeSessionRequest) {
@@ -422,6 +471,7 @@ export class ACP {
 		this.sessions.delete(params.sessionId);
 		this.transcripts.delete(params.sessionId);
 		this.client.cancelSessionPermissions(params.sessionId);
+		this.client.cancelSessionElicitations(params.sessionId);
 		return response;
 	}
 
@@ -462,12 +512,22 @@ export class ACP {
 		};
 		this.client.addSessionUpdateListener(sessionId, listener);
 
+		const loadStartedAt = Date.now();
 		try {
 			const raw = await this.agent().request(acp.methods.agent.session.load, {
 				...params,
 				cwd: path.resolve(params.cwd),
 				mcpServers: params.mcpServers ?? [],
 			});
+			// Per ACP, the agent replays the whole conversation as session/update
+			// notifications and only then responds to session/load, so the last
+			// chunk is always sent before this resolves. The SDK, however,
+			// dispatches notifications through an awaited handler chain while
+			// resolving responses synchronously — so a notification already
+			// received can still be mid-dispatch here. Wait for the dispatcher
+			// to go idle before reading the transcript, or the tail of the
+			// replay is lost.
+			await this.client.settled();
 			const response = this.safeParse(
 				"session/load",
 				zLoadSessionResponse,
@@ -475,6 +535,9 @@ export class ACP {
 			);
 			this.transcripts.set(sessionId, transcript);
 			const messages = transcript.getMessages();
+			logger.debug(
+				`ACP ${this.id}: session/load ${sessionId} replayed ${updates.length} updates -> ${messages.length} messages in ${Date.now() - loadStartedAt}ms (~${JSON.stringify(messages).length} bytes)`,
+			);
 			const existing = this.sessions.get(sessionId);
 			this.sessions.set(sessionId, {
 				session: existing?.session
@@ -493,6 +556,7 @@ export class ACP {
 		} finally {
 			// When session is loaded again, this is required to show the permission prompt again.
 			this.client.requestPendingPermission(sessionId, clientId);
+			this.client.requestPendingElicitation(sessionId, clientId);
 			this.client.removeSessionUpdateListener(sessionId, listener);
 			finishLoading();
 		}
@@ -585,6 +649,7 @@ export class ACP {
 	async interrupt(params: acp.CancelNotification) {
 		await this.ensureReady();
 		this.client.cancelSessionPermissions(params.sessionId);
+		this.client.cancelSessionElicitations(params.sessionId);
 		return this.agent().notify(acp.methods.agent.session.cancel, params);
 	}
 
@@ -827,7 +892,10 @@ export class ACP {
 			}
 		});
 
-		return spawnedAgent;
+		return {
+			...spawnedAgent,
+			stream: this.client.observeStream(spawnedAgent.stream),
+		};
 	}
 }
 

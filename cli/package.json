@@ -4,10 +4,11 @@
 	"description": "Shellular CLI — host your dev environment for remote access from your phone.",
 	"main": "dist/main.js",
 	"scripts": {
-		"dev": "cross-env SHELLULAR_DEV=true tsx --watch src/main.ts",
-		"start": "tsx src/main.ts",
+		"dev": "cross-env SHELLULAR_DEV=true tsx --import ./scripts/register-sql-loader.mjs --watch src/main.ts",
+		"start": "tsx --import ./scripts/register-sql-loader.mjs src/main.ts",
 		"build": "tsc && tsup",
-		"prepublishOnly": "pnpm run build",
+		"schema": "tsx scripts/generate-schema.ts",
+		"prepublishOnly": "pnpm run schema && pnpm run build",
 		"ci:publish": "pnpm publish --access public",
 		"try-run": "pnpm run build && node dist/main.js"
 	},
@@ -27,6 +28,7 @@
 	"type": "module",
 	"files": [
 		"dist",
+		"schema.sql",
 		"readme.md",
 		"LICENSE"
 	],
@@ -38,7 +40,7 @@
 		"@shellular/protocol": "workspace:*",
 		"@xterm/addon-serialize": "^0.14.0",
 		"@xterm/headless": "^6.0.0",
-		"better-sqlite3": "^12.11.1",
+		"better-sqlite3": "^13.0.1",
 		"chalk": "^5.6.2",
 		"commander": "^14.0.3",
 		"libsodium-wrappers": "^0.8.3",
@@ -48,7 +50,7 @@
 		"pm2": "^7.0.3",
 		"qrcode-terminal": "^0.12.0",
 		"semver": "^7.7.4",
-		"ws": "^8.20.0",
+		"ws": "^8.21.1",
 		"zod": "^4.3.6"
 	},
 	"devDependencies": {
@@ -56,10 +58,13 @@
 		"@types/node": "^22.19.17",
 		"@types/qrcode-terminal": "^0.12.2",
 		"@types/semver": "^7.7.1",
-		"@types/ws": "^8.18.0",
+		"@types/ws": "^8.18.1",
 		"cross-env": "^10.1.0",
 		"tsup": "^8.5.1",
-		"tsx": "^4.21.0",
-		"typescript": "^6.0.2"
+		"tsx": "^4.23.1",
+		"typescript": "^6.0.3"
+	},
+	"optionalDependencies": {
+		"bufferutil": "^4.1.0"
 	}
 }

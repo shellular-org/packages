@@ -40,7 +40,10 @@ class Logger {
 		const logLevelTag = level === "log" ? "" : `[${level}]`;
 		let prefix = logLevelTag ? `${this.padding} ${logLevelTag}` : this.padding;
 		if (Logger.levelsWithTimestamp.has(level)) {
-			prefix += ` <${new Date().toUTCString()}>`;
+			// ISO rather than toUTCString(): the latter is second-resolution, which
+			// is useless for correlating against app-side timings where the whole
+			// effect being measured is sub-second.
+			prefix += ` <${new Date().toISOString()}>`;
 		}
 
 		console[level](prefix, ...args);

@@ -20,6 +20,7 @@ import { AcpContentBlockSchema, MsgType } from "@shellular/protocol";
 
 import { config } from "@/config";
 import type { Connection } from "@/connection";
+import { logger } from "@/logger";
 import { commandsExist } from "@/utils";
 import { BUILTIN_AGENT_DESCRIPTORS } from "./agents";
 import { ACP } from "./base";
@@ -41,11 +42,87 @@ import {
 	toCustomDescriptor,
 	writeAgentsConfig,
 } from "./store";
+import { TranscriptStore } from "./transcript-store";
 import type { AgentDescriptor, AgentInfo } from "./types";
 
 const MAX_AGENT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const RECENT_SESSION_ACTIVITY_MS = 10 * 60 * 1000;
 const SESSION_RUNTIME_IDLE_MS = 2 * 60 * 1000;
+// How many newest messages a session.snapshot push carries when every attached
+// client supports paging. One app page (PAGE_SIZE=30): prefetching a second page
+// costs its bytes on every single attach, up front and in the user's way, to
+// save a scroll-back fetch that often never happens. Measured on a
+// 115-message session, 60 messages was ~376KB / ~3.7s of relay transit against
+// ~20ms to decode and render — so the wire, not the CPU, sets this bound.
+const SNAPSHOT_TAIL = 30;
+
+/**
+ * Which slice of a transcript a caller wants. `tail` (newest N) and `from`/`to`
+ * (explicit `[from, to)`) are mutually exclusive — see `sliceWindow`.
+ */
+export interface MessageWindow {
+	tail?: number;
+	from?: number;
+	to?: number;
+}
+
+/** True when a window asks for an explicit range rather than a tail. */
+function isRangeWindow(window?: MessageWindow) {
+	return window?.from !== undefined || window?.to !== undefined;
+}
+
+/**
+ * Resolve a window against a resident message array. `baseIdx` is the transcript
+ * index of `messages[0]`, so all arithmetic is in transcript space and the
+ * returned `from` is directly reportable to the client.
+ *
+ * Omitting both forms yields the whole array — callers that want the default
+ * newest-N window pass `{ tail: SNAPSHOT_TAIL }` explicitly rather than relying
+ * on a default here, so "no window" keeps meaning "everything".
+ */
+function sliceWindow(
+	messages: AcpMessage[],
+	baseIdx: number,
+	window?: MessageWindow,
+) {
+	if (isRangeWindow(window)) {
+		const end = baseIdx + messages.length;
+		// Clamp into what is actually resident, then guard from <= to so an
+		// inverted or out-of-range request yields empty rather than a wrapped
+		// slice.
+		const from = Math.min(Math.max(window?.from ?? 0, baseIdx), end);
+		const to = Math.min(Math.max(window?.to ?? end, from), end);
+		return withBounds(messages.slice(from - baseIdx, to - baseIdx), from);
+	}
+	const tail = window?.tail;
+	const sliced = tail ? messages.slice(-tail) : messages;
+	return withBounds(sliced, baseIdx + (messages.length - sliced.length));
+}
+
+/**
+ * Tag a slice with the window it occupies. Bounds are omitted for an empty
+ * slice: `from`/`to` are indices of real messages, so a zero-length window has
+ * no meaningful position and must not report one.
+ */
+function withBounds(messages: AcpMessage[], from: number) {
+	if (messages.length === 0) {
+		return { messages, from: undefined, to: undefined };
+	}
+	return { messages, from, to: from + messages.length };
+}
+// How long a cold attach (nothing live, nothing stored) waits for the in-flight
+// replay before giving up and replying empty. Sized above a typical replay
+// (~0.9-1.5s measured) because the alternative is strictly worse: an empty reply
+// costs an extra relay round trip (~0.6s each way) plus a full re-send of the
+// transcript as a separate push. Anything slower than this is likely one of the
+// tens-of-seconds replays, where returning promptly and pushing later wins.
+const COLD_ATTACH_REPLAY_WAIT_MS = 2500;
+// Streaming emits a `message` event per chunk carrying the ENTIRE evolving
+// message, which is quadratic on the wire for long replies. Coalesce them:
+// each message event supersedes the previous one for the same message id, so
+// dropping intermediates is lossless. `token` events still flow per-chunk for
+// smooth streaming; this only paces the full-payload reconciliation events.
+const STREAM_MESSAGE_COALESCE_MS = 150;
 type RuntimePatch = Partial<
 	Omit<AiSessionRuntimeState, "agentId" | "sessionId" | "updatedAt">
 > & {
@@ -57,7 +134,14 @@ type AttachedSessionSnapshot = {
 	state: AiSessionState;
 	runtimeState?: AiSessionRuntimeState;
 	messages: AcpMessage[];
-	updates: unknown[];
+	// Transcript index of messages[0]. Non-zero only while the snapshot holds a
+	// store-hydrated tail; a completed replay always resets it to 0.
+	baseIdx: number;
+	// Full transcript length, even when messages holds only a tail.
+	totalCount: number;
+	// Bumped on every full authoritative reload. Paging clients echo it so a
+	// reload can invalidate their in-flight scroll pages.
+	generation: number;
 	revision: number;
 	syncing?: boolean;
 };
@@ -183,6 +267,22 @@ export class AgentsManager {
 	// External session keys the user has dismissed from the home view. Kept so
 	// the watcher's continued reports of the same finished state don't re-add it.
 	private dismissedSessions = new Set<string>();
+	private transcriptStore = new TranscriptStore();
+	private sessionGenerations = new Map<string, number>();
+	// Clients that attached with `tail` (newest-N paging). Snapshot pushes are
+	// tail-sized only when every attached client opted in.
+	private pagingClients = new Map<string, Set<string>>();
+	// Sessions whose stored transcript may be stale because an external writer
+	// (scheduler, laptop CLI, editor) touched them since our last full replay.
+	private staleSessions = new Set<string>();
+	// Sessions where a cold attach is waiting on the in-flight replay and will
+	// return its transcript directly, so the background push must stay quiet
+	// rather than re-sending the same payload.
+	private coldReplayClaims = new Set<string>();
+	// Completed turns per session. A background replay compares this before and
+	// after its load: if it changed, the replay predates a turn and its result
+	// must not overwrite the newer live transcript.
+	private sessionTurnCounts = new Map<string, number>();
 
 	constructor() {
 		this.reloadDescriptors();
@@ -310,6 +410,10 @@ export class AgentsManager {
 		}
 
 		this.externalSessions.add(key);
+		// An external writer is appending to this session, so any transcript we
+		// have cached (memory or store) can no longer be trusted until the next
+		// full replay reconciles it.
+		this.staleSessions.add(key);
 		// Don't resurrect a session the user has dismissed; the watcher will keep
 		// reporting the file's last finished state otherwise.
 		if (this.dismissedSessions.has(key)) {
@@ -339,6 +443,30 @@ export class AgentsManager {
 		// emit() because it re-derives runtime state and targets only attached
 		// clients.
 		this.broadcastRuntimeState(agentId, sessionId, state, update.message);
+
+		// If someone is viewing this chat while the external turn just finished,
+		// reconcile now so their transcript catches up without a re-open. The
+		// refresh guards (no runtime / our prompt active / load in-flight) make
+		// repeated triggers safe.
+		const externalCwd =
+			update.workspacePath ??
+			this.sessionSnapshots.get(key)?.session.workspacePath;
+		if (
+			externalCwd &&
+			!isLiveRuntimeStatus(update.status) &&
+			this.attachedSessionClients.get(key)?.size
+		) {
+			setTimeout(() => {
+				this.refreshSessionSnapshot(
+					this.sessionClientIds.get(key) ?? "",
+					agentId,
+					sessionId,
+					externalCwd,
+					{},
+					{ emitSnapshot: true },
+				);
+			}, 0);
+		}
 	}
 
 	private broadcastRuntimeState(
@@ -714,28 +842,6 @@ export class AgentsManager {
 		return result;
 	}
 
-	async loadSession(
-		clientId: string,
-		agentId: AgentId,
-		sessionId: string,
-		cwd: string,
-		options: Partial<
-			Omit<Parameters<ACP["loadSession"]>[0], "sessionId" | "cwd">
-		> = {},
-	) {
-		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
-		this.rememberSessionClient(agentId, sessionId, clientId);
-		return agent.loadSession(
-			{
-				...options,
-				sessionId,
-				cwd,
-				mcpServers: options.mcpServers ?? [],
-			},
-			clientId,
-		);
-	}
-
 	async attachSession(
 		clientId: string,
 		agentId: AgentId,
@@ -744,20 +850,33 @@ export class AgentsManager {
 		options: Partial<
 			Omit<Parameters<ACP["loadSession"]>[0], "sessionId" | "cwd">
 		> = {},
+		window?: MessageWindow,
 	) {
+		const startedAt = Date.now();
 		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
 		this.attachSessionClient(agentId, sessionId, clientId);
 		this.rememberSessionClient(agentId, sessionId, clientId);
+		const key = this.sessionKey(agentId, sessionId);
+		// A client that asks for any bounded window is a paging client: snapshot
+		// pushes may be tail-sized for it. An explicit range counts too — it has
+		// told us it can fetch more.
+		if (window?.tail || isRangeWindow(window)) {
+			let paging = this.pagingClients.get(key);
+			if (!paging) {
+				paging = new Set();
+				this.pagingClients.set(key, paging);
+			}
+			paging.add(clientId);
+		}
 		const loadParams = {
 			...options,
 			sessionId,
 			cwd,
 			mcpServers: options.mcpServers ?? [],
 		};
-		const key = this.sessionKey(agentId, sessionId);
 		const cached = this.sessionSnapshots.get(key);
 		if (cached && !agent.hasActivePrompt()) {
-			if (!agent.getSession(sessionId)) {
+			if (!agent.getSession(sessionId) || this.staleSessions.has(key)) {
 				setTimeout(() => {
 					this.refreshSessionSnapshot(
 						clientId,
@@ -771,30 +890,122 @@ export class AgentsManager {
 					);
 				}, 0);
 			}
-			return {
-				...cached,
-				runtimeState:
-					this.getSessionRuntimeState(agentId, sessionId) ??
-					cached.runtimeState,
-				revision: this.getSessionRevision(agentId, sessionId),
-				syncing: !agent.getSession(sessionId),
-			};
+			const result = this.toAttachResult(
+				agentId,
+				sessionId,
+				cached,
+				window,
+				!agent.getSession(sessionId),
+			);
+			logger.debug(
+				`AI attach warm-hit ${key}: ${result.messages.length}/${result.totalCount} messages in ${Date.now() - startedAt}ms`,
+			);
+			return result;
 		}
 		const result = agent.snapshotSession(loadParams, clientId);
+		let coldReplay: Promise<void> | undefined;
 		if (!agent.hasActivePrompt()) {
-			setTimeout(() => {
-				this.refreshSessionSnapshot(
-					clientId,
+			// Kept synchronous (rather than the previous setTimeout) so the task
+			// handle exists before the cold-start branch below decides whether to
+			// wait on it.
+			coldReplay = this.refreshSessionSnapshot(
+				clientId,
+				agentId,
+				sessionId,
+				cwd,
+				options,
+				{
+					emitSnapshot: true,
+				},
+			);
+		}
+
+		// True cold start (no live transcript): hydrate from the durable store so
+		// the app renders the last-known tail instantly while the replay runs in
+		// the background. The store may be stale; the reconcile that follows
+		// wholesale-replaces it and pushes a fresh session.snapshot.
+		if (result.messages.length === 0) {
+			const meta = this.transcriptStore.getSessionMeta(agentId, sessionId);
+			// The store hydrates a tail regardless of the requested form: an
+			// explicit range is still bounded by what was persisted, and
+			// `toAttachResult` re-slices this snapshot to the actual window below.
+			const page = meta
+				? this.transcriptStore.getTail(
+						agentId,
+						sessionId,
+						window?.tail ?? SNAPSHOT_TAIL,
+					)
+				: null;
+			if (meta && page) {
+				this.sessionGenerations.set(key, page.generation);
+				const snapshot = this.setSessionSnapshot(agentId, sessionId, {
+					backend: agentId,
+					session: meta.session,
+					state: meta.state,
+					runtimeState: this.rememberSessionRuntimeMetadata(
+						agentId,
+						meta.session,
+					),
+					messages: page.messages,
+					// Undefined only for an empty page, where the base is moot.
+					baseIdx: page.from ?? 0,
+					totalCount: page.totalCount,
+					generation: page.generation,
+					revision: this.getSessionRevision(agentId, sessionId),
+					syncing: true,
+				});
+				const attachResult = this.toAttachResult(
 					agentId,
 					sessionId,
-					cwd,
-					options,
-					{
-						emitSnapshot: true,
-					},
+					snapshot,
+					window,
+					true,
 				);
-			}, 0);
+				logger.debug(
+					`AI attach store-hydrate ${key}: ${attachResult.messages.length}/${attachResult.totalCount} messages in ${Date.now() - startedAt}ms`,
+				);
+				return attachResult;
+			}
+
+			// Nothing live and nothing stored: replying now means replying empty,
+			// and the transcript then costs a whole second delivery (another relay
+			// round trip plus a full re-send). Give the in-flight replay a short
+			// window to land so it can ride back in this reply instead. Bounded
+			// because a replay can take tens of seconds, which must never block the
+			// reply — past the deadline this falls through to the empty result and
+			// the background push delivers as before.
+			if (coldReplay) {
+				// Registered before awaiting: the replay's continuation may run the
+				// moment we yield, and it checks this to decide whether to push.
+				this.coldReplayClaims.add(key);
+				const settled = await Promise.race([
+					coldReplay.then(() => true),
+					new Promise<false>((resolve) =>
+						setTimeout(() => resolve(false), COLD_ATTACH_REPLAY_WAIT_MS),
+					),
+				]);
+				const replayed = settled ? this.sessionSnapshots.get(key) : undefined;
+				if (!replayed || replayed.messages.length === 0) {
+					// Timed out, or the replay produced nothing worth returning: hand
+					// delivery back to the background push.
+					this.coldReplayClaims.delete(key);
+				}
+				if (replayed && replayed.messages.length > 0) {
+					const attachResult = this.toAttachResult(
+						agentId,
+						sessionId,
+						replayed,
+						window,
+						false,
+					);
+					logger.debug(
+						`AI attach cold-replay ${key}: ${attachResult.messages.length}/${attachResult.totalCount} messages in ${Date.now() - startedAt}ms`,
+					);
+					return attachResult;
+				}
+			}
 		}
+
 		const session = agent.getSession(sessionId) ?? {
 			id: sessionId,
 			createdAt: Date.now(),
@@ -803,20 +1014,144 @@ export class AgentsManager {
 			configOptions: result.response.configOptions ?? undefined,
 		};
 		const runtimeState = this.rememberSessionRuntimeMetadata(agentId, session);
-		return this.setSessionSnapshot(agentId, sessionId, {
+		const snapshot = this.setSessionSnapshot(agentId, sessionId, {
 			backend: agentId,
 			session,
 			state: {
 				configOptions: result.response.configOptions ?? undefined,
 				modes: result.response.modes,
-				availableCommands: latestAvailableCommands(result.updates),
+				availableCommands: latestAvailableCommands(
+					result.updates,
+					agent.getAvailableCommands(sessionId),
+				),
 			},
 			runtimeState,
 			messages: result.messages,
-			updates: result.updates,
+			baseIdx: 0,
+			totalCount: result.messages.length,
+			generation: this.sessionGenerations.get(key) ?? 0,
 			revision: this.getSessionRevision(agentId, sessionId),
 			syncing: !agent.hasActivePrompt(),
 		});
+		logger.debug(
+			`AI attach cold-miss ${key}: ${snapshot.messages.length} messages in ${Date.now() - startedAt}ms`,
+		);
+		return this.toAttachResult(
+			agentId,
+			sessionId,
+			snapshot,
+			window,
+			snapshot.syncing,
+		);
+	}
+
+	/**
+	 * Shape a snapshot into the exact AI_SESSION_ATTACH_RESULT payload. The one
+	 * place internal snapshot fields are allowed to cross the wire boundary —
+	 * never `baseIdx`, and never the removed `updates`. With `tail`, only the
+	 * newest N messages ship plus paging info for scroll-back.
+	 */
+	private toAttachResult(
+		agentId: AgentId,
+		sessionId: string,
+		snapshot: AttachedSessionSnapshot,
+		window?: MessageWindow,
+		syncing?: boolean,
+	) {
+		const { messages, from, to } = sliceWindow(
+			snapshot.messages,
+			snapshot.baseIdx,
+			window,
+		);
+		return {
+			backend: snapshot.backend,
+			session: snapshot.session,
+			state: snapshot.state,
+			runtimeState:
+				this.getSessionRuntimeState(agentId, sessionId) ??
+				snapshot.runtimeState,
+			messages,
+			revision: this.getSessionRevision(agentId, sessionId),
+			syncing: syncing ?? snapshot.syncing,
+			totalCount: snapshot.totalCount,
+			hasMoreBefore: from !== undefined && from > 0,
+			from,
+			to,
+			generation: snapshot.generation,
+		};
+	}
+
+	/**
+	 * Serve a backward page of transcript history for scroll-back. Reads memory
+	 * when the range is resident, else the durable store. Never spawns an agent
+	 * runtime — a page read must stay a read.
+	 */
+	getMessagesPage(
+		agentId: AgentId,
+		sessionId: string,
+		to: number,
+		limit: number,
+	) {
+		const key = this.sessionKey(agentId, sessionId);
+		const snapshot = this.sessionSnapshots.get(key);
+		const from = Math.max(0, to - limit);
+		if (
+			snapshot &&
+			from >= snapshot.baseIdx &&
+			to <= snapshot.baseIdx + snapshot.messages.length
+		) {
+			const messages = snapshot.messages.slice(
+				from - snapshot.baseIdx,
+				to - snapshot.baseIdx,
+			);
+			// A zero-width or empty slice has no position: omit the bounds so
+			// `from`/`to` always index real messages.
+			return {
+				backend: agentId,
+				sessionId,
+				messages,
+				from: messages.length > 0 ? from : undefined,
+				to: messages.length > 0 ? to : undefined,
+				totalCount: snapshot.totalCount,
+				hasMoreBefore: messages.length > 0 && from > 0,
+				generation: snapshot.generation,
+			};
+		}
+		const page = this.transcriptStore.getPage(agentId, sessionId, to, limit);
+		if (!page || page.messages.length === 0) {
+			// Nothing stored before `to`. The window is empty, so it has no
+			// bounds; `hasMoreBefore: false` is the only thing telling the client
+			// to stop — it cannot be derived from an absent `from`.
+			return {
+				backend: agentId,
+				sessionId,
+				messages: [] as AcpMessage[],
+				totalCount: snapshot?.totalCount ?? page?.totalCount ?? 0,
+				hasMoreBefore: false,
+				generation: snapshot?.generation ?? page?.generation ?? 0,
+			};
+		}
+		return {
+			backend: agentId,
+			sessionId,
+			messages: page.messages,
+			from: page.from,
+			to: page.to,
+			totalCount: page.totalCount,
+			hasMoreBefore: (page.from ?? 0) > 0,
+			generation: page.generation,
+		};
+	}
+
+	private nextSessionGeneration(agentId: AgentId, sessionId: string) {
+		const key = this.sessionKey(agentId, sessionId);
+		const current =
+			this.sessionGenerations.get(key) ??
+			this.transcriptStore.getSessionMeta(agentId, sessionId)?.generation ??
+			0;
+		const next = current + 1;
+		this.sessionGenerations.set(key, next);
+		return next;
 	}
 
 	detachSession(clientId: string, agentId: AgentId, sessionId: string) {
@@ -897,30 +1232,129 @@ export class AgentsManager {
 		if (!agent.getSession(sessionId)) {
 			await this.ensureSessionRuntimeLoaded(clientId, agentId, sessionId);
 		}
+		// Captured before the turn starts: live message events upsert into the
+		// snapshot as they stream, so by resolve time its length already includes
+		// the turn. The pre-turn length anchors the durable tail write below.
+		const promptKey = this.sessionKey(agentId, sessionId);
+		const preTurnSnapshot = this.sessionSnapshots.get(promptKey);
+		const preTurnLength = preTurnSnapshot?.messages.length ?? 0;
+		const preTurnComplete = (preTurnSnapshot?.baseIdx ?? 0) === 0;
 		const prompt = normalizePromptContent(content);
-		const result = await agent.prompt(
-			{
-				sessionId,
-				prompt,
-			},
-			{
-				onEvent: (event) => {
-					this.emit(eventClientId(event, clientId), agent.descriptor.id, event);
-				},
-			},
+		const coalescer = this.createMessageEventCoalescer(
 			clientId,
+			agent.descriptor.id,
 		);
-		const snapshot = this.sessionSnapshots.get(
-			this.sessionKey(agentId, sessionId),
-		);
+		let result: Awaited<ReturnType<ACP["prompt"]>>;
+		try {
+			result = await agent.prompt(
+				{
+					sessionId,
+					prompt,
+				},
+				{
+					onEvent: (event) => coalescer.push(event),
+				},
+				clientId,
+			);
+		} finally {
+			coalescer.dispose();
+			// Mark the turn even if it failed or was cancelled: the transcript
+			// still advanced, so any replay started before now is stale.
+			this.sessionTurnCounts.set(
+				promptKey,
+				(this.sessionTurnCounts.get(promptKey) ?? 0) + 1,
+			);
+		}
+		const snapshot = this.sessionSnapshots.get(promptKey);
 		if (snapshot) {
-			this.sessionSnapshots.set(this.sessionKey(agentId, sessionId), {
+			this.sessionSnapshots.set(promptKey, {
 				...snapshot,
 				messages: result.messages,
+				baseIdx: 0,
+				totalCount: result.messages.length,
 				revision: this.getSessionRevision(agentId, sessionId),
 			});
 		}
+		// Durable turn-boundary commit, from the live transcript rather than a
+		// reload — the in-memory turn is always the freshest view. This runs even
+		// without a snapshot (a session prompted without an attached client, e.g.
+		// from the scheduler); otherwise those turns would never be persisted.
+		// From the pre-turn anchor (minus one: the last pre-turn message may have
+		// been mutated by the turn) so only the turn's rows are rewritten, and
+		// generation stays untouched so paging clients aren't invalidated by
+		// normal chatting. A tail-only pre-turn snapshot has no trustworthy
+		// anchor — rewrite from zero instead.
+		const session = snapshot?.session ?? agent.getSession(sessionId);
+		if (session) {
+			this.transcriptStore.writeFrom(
+				agentId,
+				sessionId,
+				snapshot && preTurnComplete ? Math.max(0, preTurnLength - 1) : 0,
+				result.messages,
+				{
+					session,
+					state: snapshot?.state ?? {},
+					generation: snapshot?.generation,
+				},
+			);
+		}
 		return result;
+	}
+
+	/**
+	 * Pace full-payload `message` events during a prompt turn. Leading edge
+	 * emits immediately (the bubble must appear at once); afterwards the latest
+	 * event for the same message is held and flushed on a trailing timer. Any
+	 * other event type flushes first so relative ordering is preserved. Only
+	 * one message evolves at a time, so a single pending slot suffices — a
+	 * different message id flushes the previous one.
+	 */
+	private createMessageEventCoalescer(clientId: string, agentId: AgentId) {
+		let pending: AiEvent | null = null;
+		let pendingClientId = clientId;
+		let timer: ReturnType<typeof setTimeout> | null = null;
+		let lastEmitAt = 0;
+		let lastMessageId: unknown;
+
+		const emitPending = () => {
+			if (timer) {
+				clearTimeout(timer);
+				timer = null;
+			}
+			if (!pending) return;
+			const event = pending;
+			pending = null;
+			lastEmitAt = Date.now();
+			this.emit(pendingClientId, agentId, event);
+		};
+
+		return {
+			push: (event: AiEvent) => {
+				const targetClientId = eventClientId(event, clientId);
+				if (event.type !== "message") {
+					emitPending();
+					this.emit(targetClientId, agentId, event);
+					return;
+				}
+				const messageId = event.properties.id;
+				if (messageId !== lastMessageId) {
+					emitPending();
+					lastMessageId = messageId;
+					lastEmitAt = 0;
+				}
+				pending = event;
+				pendingClientId = targetClientId;
+				const elapsed = Date.now() - lastEmitAt;
+				if (elapsed >= STREAM_MESSAGE_COALESCE_MS) {
+					emitPending();
+				} else if (!timer) {
+					timer = setTimeout(emitPending, STREAM_MESSAGE_COALESCE_MS - elapsed);
+				}
+			},
+			dispose: () => {
+				emitPending();
+			},
+		};
 	}
 
 	private async ensureSessionRuntimeLoaded(
@@ -991,6 +1425,34 @@ export class AgentsManager {
 		return agent.replyPermission(permissionId, optionId);
 	}
 
+	async replyElicitation(
+		clientId: string,
+		agentId: AgentId,
+		sessionId: string,
+		elicitationId: string,
+		action: "accept" | "decline" | "cancel",
+		content?: Record<string, unknown>,
+	) {
+		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
+		const response =
+			action === "accept" ? { action, content: content ?? {} } : { action };
+		const result = agent.replyElicitation(
+			elicitationId,
+			response as Parameters<ACP["replyElicitation"]>[1],
+		);
+		// Tell every viewing client the card is resolved (including the sender's
+		// other devices), mirroring how permission resolution propagates.
+		this.emit(clientId, agentId, {
+			type: "elicitation.updated",
+			properties: {
+				id: elicitationId,
+				sessionId,
+				resolved: true,
+			},
+		});
+		return result;
+	}
+
 	async setSessionConfigOption(
 		clientId: string,
 		agentId: AgentId,
@@ -1036,6 +1498,7 @@ export class AgentsManager {
 		this.sessionRuntimes.clear();
 		this.sessionRuntimeCleanupTimers.clear();
 		this.sessionAgents.clear();
+		this.transcriptStore.close();
 	}
 
 	async getAvailableAgents(): Promise<AgentId[]> {
@@ -1256,15 +1719,16 @@ export class AgentsManager {
 
 		conn.on(MsgType.AI_SESSION_CREATE, async (msg: AiSessionCreateMsg) => {
 			try {
-				const { session, response, updates } = await this.createSession(
-					msg.clientId,
-					msg.data.backend,
-					msg.data.cwd ?? msg.data.workspacePath,
-					{
-						additionalDirectories: msg.data.additionalDirectories,
-						mcpServers: msg.data.mcpServers as never,
-					},
-				);
+				const { session, response, availableCommands } =
+					await this.createSession(
+						msg.clientId,
+						msg.data.backend,
+						msg.data.cwd ?? msg.data.workspacePath,
+						{
+							additionalDirectories: msg.data.additionalDirectories,
+							mcpServers: msg.data.mcpServers as never,
+						},
+					);
 				if (session.id) {
 					this.rememberSessionClient(
 						msg.data.backend,
@@ -1286,7 +1750,7 @@ export class AgentsManager {
 							configOptions: response.configOptions ?? undefined,
 						} as typeof session,
 						state: {
-							availableCommands: latestAvailableCommands(updates),
+							availableCommands,
 							configOptions: response.configOptions ?? undefined,
 							modes: response.modes,
 						},
@@ -1319,67 +1783,21 @@ export class AgentsManager {
 			}
 		});
 
-		conn.on(MsgType.AI_SESSION_LOAD, async (msg) => {
-			try {
-				const result = await this.loadSession(
-					msg.clientId,
-					msg.data.backend,
-					msg.data.sessionId,
-					msg.data.cwd,
-					{
-						additionalDirectories: msg.data.additionalDirectories,
-						mcpServers: msg.data.mcpServers as never,
-					},
-				);
-				const agent = await this.connectSessionAgent(
-					msg.clientId,
-					msg.data.backend,
-					msg.data.sessionId,
-				);
-				const session = agent.getSession(msg.data.sessionId) ?? {
-					id: msg.data.sessionId,
-					createdAt: Date.now(),
-					updatedAt: Date.now(),
-					workspacePath: msg.data.cwd,
-					configOptions: result.response.configOptions ?? undefined,
-				};
-				const runtimeState = this.rememberSessionRuntimeMetadata(
-					msg.data.backend,
-					session,
-				);
-				this.rememberSessionClient(
-					msg.data.backend,
-					msg.data.sessionId,
-					msg.clientId,
-				);
-				conn.send({
-					type: MsgType.AI_SESSION_LOAD_RESULT,
-					clientId: msg.clientId,
-					respTo: msg.id,
-					data: {
-						backend: msg.data.backend,
-						session,
-						state: {
-							configOptions: result.response.configOptions ?? undefined,
-							modes: result.response.modes,
-						},
-						runtimeState,
-						messages: result.messages,
-						updates: result.updates,
-					},
-				});
-			} catch (err) {
-				conn.send({
-					type: MsgType.AI_SESSION_LOAD_RESULT,
-					clientId: msg.clientId,
-					respTo: msg.id,
-					error: getErrorMessage(err),
-				});
-			}
-		});
-
 		conn.on(MsgType.AI_SESSION_ATTACH, async (msg) => {
 			try {
+				const { tail, from, to } = msg.data;
+				// `tail` and `from`/`to` answer opposite questions ("newest N" vs
+				// "this range"), so reject the combination instead of silently
+				// picking a winner.
+				if (tail !== undefined && (from !== undefined || to !== undefined)) {
+					throw new Error(
+						"session attach accepts either `tail` or `from`/`to`, not both",
+					);
+				}
+				const window: MessageWindow =
+					tail === undefined && from === undefined && to === undefined
+						? { tail: SNAPSHOT_TAIL }
+						: { tail, from, to };
 				const result = await this.attachSession(
 					msg.clientId,
 					msg.data.backend,
@@ -1389,6 +1807,7 @@ export class AgentsManager {
 						additionalDirectories: msg.data.additionalDirectories,
 						mcpServers: msg.data.mcpServers as never,
 					},
+					window,
 				);
 				conn.send({
 					type: MsgType.AI_SESSION_ATTACH_RESULT,
@@ -1574,6 +1993,22 @@ export class AgentsManager {
 
 		conn.on(MsgType.AI_MESSAGES_LIST, async (msg) => {
 			try {
+				// Paged scroll-back read: served from memory/store only. Must never
+				// spawn an agent runtime — a page read stays a read.
+				if (typeof msg.data.to === "number") {
+					conn.send({
+						type: MsgType.AI_MESSAGES_LIST_RESULT,
+						clientId: msg.clientId,
+						respTo: msg.id,
+						data: this.getMessagesPage(
+							msg.data.backend,
+							msg.data.sessionId,
+							msg.data.to,
+							msg.data.limit ?? SNAPSHOT_TAIL,
+						),
+					});
+					return;
+				}
 				const agent = await this.connectSessionAgent(
 					msg.clientId,
 					msg.data.backend,
@@ -1752,6 +2187,32 @@ export class AgentsManager {
 			}
 		});
 
+		conn.on(MsgType.AI_ELICITATION_REPLY, async (msg) => {
+			try {
+				await this.replyElicitation(
+					msg.clientId,
+					msg.data.backend,
+					msg.data.sessionId,
+					msg.data.elicitationId,
+					msg.data.action,
+					msg.data.content,
+				);
+				conn.send({
+					type: MsgType.AI_ELICITATION_REPLY_ACK,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: { ok: true },
+				});
+			} catch (err) {
+				conn.send({
+					type: MsgType.AI_ELICITATION_REPLY_ACK,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(err),
+				});
+			}
+		});
+
 		conn.on(MsgType.AI_PERMISSION_REPLY, async (msg) => {
 			try {
 				await this.replyPermission(
@@ -1900,6 +2361,7 @@ export class AgentsManager {
 		this.sessionSnapshots.set(key, {
 			...snapshot,
 			messages,
+			totalCount: snapshot.baseIdx + messages.length,
 			revision: this.getSessionRevision(agentId, sessionId),
 		});
 	}
@@ -1918,6 +2380,12 @@ export class AgentsManager {
 		const agent = this.sessionRuntimes.get(key);
 		if (!agent || agent.hasActivePrompt()) return;
 		if (this.sessionLoadTasks.has(key)) return;
+		// A replay takes tens of seconds. If a turn runs during it, the live
+		// transcript is newer than anything the replay can return, so the result
+		// must be discarded rather than overwrite it. Counting turns (rather than
+		// re-checking `hasActivePrompt`) also catches a turn that started and
+		// finished entirely inside the load window.
+		const turnsAtStart = this.sessionTurnCounts.get(key) ?? 0;
 		if (behavior.emitSnapshot) {
 			this.emit(this.sessionClientIds.get(key) ?? "", agentId, {
 				type: "session.status",
@@ -1937,37 +2405,70 @@ export class AgentsManager {
 			.then((result) => {
 				const session = agent.getSession(sessionId);
 				if (!session) return;
+				// A turn ran while this replay was in flight: its result is a view of
+				// history from before that turn, so committing it would delete the
+				// turn's messages from both memory and the store. Drop it; the
+				// prompt path already persisted the newer transcript.
+				if ((this.sessionTurnCounts.get(key) ?? 0) !== turnsAtStart) {
+					logger.debug(
+						`AI refresh ${key}: discarded stale replay (a turn completed during load)`,
+					);
+					return;
+				}
 				const runtimeState = this.rememberSessionRuntimeMetadata(
 					agentId,
 					session,
 				);
+				const state = {
+					configOptions: result.response.configOptions ?? undefined,
+					modes: result.response.modes,
+					availableCommands: latestAvailableCommands(
+						result.updates,
+						agent.getAvailableCommands(sessionId),
+					),
+				};
+				// Full authoritative reload: wholesale-replace memory and store under
+				// a fresh generation so paging clients discard in-flight pages, and
+				// clear any external-writer staleness this replay just absorbed.
+				const generation = this.nextSessionGeneration(agentId, sessionId);
+				this.staleSessions.delete(key);
 				this.setSessionSnapshot(agentId, sessionId, {
 					backend: agentId,
 					session,
-					state: {
-						configOptions: result.response.configOptions ?? undefined,
-						modes: result.response.modes,
-						availableCommands: latestAvailableCommands(result.updates),
-					},
+					state,
 					runtimeState,
 					messages: result.messages,
-					updates: result.updates,
+					baseIdx: 0,
+					totalCount: result.messages.length,
+					generation,
 					revision: this.getSessionRevision(agentId, sessionId),
 				});
-				if (behavior.emitSnapshot) {
+				this.transcriptStore.replaceAll(
+					agentId,
+					sessionId,
+					generation,
+					{ session, state },
+					result.messages,
+				);
+				// A cold attach that waited out this replay is returning the very
+				// same transcript in its reply, so pushing it again would re-send
+				// the whole payload over the relay for nothing.
+				const claimed = this.coldReplayClaims.delete(key);
+				if (behavior.emitSnapshot && !claimed) {
 					this.emitSessionSnapshot(agentId, sessionId, {
 						messages: result.messages,
-						state: {
-							configOptions: result.response.configOptions ?? undefined,
-							modes: result.response.modes,
-							availableCommands: latestAvailableCommands(result.updates),
-						},
+						state,
 						runtimeState,
+						totalCount: result.messages.length,
+						generation,
 					});
 				}
 			})
 			.catch(() => {})
 			.finally(() => {
+				// Belt and braces: a replay that threw never reached the claim check
+				// above, and a stale claim would silence the next session's push.
+				this.coldReplayClaims.delete(key);
 				if (behavior.emitSnapshot) {
 					this.emit(this.sessionClientIds.get(key) ?? "", agentId, {
 						type: "session.status",
@@ -1979,6 +2480,7 @@ export class AgentsManager {
 				}
 			});
 		this.sessionLoadTasks.set(key, task);
+		return task;
 	}
 
 	private emitSessionSnapshot(
@@ -1988,21 +2490,38 @@ export class AgentsManager {
 			messages: AcpMessage[];
 			state: AiSessionState;
 			runtimeState?: AiSessionRuntimeState;
+			/** Transcript index of `messages[0]`; 0 for a full replay. */
+			baseIdx?: number;
+			totalCount: number;
+			generation: number;
 		},
 	) {
-		this.emit(
-			this.sessionClientIds.get(this.sessionKey(agentId, sessionId)) ?? "",
-			agentId,
-			{
-				type: "session.snapshot",
-				properties: {
-					sessionId,
-					messages: snapshot.messages,
-					state: snapshot.state,
-					runtimeState: snapshot.runtimeState,
-				},
-			},
+		const key = this.sessionKey(agentId, sessionId);
+		// Tail-size the push only when every attached client can page for the
+		// rest; a single legacy client degrades the whole session to full pushes.
+		const attached = this.attachedSessionClients.get(key);
+		const paging = this.pagingClients.get(key);
+		const allPaging =
+			!!attached?.size && [...attached].every((id) => paging?.has(id));
+		const { messages, from, to } = sliceWindow(
+			snapshot.messages,
+			snapshot.baseIdx ?? 0,
+			allPaging ? { tail: SNAPSHOT_TAIL } : undefined,
 		);
+		this.emit(this.sessionClientIds.get(key) ?? "", agentId, {
+			type: "session.snapshot",
+			properties: {
+				sessionId,
+				messages,
+				state: snapshot.state,
+				runtimeState: snapshot.runtimeState,
+				totalCount: snapshot.totalCount,
+				from,
+				to,
+				hasMoreBefore: from !== undefined && from > 0,
+				generation: snapshot.generation,
+			},
+		});
 	}
 
 	private createManagedRuntime(agentId: AgentId): ACP {
@@ -2049,6 +2568,7 @@ export class AgentsManager {
 		clientId: string,
 	) {
 		const key = this.sessionKey(agentId, sessionId);
+		this.removePagingClient(key, clientId);
 		const clients = this.attachedSessionClients.get(key);
 		if (!clients) return;
 		clients.delete(clientId);
@@ -2058,6 +2578,7 @@ export class AgentsManager {
 	private detachClientFromAllSessions(clientId: string) {
 		if (!clientId) return;
 		for (const [key, clients] of this.attachedSessionClients.entries()) {
+			this.removePagingClient(key, clientId);
 			clients.delete(clientId);
 			if (!clients.size) {
 				this.attachedSessionClients.delete(key);
@@ -2067,6 +2588,13 @@ export class AgentsManager {
 				}
 			}
 		}
+	}
+
+	private removePagingClient(key: string, clientId: string) {
+		const paging = this.pagingClients.get(key);
+		if (!paging) return;
+		paging.delete(clientId);
+		if (!paging.size) this.pagingClients.delete(key);
 	}
 
 	private parseSessionKey(key: string): [string, string] {
@@ -2304,7 +2832,48 @@ export class AgentsManager {
 				},
 			});
 		});
-		this.permissionListenerCleanups.set(key, cleanup);
+		const elicitationCleanup = agent.onElicitation(clientId, (elicitation) => {
+			// Session-less elicitations can't be routed to an attached chat; skip.
+			if (!elicitation.sessionId) return;
+			const sessionKey = this.sessionKey(agentId, elicitation.sessionId);
+			const attached = this.attachedSessionClients.get(sessionKey);
+			const attachedTargets = attached ? [...attached] : [];
+			if (attachedTargets.length > 0 && attachedTargets[0] !== clientId) {
+				return;
+			}
+			const targetClientId =
+				attachedTargets[0] ?? this.sessionClientIds.get(sessionKey);
+			if (targetClientId !== clientId) return;
+			this.emit(targetClientId, descriptor.id, {
+				type: "elicitation.updated",
+				properties: {
+					id: elicitation.id,
+					sessionId: elicitation.sessionId,
+					elicitation: elicitation.raw,
+				},
+			});
+		});
+		const completeCleanup = agent.onElicitationComplete((params) => {
+			// Fan the url-mode completion out to every session client; the app
+			// matches on elicitationId and drops its waiting card.
+			for (const [sessionKey, target] of this.sessionClientIds.entries()) {
+				const [keyAgentId, sessionId] = this.parseSessionKey(sessionKey);
+				if (keyAgentId !== agentId || !sessionId) continue;
+				this.emit(target, descriptor.id, {
+					type: "elicitation.updated",
+					properties: {
+						id: params.elicitationId,
+						sessionId,
+						resolved: true,
+					},
+				});
+			}
+		});
+		this.permissionListenerCleanups.set(key, () => {
+			cleanup();
+			elicitationCleanup();
+			completeCleanup();
+		});
 	}
 
 	private removeClientPermissionListeners(clientId: string) {
@@ -2377,7 +2946,19 @@ function createAgentRuntime(
 	}
 }
 
-function latestAvailableCommands(updates: unknown[]) {
+/**
+ * Slash commands advertised for a session.
+ *
+ * Prefers a fresh `available_commands_update` seen in `updates`, then falls
+ * back to whatever the connection has tracked. The fallback matters because
+ * agents may send this notification *after* responding to session/load (Claude
+ * Code does), which puts it outside the replay window `updates` covers — so
+ * scanning `updates` alone silently loses the session's commands.
+ */
+function latestAvailableCommands(
+	updates: unknown[],
+	tracked?: unknown[] | undefined,
+) {
 	for (let index = updates.length - 1; index >= 0; index -= 1) {
 		const update = (updates[index] as { update?: unknown }).update as
 			| { sessionUpdate?: unknown; availableCommands?: unknown }
@@ -2389,7 +2970,7 @@ function latestAvailableCommands(updates: unknown[]) {
 			return update.availableCommands;
 		}
 	}
-	return undefined;
+	return tracked;
 }
 
 function sessionStatusEvent(

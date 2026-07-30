@@ -120,8 +120,6 @@ export const MsgType = {
 	AI_SESSION_LIST_RESULT: "ai:session:list:result",
 	AI_SESSION_CREATE: "ai:session:create",
 	AI_SESSION_CREATE_RESULT: "ai:session:create:result",
-	AI_SESSION_LOAD: "ai:session:load",
-	AI_SESSION_LOAD_RESULT: "ai:session:load:result",
 	AI_SESSION_ATTACH: "ai:session:attach",
 	AI_SESSION_ATTACH_RESULT: "ai:session:attach:result",
 	AI_SESSION_DETACH: "ai:session:detach",
@@ -181,6 +179,10 @@ export const MsgType = {
 	AI_SHARE_RESULT: "ai:share:result",
 	AI_PERMISSION_REPLY: "ai:permission:reply",
 	AI_PERMISSION_REPLY_ACK: "ai:permission:reply:ack",
+	// ACP elicitation (agent asks the user for structured input mid-turn).
+	// Requests arrive as `elicitation.updated` AI events; this is the reply leg.
+	AI_ELICITATION_REPLY: "ai:elicitation:reply",
+	AI_ELICITATION_REPLY_ACK: "ai:elicitation:reply:ack",
 	AI_QUESTION_REPLY: "ai:question:reply",
 	AI_QUESTION_REPLY_ACK: "ai:question:reply:ack",
 	AI_QUESTION_REJECT: "ai:question:reject",
@@ -227,11 +229,23 @@ export type PongMsg = z.infer<typeof PongMsgSchema>;
 
 // ─── Encrypted ───────────────────────────────────────────────────────────────
 
+/**
+ * Encoding applied to the plaintext BEFORE encryption, so the relay still only
+ * ever sees the routing fields and an opaque `ciphertext`. Absent means raw
+ * UTF-8 JSON, which is what older peers send and understand — never make this
+ * required, or a version-skewed peer's messages become undecryptable.
+ */
+export const EncryptedPayloadEncodingSchema = z.literal("gzip");
+export type EncryptedPayloadEncoding = z.infer<
+	typeof EncryptedPayloadEncodingSchema
+>;
+
 export const EncryptedMsgSchema = z.object({
 	id: z.string().optional(),
 	type: z.literal(MsgType.ENCRYPTED),
 	clientId: z.string(),
 	nonce: z.string(),
 	ciphertext: z.string(),
+	enc: EncryptedPayloadEncodingSchema.optional(),
 });
 export type EncryptedMsg = z.infer<typeof EncryptedMsgSchema>;

@@ -19,6 +19,10 @@ export class ConnectedClients {
 		return this.connectedClients.has(clientId);
 	}
 
+	get(clientId: string): ClientInfo | undefined {
+		return this.connectedClients.get(clientId);
+	}
+
 	getAll(): string[] {
 		return Array.from(this.connectedClients.keys());
 	}

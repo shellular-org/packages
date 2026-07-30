@@ -24,6 +24,7 @@ function renderUpdate(notification: acp.SessionNotification) {
 	console.log("\n\x1b[2m[session/update]\x1b[0m", u.sessionUpdate);
 	switch (u.sessionUpdate) {
 		case "agent_message_chunk":
+		case "user_message_chunk":
 			if (u.content.type === "text") {
 				process.stdout.write(u.content.text);
 			}
@@ -65,6 +66,8 @@ function renderUpdate(notification: acp.SessionNotification) {
 		case "usage_update":
 			break;
 		default:
+			console.log(`\n other type: ${u.sessionUpdate}`);
+			console.log(JSON.stringify(u, null, 2));
 			break;
 	}
 }

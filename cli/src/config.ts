@@ -53,6 +53,10 @@ const _config = {
 	RELAY_CACHE_FILE: path.join(SHELLULAR_DIR, "relay-cache.json"),
 	/** How long a disk-cached relay choice is trusted before we re-probe. */
 	RELAY_CACHE_TTL_MS: 24 * 60 * 60 * 1000,
+	// Project-wide SQLite database. Currently holds the agent chat transcript
+	// cache; state that lives in individual JSON files today will migrate
+	// here over time
+	SHELLULAR_DB_FILE: path.join(SHELLULAR_DIR, "shellular.sqlite"),
 } as const;
 
 export function ensureConfig() {

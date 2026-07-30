@@ -14,6 +14,7 @@ import {
 	type AiAttachmentWriteMsg,
 	type AiAuthSetMsg,
 	type AiCommandMsg,
+	type AiElicitationReplyMsg,
 	type AiMessagesListMsg,
 	type AiPermissionReplyMsg,
 	type AiPromptMsg,
@@ -30,7 +31,6 @@ import {
 	type AiSessionForkMsg,
 	type AiSessionGetMsg,
 	type AiSessionListMsg,
-	type AiSessionLoadMsg,
 	type AiSessionModeSetMsg,
 	type AiSessionResumeMsg,
 	type AiShareMsg,
@@ -83,6 +83,7 @@ import {
 } from "@shellular/protocol";
 import { nanoid } from "nanoid";
 import WebSocket from "ws";
+import { getClientCapabilities } from "@/clients/capabilities";
 import { ConnectedClients } from "@/clients/connected";
 import { config } from "@/config";
 import { decrypt, encrypt } from "@/encryption";
@@ -92,6 +93,7 @@ import {
 	invalidateTokenCache,
 	resolveTokenAndRelay,
 } from "@/relay";
+import { waitFor } from "./utils";
 
 const HEARTBEAT_INTERVAL_MS = 25_000;
 
@@ -300,10 +302,6 @@ export class Connection extends EventEmitter {
 		listener: (msg: AiSessionCreateMsg) => void,
 	): this;
 	on(
-		eventName: typeof MsgType.AI_SESSION_LOAD,
-		listener: (msg: AiSessionLoadMsg) => void,
-	): this;
-	on(
 		eventName: typeof MsgType.AI_SESSION_ATTACH,
 		listener: (msg: AiSessionAttachMsg) => void,
 	): this;
@@ -414,6 +412,10 @@ export class Connection extends EventEmitter {
 	on(
 		eventName: typeof MsgType.AI_PERMISSION_REPLY,
 		listener: (msg: AiPermissionReplyMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_ELICITATION_REPLY,
+		listener: (msg: AiElicitationReplyMsg) => void,
 	): this;
 	on(
 		eventName: typeof MsgType.AI_QUESTION_REPLY,
@@ -690,6 +692,10 @@ export class Connection extends EventEmitter {
 		msg: AiPermissionReplyMsg,
 	): boolean;
 	emit(
+		eventName: typeof MsgType.AI_ELICITATION_REPLY,
+		msg: AiElicitationReplyMsg,
+	): boolean;
+	emit(
 		eventName: typeof MsgType.AI_QUESTION_REPLY,
 		msg: AiQuestionReplyMsg,
 	): boolean;
@@ -749,7 +755,11 @@ export class Connection extends EventEmitter {
 		// Try to parse as encrypted envelope first
 		const encMsg = parseMessage(baseMsg.data, EncryptedMsgSchema);
 		if (encMsg.data) {
-			const plaintext = decrypt(encMsg.data.nonce, encMsg.data.ciphertext);
+			const plaintext = decrypt(
+				encMsg.data.nonce,
+				encMsg.data.ciphertext,
+				encMsg.data.enc,
+			);
 			if (!plaintext) {
 				logger.error("Failed to decrypt a message");
 				return;
@@ -905,8 +915,6 @@ export class Connection extends EventEmitter {
 		if (PLAINTEXT_TYPES.has(msg.type)) {
 			this.ws.send(JSON.stringify(msgWithId));
 		} else {
-			const { nonce, ciphertext } = encrypt(JSON.stringify(msgWithId));
-
 			// Expose clientId on the outer envelope so the relay server can route
 			const clientId = "clientId" in msg ? msg.clientId : undefined;
 			if (clientId && !this.clients.isConnected(clientId)) {
@@ -916,6 +924,18 @@ export class Connection extends EventEmitter {
 				return;
 			}
 
+			// Resolved before encrypting: an app that predates gzip support must
+			// receive the plain UTF-8 format or it drops every message. A broadcast
+			// (no clientId) can't be attributed to one app build, so it stays
+			// uncompressed.
+			const canCompress = clientId
+				? getClientCapabilities(this.clients.get(clientId)).gzipPayloads
+				: false;
+			const { nonce, ciphertext, enc } = encrypt(
+				JSON.stringify(msgWithId),
+				canCompress,
+			);
+
 			const encryptedMsg = clientId
 				? {
 						id,
@@ -923,12 +943,14 @@ export class Connection extends EventEmitter {
 						clientId,
 						nonce,
 						ciphertext,
+						...(enc ? { enc } : {}),
 					}
 				: {
 						id,
 						type: MsgType.ENCRYPTED,
 						nonce,
 						ciphertext,
+						...(enc ? { enc } : {}),
 					};
 			this.ws.send(JSON.stringify(encryptedMsg));
 		}
@@ -1004,6 +1026,11 @@ export async function connect(
 
 	const relayAttempts = Array(relayWsUrls.length).fill(0);
 	const MAX_ATTEMPTS_PER_RELAY = 3;
+	/**
+	 * Pause before retrying the *same* relay; failover to a different relay
+	 * doesn't wait.
+	 */
+	const WAIT_BETWEEN_ATTEMPTS_MS = 1_500;
 
 	// Try relays fastest-first; only fall through to backoff if every
 	// candidate fails this round.
@@ -1048,8 +1075,11 @@ export async function connect(
 				logger.warn("Trying next relay...");
 			} else {
 				logger.warn(
-					`Retrying relay ${relayWsUrls[i]} (attempt ${relayAttempts[i]})...`,
+					`Retrying relay ${relayWsUrls[i]} in ${(WAIT_BETWEEN_ATTEMPTS_MS / 1000).toFixed(2)}s (attempt ${relayAttempts[i]})...`,
 				);
+				// Same relay: it just failed, so it won't be healthy a millisecond later.
+				// Give it some time to breathe before retry (it might be restarting)
+				await waitFor(WAIT_BETWEEN_ATTEMPTS_MS);
 			}
 		}
 	}
