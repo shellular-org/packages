@@ -35,6 +35,10 @@ import { Hermes } from "./hermes";
 import { NotifyBridge, type NotifyEvent } from "./notify-bridge";
 import { OpenCode } from "./opencode";
 import { Pi } from "./pi";
+import {
+	readCachedSessionConfig,
+	writeCachedSessionConfig,
+} from "./session-config-cache";
 import { type ExternalSessionUpdate, SessionWatcher } from "./session-watcher";
 import {
 	normalizeCustomAgentInput,
@@ -538,7 +542,14 @@ export class AgentsManager {
 					this.isAgentEnabled(descriptor.id) &&
 					installed.get(descriptor.id) === true,
 			)
-			.map((descriptor) => this.getManagedAgentInfo(descriptor, installed));
+			.map((descriptor) => {
+				const info = this.getManagedAgentInfo(descriptor, installed);
+				// Last-known session config, so a draft chat (which has no session
+				// yet) can render real modes/models/slash commands instead of an
+				// empty toolbar. Advisory only — the live session overwrites it.
+				const cached = readCachedSessionConfig(descriptor.id, info.version);
+				return cached ? { ...info, sessionConfig: cached } : info;
+			});
 	}
 
 	async listManagedAgents() {
@@ -839,6 +850,17 @@ export class AgentsManager {
 		const sessionId = result.session.id ?? result.response.sessionId;
 		this.sessionRuntimes.set(this.sessionKey(agentId, sessionId), agent);
 		this.sessionAgents.set(sessionId, agentId);
+		// Commands are deliberately not cached here. `result.availableCommands`
+		// reads the connection's per-session tracking map, which is keyed by a
+		// session id created moments ago and populated only by an incoming
+		// `available_commands_update` — so for a brand-new session it is always
+		// empty. The real list is cached when that notification arrives (see
+		// `cacheSessionConfigFromUpdate`).
+		writeCachedSessionConfig(agentId, {
+			configOptions: result.response.configOptions,
+			modes: result.response.modes,
+			version: agent.getInfo().version,
+		});
 		return result;
 	}
 
@@ -1014,16 +1036,26 @@ export class AgentsManager {
 			configOptions: result.response.configOptions ?? undefined,
 		};
 		const runtimeState = this.rememberSessionRuntimeMetadata(agentId, session);
+		const loadedCommands = latestAvailableCommands(
+			result.updates,
+			agent.getAvailableCommands(sessionId),
+		);
+		// Unlike session/new, commands are real here: session/load replays the
+		// session's notifications before its response resolves, so `result.updates`
+		// genuinely carries an `available_commands_update` for this session.
+		writeCachedSessionConfig(agentId, {
+			configOptions: result.response.configOptions,
+			availableCommands: loadedCommands,
+			modes: result.response.modes,
+			version: agent.getInfo().version,
+		});
 		const snapshot = this.setSessionSnapshot(agentId, sessionId, {
 			backend: agentId,
 			session,
 			state: {
 				configOptions: result.response.configOptions ?? undefined,
 				modes: result.response.modes,
-				availableCommands: latestAvailableCommands(
-					result.updates,
-					agent.getAvailableCommands(sessionId),
-				),
+				availableCommands: loadedCommands,
 			},
 			runtimeState,
 			messages: result.messages,
@@ -1461,11 +1493,20 @@ export class AgentsManager {
 		value: string | boolean,
 	) {
 		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
-		return agent.setSessionConfigOption({
+		const response = await agent.setSessionConfigOption({
 			sessionId,
 			configId,
 			...(typeof value === "boolean" ? { type: "boolean", value } : { value }),
 		});
+		// The updated list comes back on this response rather than as a
+		// session/update, so it would otherwise bypass the notification-based
+		// caching entirely — leaving a draft chat showing the option list from
+		// before the user changed their model.
+		writeCachedSessionConfig(agentId, {
+			configOptions: response.configOptions,
+			version: agent.getInfo().version,
+		});
+		return response;
 	}
 
 	async setSessionMode(
@@ -2536,6 +2577,14 @@ export class AgentsManager {
 		this.runtimeIds.set(agent, `runtime_${++this.nextRuntimeId}`);
 		agent.onSessionUpdate((notification) => {
 			const backend = descriptor.id;
+			// Cache before the client fan-out below: config and slash commands keep
+			// arriving after session/new and session/load resolve (agents send
+			// `available_commands_update` asynchronously, and the user can switch
+			// model or mode mid-session), so those two responses alone capture a
+			// stale picture. This also has to run ahead of the `clientId` guard —
+			// an update with no attached client is still the newest truth about
+			// what this agent offers.
+			cacheSessionConfigFromUpdate(backend, notification, agent);
 			const key = this.sessionKey(descriptor.id, notification.sessionId);
 			const clientId =
 				this.sessionClientIds.get(key) ??
@@ -2971,6 +3020,43 @@ function latestAvailableCommands(
 		}
 	}
 	return tracked;
+}
+
+/**
+ * Persist config/commands carried by a live `session/update`, so a draft chat's
+ * toolbar reflects what the agent offers *now* rather than what it offered when
+ * its last session was created.
+ *
+ * Only the two updates that carry a full replacement list are cacheable.
+ * `current_mode_update` is deliberately ignored: it names the newly-selected
+ * mode id without restating the option list, and the selection belongs to that
+ * one session — a later draft chat starts from the agent's own default, not from
+ * whatever some earlier session happened to be switched to.
+ */
+function cacheSessionConfigFromUpdate(
+	agentId: AgentId,
+	notification: acp.SessionNotification,
+	agent: ACP,
+) {
+	const update = notification.update as {
+		sessionUpdate?: unknown;
+		configOptions?: unknown;
+		availableCommands?: unknown;
+	};
+	if (
+		update.sessionUpdate !== "config_option_update" &&
+		update.sessionUpdate !== "available_commands_update"
+	) {
+		return;
+	}
+	// A partial write here is safe: writeCachedSessionConfig drops empty fields
+	// and merges the rest onto the stored row, so a commands-only update keeps
+	// the previously cached config options.
+	writeCachedSessionConfig(agentId, {
+		configOptions: update.configOptions,
+		availableCommands: update.availableCommands,
+		version: agent.getInfo().version,
+	});
 }
 
 function sessionStatusEvent(

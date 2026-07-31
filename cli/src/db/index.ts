@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { config } from "@/config";
 import { logger } from "@/logger";
 import migration001 from "./sql/001_init.sql";
+import migration002 from "./sql/002_agent_session_config_cache.sql";
 
 /**
  * Project-wide SQLite database.
@@ -28,7 +29,7 @@ import migration001 from "./sql/001_init.sql";
  * (see `loader: { ".sql": "text" }` in tsup.config.ts) and so the order is
  * stated here rather than depending on directory iteration.
  */
-const MIGRATIONS: string[] = [migration001];
+const MIGRATIONS: string[] = [migration001, migration002];
 
 let db: Database.Database | null = null;
 let opened = false;

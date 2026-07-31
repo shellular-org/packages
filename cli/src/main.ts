@@ -220,6 +220,16 @@ function createProgram(): Command {
 		});
 
 	program
+		.command("m-id", { hidden: true })
+		.description("Print this machine's ID")
+		// Written straight to stdout rather than through `logger`, which indents
+		// every line: this is meant to be piped (`$(shellular m-id)`, `| pbcopy`),
+		// so the value must be the exact bytes with nothing to strip back off.
+		.action(() => {
+			process.stdout.write(`${config.MACHINE_ID}\n`);
+		});
+
+	program
 		.command("__daemon", { hidden: true })
 		.description("Internal daemon")
 		.action(async (options: Partial<DaemonOptions>, command: Command) => {

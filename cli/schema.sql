@@ -2,8 +2,19 @@
 -- Current database schema, produced by replaying src/db/sql/*.sql.
 -- Regenerate with `pnpm run schema`.
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 
+CREATE TABLE agent_session_config_cache (
+	agent_id           TEXT    NOT NULL PRIMARY KEY,
+	config_json        TEXT    NOT NULL,
+	commands_json      TEXT    NOT NULL,
+	modes_json         TEXT,
+	-- Agent version this was captured from. Slash commands and model lists move
+	-- between releases, so a row from a different version is discarded rather
+	-- than offering the user a model that no longer exists.
+	agent_version      TEXT,
+	updated_at         INTEGER NOT NULL
+);
 CREATE TABLE ai_messages (
 	agent_id     TEXT    NOT NULL,
 	session_id   TEXT    NOT NULL,
