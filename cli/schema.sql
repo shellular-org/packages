@@ -2,8 +2,17 @@
 -- Current database schema, produced by replaying src/db/sql/*.sql.
 -- Regenerate with `pnpm run schema`.
 
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
 
+CREATE TABLE agent_messages (
+	agent_id     TEXT    NOT NULL,
+	session_id   TEXT    NOT NULL,
+	idx          INTEGER NOT NULL,
+	message_id   TEXT,
+	message_json TEXT    NOT NULL,
+	updated_at   INTEGER NOT NULL,
+	PRIMARY KEY (agent_id, session_id, idx)
+);
 CREATE TABLE agent_session_config_cache (
 	agent_id           TEXT    NOT NULL PRIMARY KEY,
 	config_json        TEXT    NOT NULL,
@@ -15,16 +24,7 @@ CREATE TABLE agent_session_config_cache (
 	agent_version      TEXT,
 	updated_at         INTEGER NOT NULL
 );
-CREATE TABLE ai_messages (
-	agent_id     TEXT    NOT NULL,
-	session_id   TEXT    NOT NULL,
-	idx          INTEGER NOT NULL,
-	message_id   TEXT,
-	message_json TEXT    NOT NULL,
-	updated_at   INTEGER NOT NULL,
-	PRIMARY KEY (agent_id, session_id, idx)
-);
-CREATE TABLE ai_sessions (
+CREATE TABLE agent_sessions (
 	agent_id      TEXT    NOT NULL,
 	session_id    TEXT    NOT NULL,
 	session_json  TEXT    NOT NULL,

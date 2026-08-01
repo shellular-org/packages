@@ -4,7 +4,7 @@ import type {
 	AiSessionState,
 } from "@shellular/protocol";
 import type Database from "better-sqlite3";
-import { getDb } from "@/db";
+import { getDb, TABLES } from "@/db";
 import { logger } from "@/logger";
 
 /**
@@ -22,7 +22,7 @@ import { logger } from "@/logger";
  * Every public method is fail-soft: any sqlite error logs a warning and
  * returns null/no-ops. A store failure must never break chat.
  *
- * The `ai_*` tables live in the shared project database (`@/db`), created by
+ * The `agent_*` tables live in the shared project database (`@/db`), created by
  * its migrations; this store owns neither the schema nor the connection.
  */
 
@@ -113,10 +113,19 @@ export class TranscriptStore {
 		try {
 			const row = this.db
 				.prepare(
-					"SELECT session_json, state_json, message_count, generation, updated_at FROM ai_sessions WHERE agent_id = ? AND session_id = ?",
+					`SELECT session_json, state_json, message_count, generation, updated_at FROM ${TABLES.sessions} WHERE agent_id = ? AND session_id = ?`,
 				)
 				.get(agentId, sessionId) as SessionRow | undefined;
 			if (!row) return null;
+			// A zero-message row is not a usable cache entry: callers take a non-null
+			// meta as "the store has this session" and hydrate from it, which renders
+			// an empty chat instead of falling through to a live replay. Writes no
+			// longer create these, but rows predating that fix still exist on disk —
+			// drop them on sight so they self-heal.
+			if (row.message_count <= 0) {
+				this.deleteSession(agentId, sessionId);
+				return null;
+			}
 			return {
 				session: JSON.parse(row.session_json) as AcpAiSession,
 				state: JSON.parse(row.state_json) as AiSessionState,
@@ -141,7 +150,7 @@ export class TranscriptStore {
 			if (!meta) return null;
 			const rows = this.db
 				.prepare(
-					"SELECT idx, message_json FROM ai_messages WHERE agent_id = ? AND session_id = ? ORDER BY idx DESC LIMIT ?",
+					`SELECT idx, message_json FROM ${TABLES.messages} WHERE agent_id = ? AND session_id = ? ORDER BY idx DESC LIMIT ?`,
 				)
 				.all(agentId, sessionId, limit ?? -1) as MessageRow[];
 			return this.toPage(agentId, sessionId, rows, meta);
@@ -164,7 +173,7 @@ export class TranscriptStore {
 			if (!meta) return null;
 			const rows = this.db
 				.prepare(
-					"SELECT idx, message_json FROM ai_messages WHERE agent_id = ? AND session_id = ? AND idx < ? ORDER BY idx DESC LIMIT ?",
+					`SELECT idx, message_json FROM ${TABLES.messages} WHERE agent_id = ? AND session_id = ? AND idx < ? ORDER BY idx DESC LIMIT ?`,
 				)
 				.all(agentId, sessionId, to, limit) as MessageRow[];
 			return this.toPage(agentId, sessionId, rows, meta);
@@ -178,6 +187,15 @@ export class TranscriptStore {
 	 * Replace the whole stored transcript in one transaction. Called after a
 	 * full authoritative replay; `generation` must be a fresh value so paging
 	 * clients can detect the swap.
+	 *
+	 * An empty transcript is never cached. A replay yielding no messages means we
+	 * learned nothing worth persisting — either the session genuinely has no
+	 * history, or the replay failed/was cut short. Storing a zero-message row is
+	 * worse than storing nothing: a cold attach treats the presence of a session
+	 * row as "the cache has this session", hydrates an empty snapshot and returns
+	 * early, so the chat renders blank instead of falling through to a live
+	 * replay. Any previously-cached transcript is dropped rather than left behind,
+	 * since this replay is authoritative about the session being empty.
 	 */
 	replaceAll(
 		agentId: string,
@@ -187,15 +205,19 @@ export class TranscriptStore {
 		messages: AcpMessage[],
 	): void {
 		if (!this.db) return;
+		if (messages.length === 0) {
+			this.deleteSession(agentId, sessionId);
+			return;
+		}
 		try {
 			const db = this.db;
 			const now = Date.now();
 			db.transaction(() => {
 				db.prepare(
-					"DELETE FROM ai_messages WHERE agent_id = ? AND session_id = ?",
+					`DELETE FROM ${TABLES.messages} WHERE agent_id = ? AND session_id = ?`,
 				).run(agentId, sessionId);
 				const insert = db.prepare(
-					"INSERT INTO ai_messages (agent_id, session_id, idx, message_id, message_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+					`INSERT INTO ${TABLES.messages} (agent_id, session_id, idx, message_id, message_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
 				);
 				messages.forEach((message, idx) => {
 					insert.run(
@@ -208,7 +230,7 @@ export class TranscriptStore {
 					);
 				});
 				db.prepare(
-					`INSERT INTO ai_sessions (agent_id, session_id, session_json, state_json, message_count, generation, updated_at)
+					`INSERT INTO ${TABLES.sessions} (agent_id, session_id, session_json, state_json, message_count, generation, updated_at)
 					 VALUES (?, ?, ?, ?, ?, ?, ?)
 					 ON CONFLICT (agent_id, session_id) DO UPDATE SET
 					   session_json = excluded.session_json,
@@ -235,6 +257,12 @@ export class TranscriptStore {
 	 * Rewrite rows from `fromIdx` to the end out of the full in-memory array.
 	 * Used at turn boundaries; leaves `generation` untouched so in-flight scroll
 	 * pages stay valid during normal chatting.
+	 *
+	 * As in `replaceAll`, an empty transcript is never cached — it would create a
+	 * session row that makes a cold attach hydrate a blank chat. Unlike
+	 * `replaceAll` this is a partial update and not an authoritative view of the
+	 * whole session, so it leaves any existing rows alone rather than deleting
+	 * them.
 	 */
 	writeFrom(
 		agentId: string,
@@ -248,6 +276,7 @@ export class TranscriptStore {
 		},
 	): void {
 		if (!this.db) return;
+		if (fullMessages.length === 0) return;
 		try {
 			const db = this.db;
 			const now = Date.now();
@@ -257,17 +286,17 @@ export class TranscriptStore {
 				// what's stored, and start from zero when nothing is stored yet.
 				const existing = db
 					.prepare(
-						"SELECT message_count FROM ai_sessions WHERE agent_id = ? AND session_id = ?",
+						`SELECT message_count FROM ${TABLES.sessions} WHERE agent_id = ? AND session_id = ?`,
 					)
 					.get(agentId, sessionId) as
 					| Pick<SessionRow, "message_count">
 					| undefined;
 				fromIdx = Math.min(fromIdx, existing?.message_count ?? 0);
 				db.prepare(
-					"DELETE FROM ai_messages WHERE agent_id = ? AND session_id = ? AND idx >= ?",
+					`DELETE FROM ${TABLES.messages} WHERE agent_id = ? AND session_id = ? AND idx >= ?`,
 				).run(agentId, sessionId, fromIdx);
 				const insert = db.prepare(
-					"INSERT INTO ai_messages (agent_id, session_id, idx, message_id, message_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+					`INSERT INTO ${TABLES.messages} (agent_id, session_id, idx, message_id, message_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
 				);
 				for (let idx = fromIdx; idx < fullMessages.length; idx += 1) {
 					const message = fullMessages[idx];
@@ -282,7 +311,7 @@ export class TranscriptStore {
 				}
 				if (meta?.session) {
 					db.prepare(
-						`INSERT INTO ai_sessions (agent_id, session_id, session_json, state_json, message_count, generation, updated_at)
+						`INSERT INTO ${TABLES.sessions} (agent_id, session_id, session_json, state_json, message_count, generation, updated_at)
 						 VALUES (?, ?, ?, ?, ?, ?, ?)
 						 ON CONFLICT (agent_id, session_id) DO UPDATE SET
 						   session_json = excluded.session_json,
@@ -300,7 +329,7 @@ export class TranscriptStore {
 					);
 				} else {
 					db.prepare(
-						"UPDATE ai_sessions SET message_count = ?, updated_at = ? WHERE agent_id = ? AND session_id = ?",
+						`UPDATE ${TABLES.sessions} SET message_count = ?, updated_at = ? WHERE agent_id = ? AND session_id = ?`,
 					).run(fullMessages.length, now, agentId, sessionId);
 				}
 			})();
@@ -315,10 +344,10 @@ export class TranscriptStore {
 			const db = this.db;
 			db.transaction(() => {
 				db.prepare(
-					"DELETE FROM ai_messages WHERE agent_id = ? AND session_id = ?",
+					`DELETE FROM ${TABLES.messages} WHERE agent_id = ? AND session_id = ?`,
 				).run(agentId, sessionId);
 				db.prepare(
-					"DELETE FROM ai_sessions WHERE agent_id = ? AND session_id = ?",
+					`DELETE FROM ${TABLES.sessions} WHERE agent_id = ? AND session_id = ?`,
 				).run(agentId, sessionId);
 			})();
 		} catch (err) {
@@ -342,10 +371,16 @@ export class TranscriptStore {
 		if (!this.db) return null;
 		const row = this.db
 			.prepare(
-				"SELECT session_json, state_json, message_count, generation, updated_at FROM ai_sessions WHERE agent_id = ? AND session_id = ?",
+				`SELECT session_json, state_json, message_count, generation, updated_at FROM ${TABLES.sessions} WHERE agent_id = ? AND session_id = ?`,
 			)
 			.get(agentId, sessionId) as SessionRow | undefined;
-		return row ?? null;
+		if (!row) return null;
+		// Mirrors getSessionMeta: an empty row is not a cache hit (see there).
+		if (row.message_count <= 0) {
+			this.deleteSession(agentId, sessionId);
+			return null;
+		}
+		return row;
 	}
 
 	/**

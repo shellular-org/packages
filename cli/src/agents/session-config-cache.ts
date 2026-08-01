@@ -4,7 +4,7 @@ import {
 } from "@shellular/protocol";
 import type Database from "better-sqlite3";
 import { z } from "zod";
-import { getDb } from "@/db";
+import { getDb, TABLES } from "@/db";
 import { logger } from "@/logger";
 
 /**
@@ -21,7 +21,8 @@ import { logger } from "@/logger";
  * warning and degrades to "no cache", because a missing toolbar hint must never
  * break chat.
  *
- * The `agent_session_config_cache` table lives in the shared project database
+ * The `agent_session_config_cache` table (`TABLES.sessionConfigCache`) lives in
+ * the shared project database
  * (`@/db`) and is created by its migrations; this module owns neither the schema
  * nor the connection.
  */
@@ -63,7 +64,7 @@ export function readCachedSessionConfig(
 	try {
 		const row = db
 			.prepare(
-				"SELECT config_json, commands_json, modes_json, agent_version, updated_at FROM agent_session_config_cache WHERE agent_id = ?",
+				`SELECT config_json, commands_json, modes_json, agent_version, updated_at FROM ${TABLES.sessionConfigCache} WHERE agent_id = ?`,
 			)
 			.get(agentId) as ConfigRow | undefined;
 		if (!row) return null;
@@ -133,7 +134,7 @@ export function writeCachedSessionConfig(
 			updatedAt: Date.now(),
 		});
 		db.prepare(
-			`INSERT INTO agent_session_config_cache
+			`INSERT INTO ${TABLES.sessionConfigCache}
 				(agent_id, config_json, commands_json, modes_json, agent_version, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(agent_id) DO UPDATE SET

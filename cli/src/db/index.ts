@@ -3,6 +3,7 @@ import { config } from "@/config";
 import { logger } from "@/logger";
 import migration001 from "./sql/001_init.sql";
 import migration002 from "./sql/002_agent_session_config_cache.sql";
+import migration003 from "./sql/003_rename_ai_tables_to_agent.sql";
 
 /**
  * Project-wide SQLite database.
@@ -18,6 +19,30 @@ import migration002 from "./sql/002_agent_session_config_cache.sql";
  */
 
 /**
+ * Every table in the database, by role rather than by literal name.
+ *
+ * Queries interpolate these instead of hardcoding names, so a rename is a
+ * one-line change here plus a migration, rather than a search-and-replace over
+ * every SQL string in the project. `as const` keeps the values literal types, so
+ * a typo in a key is a compile error.
+ *
+ * Interpolating into SQL is safe here and only here: these are compile-time
+ * constants from this file, never user input. Values stay parameterised (`?`).
+ *
+ * A migration that renames a table updates this map in the same commit; the
+ * migration SQL itself deliberately spells names out literally, since it
+ * describes a historical schema that must never shift with the current one.
+ */
+export const TABLES = {
+	/** Per-session transcript metadata (one row per agent session). */
+	sessions: "agent_sessions",
+	/** Transcript messages, keyed positionally by `idx` within a session. */
+	messages: "agent_messages",
+	/** Last-known config options and slash commands, one row per agent. */
+	sessionConfigCache: "agent_session_config_cache",
+} as const;
+
+/**
  * Every migration, in order. Index + 1 is the version number it produces, so
  * `MIGRATIONS[0]` takes a fresh database to `user_version = 1`.
  *
@@ -29,7 +54,7 @@ import migration002 from "./sql/002_agent_session_config_cache.sql";
  * (see `loader: { ".sql": "text" }` in tsup.config.ts) and so the order is
  * stated here rather than depending on directory iteration.
  */
-const MIGRATIONS: string[] = [migration001, migration002];
+const MIGRATIONS: string[] = [migration001, migration002, migration003];
 
 let db: Database.Database | null = null;
 let opened = false;
