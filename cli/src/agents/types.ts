@@ -103,6 +103,13 @@ export interface PermissionRequestEvent {
 	raw: acp.RequestPermissionRequest;
 }
 
+/** An ACP elicitation/create request parked for a UI to answer. */
+export interface ElicitationRequestEvent {
+	id: string;
+	sessionId?: string;
+	raw: acp.CreateElicitationRequest;
+}
+
 export interface StoredSession {
 	session: AcpAiSession;
 	messages: AcpMessage[];

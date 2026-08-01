@@ -3,6 +3,7 @@ packages:
   - 'protocol'
 allowBuilds:
   better-sqlite3: true
+  bufferutil: true
   esbuild: true
   node-pty: true
 minimumReleaseAgeExclude:

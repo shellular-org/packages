@@ -11,6 +11,7 @@ import { nanoid } from "nanoid";
 type AcpToolCallPart = AcpMessagePart & {
 	type: "tool_call";
 	parts?: AcpMessagePart[];
+	locations?: acp.ToolCallLocation[];
 };
 
 export interface AcpTranscriptOptions {
@@ -285,6 +286,12 @@ export class AcpTranscript {
 	private currentUser: AcpMessage | null = null;
 	private currentAssistant: AcpMessage | null = null;
 	private toolParts = new Map<string, AcpToolCallPart>();
+	// ACP messageId of the message each accumulator is building. Agents MAY tag
+	// chunks with a messageId; when they do, a changed id is an authoritative
+	// message boundary — without it, consecutive same-role messages would merge
+	// (boundaries are otherwise inferred only from role flips).
+	private currentUserMessageId: string | null = null;
+	private currentAssistantMessageId: string | null = null;
 
 	constructor(
 		readonly sessionId: string,
@@ -308,6 +315,8 @@ export class AcpTranscript {
 	beginTurn(prompt?: acp.PromptRequest["prompt"]) {
 		this.currentUser = null;
 		this.currentAssistant = null;
+		this.currentUserMessageId = null;
+		this.currentAssistantMessageId = null;
 		this.toolParts.clear();
 		if (prompt?.length) appendPromptContent(this.ensureCurrentUser(), prompt);
 	}
@@ -318,6 +327,8 @@ export class AcpTranscript {
 		}
 		this.currentUser = null;
 		this.currentAssistant = null;
+		this.currentUserMessageId = null;
+		this.currentAssistantMessageId = null;
 		this.toolParts.clear();
 	}
 
@@ -329,6 +340,7 @@ export class AcpTranscript {
 			case "user_message_chunk": {
 				if (this.options.shouldSkipUserReplayContent?.(update.content)) break;
 				this.currentAssistant = null;
+				this.applyUserMessageBoundary(update.messageId);
 				const message = this.ensureCurrentUser();
 				const userPart = contentToPart(update.content);
 				if (userPart) {
@@ -350,6 +362,7 @@ export class AcpTranscript {
 			}
 			case "agent_message_chunk": {
 				this.currentUser = null;
+				this.applyAssistantMessageBoundary(update.messageId);
 				const message = this.ensureCurrentAssistant();
 				const text = textFromContent(update.content);
 				appendContent(message, update.content);
@@ -364,6 +377,7 @@ export class AcpTranscript {
 			}
 			case "agent_thought_chunk": {
 				this.currentUser = null;
+				this.applyAssistantMessageBoundary(update.messageId);
 				const text = textFromContent(update.content);
 				if (!text) break;
 				const message = this.ensureCurrentAssistant();
@@ -401,6 +415,9 @@ export class AcpTranscript {
 				if (update.content?.length) {
 					part.parts = toolContentToParts(update.content);
 				}
+				if (update.locations?.length) {
+					part.locations = update.locations;
+				}
 				this.toolParts.set(update.toolCallId, part);
 				appendPart(message, part);
 				events.push(this.messageEvent(message));
@@ -432,6 +449,9 @@ export class AcpTranscript {
 				}
 				if (update.content?.length) {
 					part.parts = toolContentToParts(update.content);
+				}
+				if (update.locations?.length) {
+					part.locations = update.locations;
 				}
 				events.push(this.messageEvent(message));
 				break;
@@ -530,10 +550,44 @@ export class AcpTranscript {
 		return normalized;
 	}
 
+	/**
+	 * Close the user accumulator when a chunk's messageId shows it belongs to a
+	 * new message. Only applies when both sides carry an id — agents that don't
+	 * tag chunks keep the legacy role-flip behavior.
+	 */
+	private applyUserMessageBoundary(messageId: string | null | undefined) {
+		if (!messageId) return;
+		if (
+			this.currentUser &&
+			this.currentUserMessageId &&
+			this.currentUserMessageId !== messageId
+		) {
+			this.currentUser = null;
+		}
+		this.currentUserMessageId = messageId;
+	}
+
+	private applyAssistantMessageBoundary(messageId: string | null | undefined) {
+		if (!messageId) return;
+		if (
+			this.currentAssistant &&
+			this.currentAssistantMessageId &&
+			this.currentAssistantMessageId !== messageId
+		) {
+			// toolParts is intentionally NOT cleared: it's keyed by globally-unique
+			// toolCallId, so a late tool_call_update still mutates the part inside
+			// the finished message instead of duplicating it in the new one.
+			this.currentAssistant = null;
+		}
+		this.currentAssistantMessageId = messageId;
+	}
+
 	private ensureCurrentUser(): AcpMessage {
 		if (!this.currentUser) {
 			this.currentUser = {
-				id: nanoid(),
+				// Prefer the agent's messageId: it is stable across reloads, unlike
+				// a fresh nanoid, which makes client-side upserts reliable.
+				id: this.currentUserMessageId ?? nanoid(),
 				role: "user",
 				parts: [],
 				timestamp: now(),
@@ -546,7 +600,7 @@ export class AcpTranscript {
 	private ensureCurrentAssistant(): AcpMessage {
 		if (!this.currentAssistant) {
 			this.currentAssistant = {
-				id: nanoid(),
+				id: this.currentAssistantMessageId ?? nanoid(),
 				role: "assistant",
 				parts: [],
 				timestamp: now(),

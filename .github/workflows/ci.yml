@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+env:
+  CI: true
+
+jobs:
+  schema:
+    name: Schema is in sync
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Replays every migration into a fresh in-memory database. A drifting
+      # schema.sql means an already-shipped migration was edited or reordered —
+      # installs that ran the old version would never see the change, so their
+      # schema would silently diverge from a fresh install's. Fix forward with
+      # a new migration file instead.
+      - name: Regenerate schema.sql
+        run: pnpm --filter shellular run schema
+
+      - name: Fail if schema.sql is out of date
+        run: |
+          # `git diff` ignores untracked files, so an uncommitted schema.sql
+          # would otherwise pass silently. Check it is tracked first.
+          if ! git ls-files --error-unmatch cli/schema.sql >/dev/null 2>&1; then
+            echo "::error::cli/schema.sql is not committed."
+            echo "Run 'pnpm --filter shellular run schema' and commit the result."
+            exit 1
+          fi
+          if ! git diff --exit-code -- cli/schema.sql; then
+            echo "::error::cli/schema.sql is out of date, or a shipped migration was edited."
+            echo "Run 'pnpm --filter shellular run schema' and commit the result."
+            echo "Never edit a migration that has already shipped — add a new one."
+            exit 1
+          fi

@@ -17,6 +17,10 @@
 			"@/*": ["./src/*"]
 		}
 	},
-	"include": ["src/**/*", "scripts/build-extension.ts"],
+	"include": [
+		"src/**/*",
+		"scripts/build-extension.ts",
+		"scripts/generate-schema.ts"
+	],
 	"exclude": ["node_modules", "dist"]
 }

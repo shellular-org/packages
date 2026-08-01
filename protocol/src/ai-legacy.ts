@@ -69,6 +69,15 @@ const AiMessagePartToolCallSchema = z.object({
 	status: z.string().optional(),
 	output: z.string().optional(),
 	parts: z.array(z.unknown()).optional(),
+	// ACP tool-call "follow-along" locations: files the tool is touching.
+	locations: z
+		.array(
+			z.object({
+				path: z.string(),
+				line: z.number().int().nullable().optional(),
+			}),
+		)
+		.optional(),
 });
 export type AiMessagePartToolCall = z.infer<typeof AiMessagePartToolCallSchema>;
 
@@ -118,10 +127,25 @@ export type AiMessagePartReasoning = z.infer<
 	typeof AiMessagePartReasoningSchema
 >;
 
+/**
+ * ACP plan entry (`session/update` with `sessionUpdate: "plan"`).
+ *
+ * `status` and `priority` are required by the ACP schema, but are kept optional
+ * and open here: an agent that sends an unknown value must degrade to a plain
+ * entry rather than having the whole plan part stripped by zod.
+ */
+const AiPlanEntrySchema = z.object({
+	content: z.string(),
+	status: z.string().optional(),
+	priority: z.string().optional(),
+});
+export type AiPlanEntry = z.infer<typeof AiPlanEntrySchema>;
+
 const AiMessagePartPlanSchema = z.object({
 	type: z.literal("plan"),
 	content: z.string(),
 	summary: z.string().optional(),
+	entries: z.array(AiPlanEntrySchema).optional(),
 });
 export type AiMessagePartPlan = z.infer<typeof AiMessagePartPlanSchema>;
 
@@ -273,6 +297,11 @@ export const AiMessagesListMsgSchema = z.object({
 	data: z.object({
 		backend: AiBackendSchema,
 		sessionId: z.string(),
+		// Backward paging for scroll-back. `to` is exclusive: it is the caller's
+		// current lowest-held index, so `[to - limit, to)` abuts what it has with
+		// no overlap. `to` alone means `[0, to)`. Absent → full list.
+		to: z.number().int().nonnegative().optional(),
+		limit: z.number().int().positive().optional(),
 	}),
 });
 export type AiMessagesListMsg = z.infer<typeof AiMessagesListMsgSchema>;
@@ -530,6 +559,16 @@ export const AiMessagesListResultMsgSchema = z.object({
 		.object({
 			backend: AiBackendSchema,
 			messages: z.array(z.unknown()),
+			// Window this response covers: `from` inclusive, `to` exclusive, so
+			// `to - from === messages.length`. The next page back requests
+			// `to: from`. `hasMoreBefore` is authoritative and NOT derivable from
+			// `from > 0` — an exhausted store reports false at a non-zero index.
+			sessionId: z.string().optional(),
+			from: z.number().int().nonnegative().optional(),
+			to: z.number().int().nonnegative().optional(),
+			totalCount: z.number().int().nonnegative().optional(),
+			hasMoreBefore: z.boolean().optional(),
+			generation: z.number().int().nonnegative().optional(),
 		})
 		.optional(),
 });
@@ -736,6 +775,40 @@ export const AiPermissionReplyAckMsgSchema = z.object({
 });
 export type AiPermissionReplyAckMsg = z.infer<
 	typeof AiPermissionReplyAckMsgSchema
+>;
+
+// ── ACP elicitation reply (app → CLI) ────────────────────────────────────────
+// Mirrors ACP's CreateElicitationResponse: `accept` carries the form content
+// keyed by the requested schema's properties; `decline`/`cancel` carry none.
+// Elicitation is UNSTABLE in ACP v1 — keep this shape aligned with the SDK.
+export const AiElicitationReplyMsgSchema = z.object({
+	id: z.string(),
+	type: z.literal(MsgType.AI_ELICITATION_REPLY),
+	clientId: z.string(),
+	data: z.object({
+		backend: AiBackendSchema,
+		sessionId: z.string(),
+		elicitationId: z.string(),
+		action: z.enum(["accept", "decline", "cancel"]),
+		content: z.record(z.string(), z.unknown()).optional(),
+	}),
+});
+export type AiElicitationReplyMsg = z.infer<typeof AiElicitationReplyMsgSchema>;
+
+export const AiElicitationReplyAckMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_ELICITATION_REPLY_ACK),
+	clientId: z.string(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			ok: z.literal(true),
+		})
+		.optional(),
+});
+export type AiElicitationReplyAckMsg = z.infer<
+	typeof AiElicitationReplyAckMsgSchema
 >;
 
 export const AiQuestionReplyAckMsgSchema = z.object({

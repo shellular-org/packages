@@ -218,7 +218,7 @@ export type AcpMessage = {
 
 export const AiSessionSetupSchema = z.object({
 	backend: AgentIdSchema,
-	sessionId: z.string().optional(),
+	sessionId: z.string(),
 	cwd: z.string(),
 	additionalDirectories: z.array(z.string()).optional(),
 	mcpServers: z.array(AiMcpServerSchema).optional(),
@@ -233,22 +233,23 @@ export type AcpAiSession = z.infer<typeof AcpAiSessionSchema>;
 
 // ── Incoming messages (app → CLI) ────────────────────────────────────────────
 
-export const AiSessionLoadMsgSchema = z.object({
-	id: z.string(),
-	type: z.literal(MsgType.AI_SESSION_LOAD),
-	clientId: z.string(),
-	data: AiSessionSetupSchema.extend({
-		sessionId: z.string(),
-	}),
-});
-export type AiSessionLoadMsg = z.infer<typeof AiSessionLoadMsgSchema>;
-
 export const AiSessionAttachMsgSchema = z.object({
 	id: z.string(),
 	type: z.literal(MsgType.AI_SESSION_ATTACH),
 	clientId: z.string(),
 	data: AiSessionSetupSchema.extend({
-		sessionId: z.string(),
+		// Which slice of the transcript to reply with. Two mutually exclusive
+		// forms, since they answer opposite questions:
+		//   tail: N        → newest N (still ordered oldest→newest)
+		//   from/to        → the explicit range [from, to); either end may be
+		//                    omitted, defaulting to 0 and the end respectively
+		//   (neither)      → CLI default window, currently newest SNAPSHOT_TAIL
+		// Combining `tail` with `from`/`to` is rejected rather than merged: a
+		// silent winner between "newest N" and "this range" is a bug waiting to
+		// happen. The response always reports the window it actually served.
+		tail: z.number().int().positive().optional(),
+		from: z.number().int().nonnegative().optional(),
+		to: z.number().int().nonnegative().optional(),
 	}),
 });
 export type AiSessionAttachMsg = z.infer<typeof AiSessionAttachMsgSchema>;
@@ -268,9 +269,7 @@ export const AiSessionResumeMsgSchema = z.object({
 	id: z.string(),
 	type: z.literal(MsgType.AI_SESSION_RESUME),
 	clientId: z.string(),
-	data: AiSessionSetupSchema.extend({
-		sessionId: z.string(),
-	}),
+	data: AiSessionSetupSchema,
 });
 export type AiSessionResumeMsg = z.infer<typeof AiSessionResumeMsgSchema>;
 
@@ -278,9 +277,7 @@ export const AiSessionForkMsgSchema = z.object({
 	id: z.string(),
 	type: z.literal(MsgType.AI_SESSION_FORK),
 	clientId: z.string(),
-	data: AiSessionSetupSchema.extend({
-		sessionId: z.string(),
-	}),
+	data: AiSessionSetupSchema,
 });
 export type AiSessionForkMsg = z.infer<typeof AiSessionForkMsgSchema>;
 
@@ -386,27 +383,6 @@ export type AiAgentsCustomRemoveMsg = z.infer<
 
 // ── Result messages (CLI → app) ──────────────────────────────────────────────
 
-export const AiSessionLoadResultMsgSchema = z.object({
-	id: z.string().optional(),
-	type: z.literal(MsgType.AI_SESSION_LOAD_RESULT),
-	clientId: z.string(),
-	respTo: z.string().optional(),
-	error: z.string().optional(),
-	data: z
-		.object({
-			backend: AgentIdSchema,
-			session: AcpAiSessionSchema,
-			state: AiSessionStateSchema.optional(),
-			runtimeState: AiSessionRuntimeStateSchema.optional(),
-			messages: z.array(AcpMessageSchema),
-			updates: z.array(z.unknown()).optional(),
-		})
-		.optional(),
-});
-export type AiSessionLoadResultMsg = z.infer<
-	typeof AiSessionLoadResultMsgSchema
->;
-
 function agentManagementResultSchema<TType extends string>(type: TType) {
 	return z.object({
 		id: z.string().optional(),
@@ -469,6 +445,15 @@ export const AiSessionAttachResultMsgSchema = z.object({
 			updates: z.array(z.unknown()).optional(),
 			revision: z.number().int().nonnegative(),
 			syncing: z.boolean().optional(),
+			// Window actually served: `from` inclusive, `to` exclusive, so
+			// `to - from === messages.length`. Scroll-back then requests
+			// `to: from`. `generation` identifies the transcript snapshot pages
+			// must match (bumped on full reloads).
+			totalCount: z.number().int().nonnegative().optional(),
+			from: z.number().int().nonnegative().optional(),
+			to: z.number().int().nonnegative().optional(),
+			hasMoreBefore: z.boolean().optional(),
+			generation: z.number().int().nonnegative().optional(),
 		})
 		.optional(),
 });

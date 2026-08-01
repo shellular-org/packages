@@ -51,6 +51,7 @@ import {
 	startDaemon,
 	stopDaemon,
 } from "@/daemon";
+import { closeDb, migrate, SchemaTooNewError } from "@/db";
 import { getKeyBase64, initEncryption } from "@/encryption";
 import { initFilesystemHandler } from "@/filesystem";
 import { LocalControlServer } from "@/local-server";
@@ -269,6 +270,16 @@ function createProgram(): Command {
 		.description("Update Shellular and start the daemon")
 		.action(async () => {
 			await updateAndStartShellular();
+		});
+
+	program
+		.command("m-id", { hidden: true })
+		.description("Print this machine's ID")
+		// Written straight to stdout rather than through `logger`, which indents
+		// every line: this is meant to be piped (`$(shellular m-id)`, `| pbcopy`),
+		// so the value must be the exact bytes with nothing to strip back off.
+		.action(() => {
+			process.stdout.write(`${config.MACHINE_ID}\n`);
 		});
 
 	program
@@ -693,6 +704,23 @@ async function runCli({
 		canSelfUpdate: isDaemon,
 	};
 
+	// Bring the shared database up to the latest schema before anything reads
+	// it. Deliberately here rather than at module load: `--help`, `--version`
+	// and the process-management subcommands must never touch the database.
+	// Ordinary failure is non-fatal (subsystems fall back to their in-memory
+	// paths); only a database written by a newer build stops us, since this
+	// binary cannot know what its migrations did.
+	try {
+		migrate();
+	} catch (err) {
+		if (err instanceof SchemaTooNewError) {
+			logger.error(chalk.red(err.message));
+			process.exitCode = 1;
+			return;
+		}
+		throw err;
+	}
+
 	const agentsManager = new AgentsManager();
 	const connectionHub = new ConnectionHub();
 	const localConnection = connectionHub.asHostConnection();
@@ -820,6 +848,9 @@ async function runCli({
 		localServer?.close();
 		instanceControlServer.close();
 		connectionHub.close();
+		// Last: the shared database outlives individual subsystems, so it is
+		// closed only once they have all detached.
+		closeDb();
 	};
 
 	const exitCleanly = () => {
