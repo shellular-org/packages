@@ -26,7 +26,7 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AgentId, AgentDescriptor> = {
 		},
 		spawn: {
 			command: npxCommand,
-			args: ["-yes", "@zed-industries/codex-acp"],
+			args: ["-yes", "@agentclientprotocol/codex-acp"],
 		},
 	},
 	opencode: {
