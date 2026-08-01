@@ -80,7 +80,7 @@ export const ClientInfoSchema = z.object({
 	hostId: z.string().min(7).max(32),
 	clientId: z.string().min(7).max(32),
 	appVersion: z.string().min(1).max(32),
-	platform: z.enum(["android", "browser", "ios"]),
+	platform: z.enum(["android", "browser", "ios", "macos"]),
 	deviceModel: z.string().min(1).max(64),
 	deviceIsEmulator: z.union([
 		z.boolean(),
