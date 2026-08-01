@@ -1,5 +1,11 @@
 # @shellular/protocol
 
+## 0.0.31
+
+### Patch Changes
+
+- 579bab0: feat: add "macos" platform to `ClientInfoSchema` in protocol
+
 ## 0.0.30
 
 ### Patch Changes
