@@ -11,7 +11,12 @@ import path from "node:path";
 import type { AgentId, AiSessionRuntimeStatus } from "@shellular/protocol";
 
 import { logger } from "@/logger";
-import { isAgentAliveInCwd, liveAgentCwds } from "./process-scanner";
+import {
+	isAgentAliveInCwd,
+	isAttributable,
+	type LiveAgentCwds,
+	liveAgentCwds,
+} from "./process-scanner";
 
 /**
  * Watches the on-disk session logs that Claude Code and Codex write while the
@@ -196,10 +201,28 @@ async function readLastLine(
 // written and the tail shows an in-progress turn (assistant tool_use, or a
 // trailing tool_result), otherwise "finished".
 
+/**
+ * True for a Claude log that is a sub-agent (Task/background agent) transcript
+ * rather than a real session. Claude writes these to
+ * `<project>/<parentSessionId>/subagents/agent-<id>.jsonl`, and their lines carry
+ * `isSidechain: true` with `sessionId` pointing at the *parent*.
+ *
+ * These must never be surfaced: the filename's `agent-<id>` is not a session id,
+ * so ACP session/load cannot resume one — the entry would be dead on arrival.
+ * The path check catches them before any read; `isSidechain` (checked on the
+ * parsed lines) is the authoritative backstop if the layout ever changes.
+ */
+function isClaudeSubagentPath(filePath: string): boolean {
+	const normalized = filePath.replace(/\\/g, "/");
+	if (normalized.includes("/subagents/")) return true;
+	return path.basename(normalized).startsWith("agent-");
+}
+
 async function parseClaudeSession(
 	filePath: string,
 ): Promise<ExternalSessionUpdate | undefined> {
 	if (!filePath.endsWith(".jsonl")) return undefined;
+	if (isClaudeSubagentPath(filePath)) return undefined;
 	let stat: ReturnType<typeof statSync>;
 	try {
 		stat = statSync(filePath);
@@ -217,7 +240,9 @@ async function parseClaudeSession(
 	// Skip empty sessions: a log with no user or assistant turn is a session that
 	// was opened but never used (e.g. the user ran /resume and cancelled, leaving
 	// only mode/permission/command metadata). Surfacing these as "active" is noise
-	// — there is nothing to hand off to.
+	// — there is nothing to hand off to. Sidechain (sub-agent) logs are skipped
+	// here too, as the content-level backstop to the path check above.
+	if (last?.isSidechain === true) return undefined;
 	if (!(await claudeHasConversation(filePath, stat.size, last))) {
 		return undefined;
 	}
@@ -279,7 +304,10 @@ async function claudeHasConversation(
 		for (const line of text.split("\n")) {
 			if (!line.includes('"user"') && !line.includes('"assistant"')) continue;
 			const parsed = safeParseJson(line);
-			if (parsed?.type === "user" || parsed?.type === "assistant") return true;
+			if (parsed?.type !== "user" && parsed?.type !== "assistant") continue;
+			// A sidechain line means this is a sub-agent transcript, not a session.
+			if (parsed.isSidechain === true) return false;
+			return true;
 		}
 		return false;
 	} catch {
@@ -720,11 +748,10 @@ export class SessionWatcher {
 	private async processFile(
 		target: WatchTarget,
 		filePath: string,
-		// The cwds of live agent processes, when the caller (proactive discovery)
-		// has already enumerated them. If a session's launch cwd is in this set we
-		// skip the per-file pgrep — this is what lets an idle-but-live session
-		// surface without depending on a file event ever firing again.
-		options: { liveCwds?: Set<string> } = {},
+		// The live agent process cwds, when the caller (proactive discovery) has
+		// already enumerated them. Lets an idle-but-live session surface without
+		// depending on a file event ever firing again, and without a second scan.
+		options: { live?: LiveAgentCwds } = {},
 	) {
 		try {
 			const update = await target.parse(filePath);
@@ -737,23 +764,14 @@ export class SessionWatcher {
 			//   is actively working or just finished a turn.
 			// - Between ACTIVE_WINDOW_MS and DISCOVERY_WINDOW_MS (2h): the session
 			//   is idle but the CLI might still be open. Surface only if a live
-			//   agent process exists in its launch cwd (known from liveCwds, else a
-			//   cheap pgrep check).
+			//   agent process in its launch cwd can actually account for it.
 			// - Beyond DISCOVERY_WINDOW_MS: historical, never surface.
 			// Already-tracked sessions always get processed (new activity).
 			if (!this.tracked.has(key)) {
 				const age = now - update.updatedAt;
 				if (age > DISCOVERY_WINDOW_MS) return;
 				if (age > ACTIVE_WINDOW_MS) {
-					const knownAlive =
-						!!update.workspacePath &&
-						options.liveCwds?.has(update.workspacePath) === true;
-					if (
-						!knownAlive &&
-						!(await isAgentAliveInCwd(update.agentId, update.workspacePath))
-					) {
-						return;
-					}
+					if (!(await this.canSurfaceIdle(update, options.live))) return;
 				}
 			}
 
@@ -779,6 +797,62 @@ export class SessionWatcher {
 		} catch (err) {
 			logger.debug(`SessionWatcher: parse failed for ${filePath}:`, err);
 		}
+	}
+
+	/**
+	 * Whether an idle (beyond ACTIVE_WINDOW_MS) untracked session may be surfaced.
+	 *
+	 * Requires a live agent process in the session's launch cwd that started
+	 * before the session's last write. That start-time comparison is what stops
+	 * stale sessions resurfacing: a log written days ago cannot belong to a CLI
+	 * launched this morning, and after a reboot there are no processes at all.
+	 *
+	 * We additionally allow only ONE idle session per (agent, cwd) — the most
+	 * recently written one. A project directory accumulates many session logs, and
+	 * without this cap a single live CLI would vouch for every one of them, which
+	 * is the bulk of the "sessions that don't exist" the user sees. A process can
+	 * only have one session open, so the newest log is the best guess at it.
+	 */
+	private async canSurfaceIdle(
+		update: ExternalSessionUpdate,
+		live?: LiveAgentCwds,
+	): Promise<boolean> {
+		const cwd = update.workspacePath;
+		if (!cwd) return false;
+
+		const resolved = live ?? (await liveAgentCwds(update.agentId));
+		// Liveness unreadable (Windows, lsof failure): fall back to the old lenient
+		// behaviour rather than hiding a session that may well be live.
+		if (resolved.unknown) return true;
+
+		const startedAt = resolved.cwds.get(cwd);
+		if (startedAt === undefined) return false;
+		if (!isAttributable(startedAt, update.updatedAt)) return false;
+
+		return this.isNewestIdleSessionInCwd(update, cwd);
+	}
+
+	/**
+	 * True if `update` is the most recently written session log for its (agent,
+	 * cwd) among the logs we can see. Enforces the one-live-session-per-directory
+	 * cap in canSurfaceIdle.
+	 */
+	private isNewestIdleSessionInCwd(
+		update: ExternalSessionUpdate,
+		cwd: string,
+	): boolean {
+		// An already-surfaced session in this cwd keeps its claim — re-deciding on
+		// each pass would make the surfaced session flip between logs.
+		for (const [key, tracked] of this.tracked) {
+			if (
+				tracked.update.agentId === update.agentId &&
+				tracked.update.workspacePath === cwd &&
+				key !== `${update.agentId}:${update.sessionId}`
+			) {
+				return tracked.update.updatedAt < update.updatedAt;
+			}
+		}
+		return true;
 	}
 
 	private report(update: ExternalSessionUpdate, authoritative: boolean) {
@@ -857,8 +931,9 @@ export class SessionWatcher {
 				const alive = await isAgentAliveInCwd(
 					update.agentId,
 					update.workspacePath,
+					update.updatedAt,
 				);
-				if (alive) {
+				if (alive !== "dead") {
 					// Process still running — the turn ended but the CLI is open.
 					// Upgrade to sticky finished so we don't keep re-checking.
 					const finished: ExternalSessionUpdate = {
@@ -887,8 +962,9 @@ export class SessionWatcher {
 				const alive = await isAgentAliveInCwd(
 					update.agentId,
 					update.workspacePath,
+					update.updatedAt,
 				);
-				if (alive) {
+				if (alive !== "dead") {
 					this.tracked.set(key, {
 						update,
 						authoritativeFinished: true,
@@ -947,15 +1023,16 @@ export class SessionWatcher {
 	 * CLI left open) is never re-examined and can be missed if its one surfacing
 	 * check didn't happen at the right moment. Here liveness drives discovery
 	 * instead of file writes: we enumerate live agent process cwds once, then
-	 * surface any untracked recent log launched from one of those cwds. Cheap on
-	 * idle machines — the pgrep short-circuits to an empty set when no agent runs.
+	 * surface any untracked recent log those processes can account for (see
+	 * canSurfaceIdle). Cheap on idle machines — the process scan short-circuits to
+	 * an empty set when no agent runs.
 	 */
 	private async discoverLiveSessions() {
 		const now = Date.now();
 		for (const target of this.targets) {
 			if (!existsSync(target.root)) continue;
-			const liveCwds = await liveAgentCwds(target.agentId);
-			if (liveCwds.size === 0) continue;
+			const live = await liveAgentCwds(target.agentId);
+			if (live.cwds.size === 0 && !live.unknown) continue;
 			for (const filePath of this.recentFiles(target.root, SEED_LIMIT)) {
 				let mtime: number;
 				try {
@@ -969,7 +1046,7 @@ export class SessionWatcher {
 				// we last surfaced it — the common idle case.
 				if (this.tracked.has(this.trackedKeyForFile(target, filePath)))
 					continue;
-				void this.processFile(target, filePath, { liveCwds });
+				void this.processFile(target, filePath, { live });
 			}
 		}
 	}
@@ -1002,6 +1079,10 @@ export class SessionWatcher {
 			for (const entry of entries) {
 				const full = path.join(dir, entry.name);
 				if (entry.isDirectory()) {
+					// Sub-agent transcripts are not sessions (see isClaudeSubagentPath).
+					// Skipping the directory keeps them from consuming the SEED_LIMIT
+					// budget and crowding out real sessions on a busy machine.
+					if (entry.name === "subagents") continue;
 					walk(full, depth + 1);
 				} else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
 					try {

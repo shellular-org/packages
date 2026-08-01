@@ -11,13 +11,20 @@ import { logger } from "@/logger";
  * proactively discovering live-but-idle sessions no file event will re-surface.
  *
  * Approach: scan the process table with `ps` for the agent's executable, then
- * read each candidate's cwd and compare it to the session's launch directory.
- * If no candidate matches, the CLI is gone.
+ * read each candidate's cwd and start time. A session is attributable to a live
+ * process only if that process runs in the session's launch directory AND
+ * started before the session's last write — a log that stopped being written
+ * before any live CLI existed cannot belong to one (this is what keeps stale
+ * sessions from resurfacing after a reboot).
  *
  *   - macOS:   ps + `lsof -p <pids> -a -d cwd -Fn`
  *   - Linux:   ps + readlink /proc/<pid>/cwd
- *   - Windows: per-process cwd unreadable; fall back to "assume alive" (session
- *              decays to a sticky finished rather than being removed).
+ *   - Windows: per-process cwd unreadable; liveness is unknown (see below).
+ *
+ * Neither CLI holds its session jsonl open (both append-and-close), so lsof
+ * cannot map a PID to a session id. Directory + start time is the most precise
+ * attribution available; the watcher additionally caps it to one session per
+ * (agent, cwd) so N historical logs in a directory can't all claim one process.
  *
  * We deliberately avoid `pgrep`: on macOS it can't read the argv of hardened,
  * signed binaries (which the Claude and Codex CLIs are) and silently drops them
@@ -68,27 +75,34 @@ function isAgentCommand(agent: AgentId, command: string): boolean {
  * check come back negative and hid live-but-idle sessions. `ps` reads the
  * process table directly and lists them, so we scan its output ourselves.
  */
-async function candidatePids(agent: AgentId): Promise<Map<number, string>> {
-	const result = new Map<number, string>();
+async function candidatePids(agent: AgentId): Promise<Map<number, number>> {
+	const result = new Map<number, number>();
 	try {
-		// -A: all processes; -ww: don't truncate the command column.
+		// -A: all processes; -ww: don't truncate the command column. `lstart` is a
+		// fixed-width absolute start time ("Fri Jul 31 15:29:20 2026"); it must come
+		// before `command=` so the (space-containing) command stays last and the
+		// columns before it can be split positionally.
 		const output = await execFileAsync(
 			"ps",
-			["-Aww", "-o", "pid=,command="],
+			["-Aww", "-o", "pid=,lstart=,command="],
 			3000,
 		);
 		for (const line of output.split("\n")) {
 			const trimmed = line.trim();
 			if (!trimmed) continue;
-			const spaceIdx = trimmed.indexOf(" ");
-			if (spaceIdx === -1) continue;
-			const pid = parseInt(trimmed.slice(0, spaceIdx), 10);
+			// pid, then the 5 whitespace-separated lstart fields, then the command.
+			const match = trimmed.match(
+				/^(\d+)\s+(\S+\s+\S+\s+\S+\s+\S+\s+\S+)\s+(.+)$/,
+			);
+			if (!match) continue;
+			const pid = parseInt(match[1], 10);
 			if (!Number.isFinite(pid)) continue;
-			const command = trimmed.slice(spaceIdx + 1);
-			if (isAgentCommand(agent, command)) result.set(pid, command);
+			if (!isAgentCommand(agent, match[3])) continue;
+			const started = Date.parse(match[2]);
+			result.set(pid, Number.isFinite(started) ? started : 0);
 		}
 	} catch {
-		// ps unavailable/failed — callers fall back to "assume alive".
+		// ps unavailable/failed — no candidates; callers treat liveness as unknown.
 	}
 	return result;
 }
@@ -130,66 +144,99 @@ async function pidCwdsMacos(pids: number[]): Promise<Map<number, string>> {
 }
 
 /**
- * Returns the set of cwds of live agent processes for the given agent. Used by
- * the watcher to proactively discover sessions whose CLI is still open but whose
- * log has gone idle (so no file event re-triggers the surfacing check). Empty
- * when no process is found, or when per-process cwds can't be read on this
- * platform (Windows) — in which case proactive discovery is simply skipped.
+ * Live agent processes grouped by cwd, each with the earliest start time seen
+ * for that directory. Used by the watcher to proactively discover sessions whose
+ * CLI is still open but whose log has gone idle (so no file event re-triggers
+ * the surfacing check), and to reject logs that went silent before any of those
+ * processes existed.
  */
-export async function liveAgentCwds(agent: AgentId): Promise<Set<string>> {
+export type LiveAgentCwds = {
+	/** cwd -> earliest start time (epoch ms) of a live agent process there. */
+	cwds: Map<string, number>;
+	/**
+	 * True when per-process cwds could not be read at all (Windows, or lsof
+	 * failing while candidates exist). Callers must not treat an empty `cwds` as
+	 * "nothing is alive" in that case.
+	 */
+	unknown: boolean;
+};
+
+export async function liveAgentCwds(agent: AgentId): Promise<LiveAgentCwds> {
 	const candidates = await candidatePids(agent);
-	if (candidates.size === 0) return new Set();
+	// No agent process at all is a definite answer, not an unknown one: this is
+	// the post-reboot case, and it must clear every stale session.
+	if (candidates.size === 0) return { cwds: new Map(), unknown: false };
+
+	const cwds = new Map<string, number>();
+	const record = (cwd: string, startedAt: number) => {
+		const existing = cwds.get(cwd);
+		if (existing === undefined || startedAt < existing)
+			cwds.set(cwd, startedAt);
+	};
 
 	if (process.platform === "linux") {
-		const cwds = new Set<string>();
-		for (const pid of candidates.keys()) {
+		let readAny = false;
+		for (const [pid, startedAt] of candidates) {
 			const cwd = pidCwdLinux(pid);
-			if (cwd) cwds.add(cwd);
+			if (cwd) {
+				readAny = true;
+				record(cwd, startedAt);
+			}
 		}
-		return cwds;
+		return { cwds, unknown: !readAny };
 	}
 
 	if (process.platform === "darwin") {
-		const cwds = await pidCwdsMacos([...candidates.keys()]);
-		return new Set(cwds.values());
+		const pidCwds = await pidCwdsMacos([...candidates.keys()]);
+		for (const [pid, cwd] of pidCwds) {
+			record(cwd, candidates.get(pid) ?? 0);
+		}
+		// lsof returned nothing for live candidates — we can't attribute them.
+		return { cwds, unknown: pidCwds.size === 0 };
 	}
 
 	// Windows / unknown: per-process cwd is unavailable.
-	return new Set();
+	return { cwds, unknown: true };
 }
 
 /**
- * Returns true if a live agent process exists in the given cwd (the session's
- * launch directory). If cwd is undefined or we can't read per-process cwds on
- * this platform, returns true (assume alive — the session decays to a sticky
- * finished rather than being wrongly removed).
+ * Whether a live agent process can account for a session in `cwd` whose log was
+ * last written at `lastWriteMs`.
+ *
+ *   "alive"   — a process in that cwd started before the log's last write.
+ *   "dead"    — no such process; the CLI is gone.
+ *   "unknown" — liveness is unreadable on this platform; callers keep the
+ *               session rather than removing it on a guess.
+ *
+ * The start-time comparison is what distinguishes a genuinely open CLI from a
+ * historical log sitting in a directory where some *other* agent is running now.
  */
 export async function isAgentAliveInCwd(
 	agent: AgentId,
 	cwd?: string,
-): Promise<boolean> {
-	if (!cwd) return true;
-	const candidates = await candidatePids(agent);
-	if (candidates.size === 0) return false;
+	lastWriteMs?: number,
+): Promise<"alive" | "dead" | "unknown"> {
+	if (!cwd) return "unknown";
+	const { cwds, unknown } = await liveAgentCwds(agent);
+	if (unknown) return "unknown";
+	const startedAt = cwds.get(cwd);
+	if (startedAt === undefined) return "dead";
+	return isAttributable(startedAt, lastWriteMs) ? "alive" : "dead";
+}
 
-	if (process.platform === "linux") {
-		for (const pid of candidates.keys()) {
-			if (pidCwdLinux(pid) === cwd) return true;
-		}
-		// Process exists but cwd wasn't readable — assume alive.
-		return true;
-	}
-
-	if (process.platform === "darwin") {
-		const cwds = await pidCwdsMacos([...candidates.keys()]);
-		if (cwds.size === 0) return true; // lsof failed — assume alive
-		for (const procCwd of cwds.values()) {
-			if (procCwd === cwd) return true;
-		}
-		// Agent process exists but in a different cwd.
-		return false;
-	}
-
-	// Windows / unknown: can't read per-process cwd — assume alive.
-	return true;
+/**
+ * True if a process started at `startedAt` could have produced a log last
+ * written at `lastWriteMs`. A log that stopped being written before the process
+ * launched belongs to an earlier, now-dead CLI in the same directory.
+ *
+ * `startedAt` of 0 means the start time was unparseable — don't reject on it.
+ */
+export function isAttributable(
+	startedAt: number,
+	lastWriteMs?: number,
+): boolean {
+	if (!startedAt || lastWriteMs === undefined) return true;
+	// `ps` reports whole seconds, so a process can appear to start up to a second
+	// after the write it actually produced.
+	return lastWriteMs >= startedAt - 1000;
 }
