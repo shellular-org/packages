@@ -856,17 +856,32 @@ export class ACP {
 		return result.data as T;
 	}
 
+	/**
+	 * Extra environment for this agent's subprocess, resolved at spawn time.
+	 *
+	 * Subclasses override this for values that can't be baked into the static
+	 * descriptor because they depend on the host's current state (installed
+	 * binaries, PATH). Merged over `descriptor.spawn.env`.
+	 */
+	protected spawnEnvOverride(): Record<string, string> | undefined {
+		return undefined;
+	}
+
 	protected spawnAgent() {
 		if (this.spawnedAgent) {
 			throw new Error("Agent process already spawned");
 		}
 
+		const extraEnv = this.spawnEnvOverride();
 		const spawnedAgent = ACP.spawnAgentProcess({
 			name: this.id,
 			agentExecutable: this.descriptor.agentExecutable,
 			command: this.descriptor.spawn.command,
 			args: this.descriptor.spawn.args,
-			env: this.descriptor.spawn.env,
+			env:
+				this.descriptor.spawn.env || extraEnv
+					? { ...this.descriptor.spawn.env, ...extraEnv }
+					: undefined,
 			cwd: this.descriptor.spawn.cwd,
 		});
 

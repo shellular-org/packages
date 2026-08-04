@@ -1799,7 +1799,7 @@ export class AgentsManager {
 					},
 				});
 				if (session.id && msg.data.prompt.trim()) {
-					void this.prompt(
+					this.prompt(
 						msg.clientId,
 						msg.data.backend,
 						session.id,
@@ -2081,12 +2081,16 @@ export class AgentsManager {
 					msg.data.sessionId,
 					msg.clientId,
 				);
-				void this.prompt(
+				this.prompt(
 					msg.clientId,
 					msg.data.backend,
 					msg.data.sessionId,
 					msg.data.content ?? msg.data.text,
 				).catch((err) => {
+					logger.error(
+						`Agent prompt failed for ${msg.data.backend} session ${msg.data.sessionId} (client ${msg.clientId}): ${getErrorMessage(err)}`,
+						err,
+					);
 					this.emit(msg.clientId, msg.data.backend, {
 						type: "error",
 						properties: {

@@ -575,7 +575,13 @@ async function runCli({
 
 	const agentsManager = new AgentsManager();
 
+	let cleaningUp = false;
 	const cleanup = () => {
+		if (cleaningUp) {
+			return;
+		}
+
+		cleaningUp = true;
 		logger.log("Cleaning up resources...");
 		stopCaffeinate();
 		releaseBootLock();
@@ -585,8 +591,13 @@ async function runCli({
 		closeDb();
 	};
 
-	process.on("SIGINT", cleanup); // Ctrl+C
-	process.on("SIGTERM", cleanup); // kill / docker stop
+	const shutdown = () => {
+		cleanup();
+		process.exit(0);
+	};
+
+	process.on("SIGINT", shutdown); // Ctrl+C
+	process.on("SIGTERM", shutdown); // kill / docker stop / pm2 stop
 	process.on("beforeExit", cleanup);
 
 	process.on("uncaughtException", (err) => {

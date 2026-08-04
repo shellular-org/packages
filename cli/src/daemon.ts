@@ -3,6 +3,8 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
+import { Transform } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 
 import chalk from "chalk";
 import pm2 from "pm2";
@@ -299,6 +301,33 @@ function runPm2StartupCli(arg: "startup" | "unstartup"): Promise<void> {
 	});
 }
 
+/** Tail of a daemon error log, or null when there is nothing to show. */
+function readErrorLogTail(errPath: string, bytes = 4096): string | null {
+	try {
+		if (getFileSize(errPath) === 0) {
+			return null;
+		}
+
+		const content = fs.readFileSync(errPath, "utf8");
+		const tail = content.slice(-bytes).trim();
+		return tail.length > 0 ? tail : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Recognise the signature of a PM2 daemon still pointing at a removed
+ * Shellular installation: it fails to load its own fork bootstrap out of a
+ * `node_modules/pm2` path under a global install that no longer exists.
+ */
+function isStalePm2ModuleError(errOutput: string): boolean {
+	return (
+		/Cannot find module/.test(errOutput) &&
+		/(ProcessContainerFork|node_modules[/\\]pm2)/.test(errOutput)
+	);
+}
+
 function formatDuration(ms: number): string {
 	const seconds = Math.max(0, Math.floor(ms / 1000));
 	const minutes = Math.floor(seconds / 60);
@@ -324,6 +353,40 @@ function writeLockDetails(lock: LockData): void {
 	}
 }
 
+function createPrefixedLogStream(
+	label: string,
+	destination: NodeJS.WriteStream,
+): Transform {
+	const decoder = new StringDecoder("utf8");
+	const prefix = `${chalk.dim(`[${label}]`)} `;
+	let pending = "";
+
+	const stream = new Transform({
+		transform(chunk, _encoding, callback) {
+			pending += decoder.write(chunk);
+			const lastNewline = pending.lastIndexOf("\n");
+			if (lastNewline !== -1) {
+				const complete = pending.slice(0, lastNewline);
+				pending = pending.slice(lastNewline + 1);
+				for (const line of complete.split("\n")) {
+					const carriageReturn = line.endsWith("\r") ? "\r" : "";
+					const content = carriageReturn ? line.slice(0, -1) : line;
+					this.push(`${prefix}${content}${carriageReturn}\n`);
+				}
+			}
+			callback();
+		},
+		flush(callback) {
+			pending += decoder.end();
+			if (pending) this.push(`${prefix}${pending}`);
+			callback();
+		},
+	});
+
+	stream.pipe(destination, { end: false });
+	return stream;
+}
+
 async function streamDaemonLogs(
 	logs: { out: string; err: string },
 	offsets?: LogOffsets,
@@ -335,8 +398,10 @@ async function streamDaemonLogs(
 
 	logger.log(chalk.dim(`Streaming ${config.NAME} logs. Press Ctrl+C to exit.`));
 
-	const outHandle = streamFile(logs.out, startOffsets.out, process.stdout);
-	const errHandle = streamFile(logs.err, startOffsets.err, process.stderr);
+	const stdout = createPrefixedLogStream("stdout", process.stdout);
+	const stderr = createPrefixedLogStream("stderr", process.stderr);
+	const outHandle = streamFile(logs.out, startOffsets.out, stdout);
+	const errHandle = streamFile(logs.err, startOffsets.err, stderr);
 
 	const noDataTimer = setTimeout(() => {
 		if (!outHandle.hasData && !errHandle.hasData) {
@@ -350,6 +415,8 @@ async function streamDaemonLogs(
 			clearTimeout(noDataTimer);
 			outHandle.stop();
 			errHandle.stop();
+			stdout.end();
+			stderr.end();
 			resolve();
 		};
 		process.once("SIGINT", stop);
@@ -357,42 +424,101 @@ async function streamDaemonLogs(
 	});
 }
 
-function pollDaemonReady(timeoutMs = 10_000): Promise<Pm2Process | null> {
+/**
+ * How long the daemon must hold `online` before `start` calls it healthy.
+ *
+ * PM2 reports `online` the instant it forks, long before the process has done
+ * anything — so a daemon that crashes on startup (a stale PM2 whose runtime
+ * path points at a removed install, a bad native binding, a port conflict)
+ * passes an immediate check and only flips to `errored` once PM2 has burned
+ * through its restart budget. Watching for a stable window instead means
+ * `start` reports what the user will actually find a moment later.
+ *
+ * Deliberately shorter than PM2's `min_uptime` (10s): waiting the full window
+ * would make every successful `start` feel broken. A crash loop restarts far
+ * faster than this, so it is caught by the restart-count check below rather
+ * than by waiting it out.
+ */
+const DAEMON_STABLE_MS = 3_000;
+
+type DaemonReadiness = {
+	proc: Pm2Process | null;
+	/** The daemon held `online` for the full stability window. */
+	healthy: boolean;
+	/** It restarted while we watched — a crash loop, however "online" it looks. */
+	crashLooping: boolean;
+};
+
+/**
+ * Wait for the daemon to reach a settled state, distinguishing "running" from
+ * "running *now*, having already crashed twice".
+ */
+function pollDaemonReady(timeoutMs = 15_000): Promise<DaemonReadiness> {
 	return new Promise((resolve) => {
 		const deadline = Date.now() + timeoutMs;
+		// The restart count when we started watching. PM2 preserves it across a
+		// `start` of an existing app, so an absolute count means nothing — only
+		// growth during this window indicates a fresh crash.
+		let baselineRestarts: number | null = null;
+		let onlineSince: number | null = null;
 
 		const check = () => {
 			describeDaemon()
 				.then((proc) => {
 					if (!proc) {
 						if (Date.now() > deadline) {
-							resolve(null);
+							resolve({ proc: null, healthy: false, crashLooping: false });
 							return;
 						}
-						setTimeout(check, 500);
+						setTimeout(check, 250);
 						return;
 					}
 
 					const status = proc.pm2_env?.status;
-					if (status === "online") {
-						resolve(proc);
-					} else if (
-						status === "errored" ||
-						status === "stopped" ||
-						status === "stopping"
-					) {
-						resolve(proc);
-					} else if (Date.now() > deadline) {
-						resolve(proc);
-					} else {
-						setTimeout(check, 500);
+					const restarts = proc.pm2_env?.restart_time ?? 0;
+					baselineRestarts ??= restarts;
+
+					// A restart during the watch window means the process died after
+					// PM2 declared it online. It may well be `online` again right now,
+					// which is exactly the false success this check exists to catch.
+					if (restarts > baselineRestarts) {
+						resolve({ proc, healthy: false, crashLooping: true });
+						return;
 					}
+
+					if (status === "errored" || status === "stopped") {
+						resolve({ proc, healthy: false, crashLooping: false });
+						return;
+					}
+
+					if (status === "online") {
+						onlineSince ??= Date.now();
+						if (Date.now() - onlineSince >= DAEMON_STABLE_MS) {
+							resolve({ proc, healthy: true, crashLooping: false });
+							return;
+						}
+					} else {
+						// Left `online` (launching/stopping): the clock restarts.
+						onlineSince = null;
+					}
+
+					if (Date.now() > deadline) {
+						// Out of time without ever holding `online` for the stability
+						// window — the timeout is several times that window, so this is a
+						// daemon that kept dropping out of `online`, not one that merely
+						// started slowly. Reporting it healthy is the false success this
+						// whole check exists to prevent, so it is deliberately not
+						// treated as such.
+						resolve({ proc, healthy: false, crashLooping: false });
+						return;
+					}
+					setTimeout(check, 250);
 				})
 				.catch(() => {
 					if (Date.now() > deadline) {
-						resolve(null);
+						resolve({ proc: null, healthy: false, crashLooping: false });
 					} else {
-						setTimeout(check, 500);
+						setTimeout(check, 250);
 					}
 				});
 		};
@@ -443,7 +569,11 @@ export async function startDaemon(
 	});
 
 	logger.log("Waiting for daemon to start...");
-	const daemon = await withPm2(async () => pollDaemonReady());
+	const {
+		proc: daemon,
+		healthy,
+		crashLooping,
+	} = await withPm2(async () => pollDaemonReady());
 
 	if (!daemon) {
 		logger.error(chalk.red("Failed to detect daemon status."));
@@ -451,18 +581,56 @@ export async function startDaemon(
 		process.exit(1);
 	}
 
-	const status = daemon.pm2_env?.status;
-	if (status === "errored" || status === "stopped") {
-		const errSize = getFileSize(logs.err);
-		if (errSize > 0) {
-			logger.error(chalk.red("Daemon failed to start. Error output:"));
-			const content = fs.readFileSync(logs.err, "utf8");
-			const tail = content.slice(-4096);
-			for (const line of tail.split("\n")) {
+	if (!healthy) {
+		const status = daemon.pm2_env?.status ?? "unknown";
+		const errOutput = readErrorLogTail(logs.err);
+
+		if (crashLooping) {
+			logger.error(
+				chalk.red(
+					"Daemon started but keeps crashing — it restarted while we were checking on it.",
+				),
+			);
+		} else {
+			logger.error(chalk.red(`Daemon failed to start (status: ${status}).`));
+		}
+
+		if (errOutput) {
+			logger.error("Error output:");
+			for (const line of errOutput.split("\n")) {
 				if (line.trim()) logger.error(line);
 			}
 		} else {
-			logger.error(chalk.red("Daemon failed to start. No error output found."));
+			logger.error("No error output found.");
+		}
+
+		// The stale-PM2 case is common enough after a reinstall, and cryptic
+		// enough, to be worth naming outright instead of leaving the user with a
+		// raw MODULE_NOT_FOUND. It happens when a PM2 daemon from a previous
+		// Shellular install is still resident and still resolving modules from
+		// the removed install's path.
+		if (errOutput && isStalePm2ModuleError(errOutput)) {
+			logger.error("");
+			logger.error(
+				chalk.yellow(
+					"This looks like a stale PM2 daemon left over from a previous Shellular install:",
+				),
+			);
+			logger.error(
+				chalk.yellow(
+					"it is still resolving modules from a path that no longer exists.",
+				),
+			);
+			logger.error("");
+			logger.error("Recover with:");
+			logger.error(chalk.cyan("  npx pm2 kill"));
+			logger.error(chalk.cyan("  npx shellular start"));
+			logger.error("");
+			logger.error(
+				chalk.dim(
+					"`pm2 kill` stops PM2 itself (and anything else it supervises for this user), after which Shellular starts a fresh one.",
+				),
+			);
 		}
 
 		await withPm2(async () => {
@@ -472,13 +640,10 @@ export async function startDaemon(
 		process.exit(1);
 	}
 
-	if (status === "online") {
-		logger.log(chalk.green("Daemon is running."));
-	} else if (streamLogs) {
-		logger.warn(
-			`Daemon status: ${chalk.yellow(status ?? "unknown")}. Streaming logs...`,
-		);
-	}
+	// Only reached when the daemon held `online` for the full stability window,
+	// so this is now a claim about a process that is actually up — not just one
+	// PM2 forked a moment ago.
+	logger.log(chalk.green("Daemon is running."));
 
 	// Non-interactive callers must return so the process
 	// can exit; only the interactive `start` tails logs and waits for Ctrl+C.
@@ -533,6 +698,34 @@ export async function restartDaemon(): Promise<void> {
 
 	if (!restarted) {
 		logger.log("Shellular daemon is not running. Use 'start' to launch it.");
+		return;
+	}
+
+	// Same reasoning as `start`: pm2.restart resolves once the process has been
+	// forked, which says nothing about whether it survived. Confirm it holds
+	// `online` before claiming the restart worked.
+	const { healthy, crashLooping } = await withPm2(async () =>
+		pollDaemonReady(),
+	);
+
+	if (!healthy) {
+		logger.error(
+			chalk.red(
+				crashLooping
+					? "Daemon restarted but keeps crashing."
+					: "Daemon failed to come back up after restart.",
+			),
+		);
+		const latestLogs = getLatestLogPaths();
+		const errOutput = latestLogs ? readErrorLogTail(latestLogs.err) : null;
+		if (errOutput) {
+			logger.error("Error output:");
+			for (const line of errOutput.split("\n")) {
+				if (line.trim()) logger.error(line);
+			}
+		}
+		logger.error("Run 'shellular status' to check.");
+		process.exitCode = 1;
 		return;
 	}
 
