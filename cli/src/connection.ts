@@ -78,6 +78,10 @@ import {
 	type TerminalDataMsg,
 	type TerminalListMsg,
 	type TerminalResizeMsg,
+	type TcpTunnelCloseMsg,
+	type TcpTunnelEndMsg,
+	type TcpTunnelOpenMsg,
+	type TcpTunnelWindowMsg,
 	type WsCloseMsg,
 	type WsDataMsg,
 	type WsOpenMsg,
@@ -183,6 +187,7 @@ export class Connection extends EventEmitter {
 	private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 	clients: ConnectedClients;
 	private incomingSink: ((msg: HostIncomingMsg) => boolean) | null = null;
+	private incomingBinarySink: ((frame: Buffer) => boolean) | null = null;
 
 	constructor(relayWsUrl: string | URL, hostInfo: HostInfo, token: string) {
 		super();
@@ -199,6 +204,10 @@ export class Connection extends EventEmitter {
 
 	setIncomingSink(sink: ((msg: HostIncomingMsg) => boolean) | null): void {
 		this.incomingSink = sink;
+	}
+
+	setIncomingBinarySink(sink: ((frame: Buffer) => boolean) | null): void {
+		this.incomingBinarySink = sink;
 	}
 
 	isOpen(): boolean {
@@ -341,6 +350,23 @@ export class Connection extends EventEmitter {
 		eventName: typeof MsgType.WS_CLOSE,
 		listener: (msg: WsCloseMsg) => void,
 	): this;
+	on(
+		eventName: typeof MsgType.TCP_TUNNEL_OPEN,
+		listener: (msg: TcpTunnelOpenMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.TCP_TUNNEL_WINDOW,
+		listener: (msg: TcpTunnelWindowMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.TCP_TUNNEL_END,
+		listener: (msg: TcpTunnelEndMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.TCP_TUNNEL_CLOSE,
+		listener: (msg: TcpTunnelCloseMsg) => void,
+	): this;
+	on(eventName: "proxy:binary", listener: (frame: Buffer) => void): this;
 
 	on(
 		eventName: typeof MsgType.AI_SESSION_LIST,
@@ -931,7 +957,15 @@ export class Connection extends EventEmitter {
 						this.sessionId = msg.data.data.sessionId;
 						resolve();
 
-						this.ws.on("message", (nextRaw) => {
+						this.ws.on("message", (nextRaw, isBinary) => {
+							if (isBinary) {
+								this.incomingBinarySink?.(
+									Buffer.isBuffer(nextRaw)
+										? nextRaw
+										: Buffer.from(nextRaw as ArrayBuffer),
+								);
+								return;
+							}
 							this.handleIncomingMessage(nextRaw.toString());
 						});
 

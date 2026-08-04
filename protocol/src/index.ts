@@ -11,4 +11,5 @@ export * from "./server";
 export * from "./session";
 export * from "./sysmon";
 export * from "./terminal";
+export * from "./tunnel";
 export * from "./utils";

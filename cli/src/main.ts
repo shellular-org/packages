@@ -702,6 +702,9 @@ async function runCli({
 		// foreground npx/global launch would orphan itself, so the app shows a
 		// "please update manually" hint instead of the Update button.
 		canSelfUpdate: isDaemon,
+		capabilities: {
+			tcpTunnel: 1,
+		},
 	};
 
 	// Bring the shared database up to the latest schema before anything reads

@@ -71,6 +71,12 @@ import {
 	TerminalOutputMsgSchema,
 	TerminalTitleMsgSchema,
 } from "@/terminal";
+import {
+	TcpTunnelClosedMsgSchema,
+	TcpTunnelEndMsgSchema,
+	TcpTunnelOpenedMsgSchema,
+	TcpTunnelWindowMsgSchema,
+} from "@/tunnel";
 
 export const HostToClientSchema = z.discriminatedUnion("type", [
 	TerminalCreateResultMsgSchema,
@@ -137,6 +143,10 @@ export const HostToClientSchema = z.discriminatedUnion("type", [
 	AiQuestionRejectAckMsgSchema,
 	AiEventMsgSchema,
 	HostUpdateResultMsgSchema,
+	TcpTunnelOpenedMsgSchema,
+	TcpTunnelWindowMsgSchema,
+	TcpTunnelEndMsgSchema,
+	TcpTunnelClosedMsgSchema,
 ]);
 
 export type HostToClientMsg = z.infer<typeof HostToClientSchema>;

@@ -1,15 +1,22 @@
 import type http from "node:http";
 import { Agent as HttpAgent, request as httpRequest } from "node:http";
 import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
-import { MsgType } from "@shellular/protocol";
+import { connect as connectTcp, type Socket } from "node:net";
+import {
+	MsgType,
+	TCP_TUNNEL_INITIAL_WINDOW_BYTES,
+	TCP_TUNNEL_MAX_CONNECTIONS,
+	TCP_TUNNEL_MAX_FRAME_BYTES,
+} from "@shellular/protocol";
 import WebSocket from "ws";
 import type { HostConnection } from "./connection";
-import { encryptBytes } from "./encryption";
+import { decryptBytes, encryptBytes } from "./encryption";
 
 const ALLOWED_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
 const PROXY_BINARY_MAGIC = Buffer.from("SHPB");
 const PROXY_BINARY_VERSION = 1;
 const PROXY_BINARY_KIND_HTTP_RESPONSE_DATA = 1;
+const PROXY_BINARY_KIND_TCP_TUNNEL_DATA = 2;
 const PROXY_BINARY_HEADER_BYTES = 4 + 1 + 1 + 1 + 24;
 const INITIAL_HTTP_RESPONSE_CHUNK_BYTES = 64 * 1024;
 const STEADY_STATE_HTTP_RESPONSE_CHUNK_BYTES = 256 * 1024;
@@ -51,6 +58,21 @@ const activeRequests = new Map<string, http.ClientRequest>();
 
 // Active WebSocket connections (wsId → WebSocket) for cleanup
 const activeWebSockets = new Map<string, WebSocket>();
+
+interface TcpTunnel {
+	key: string;
+	clientId: string;
+	tunnelId: string;
+	socket: Socket;
+	sendSequence: number;
+	receiveSequence: number;
+	sendCredit: number;
+	receiveCredit: number;
+	sendQueue: Buffer[];
+	closed: boolean;
+}
+
+const activeTcpTunnels = new Map<string, TcpTunnel>();
 
 let wsCounter = 0;
 
@@ -333,7 +355,324 @@ function sendHttpResponseData(
 	);
 }
 
+function tunnelKey(clientId: string, tunnelId: string) {
+	return `${clientId}\u0000${tunnelId}`;
+}
+
+function buildTcpTunnelDataPlaintext(
+	clientId: string,
+	tunnelId: string,
+	sequence: number,
+	chunk: Buffer,
+): Buffer {
+	const clientIdBytes = Buffer.from(clientId);
+	const tunnelIdBytes = Buffer.from(tunnelId);
+	if (clientIdBytes.length > 255 || tunnelIdBytes.length > 65_535) {
+		throw new Error("TCP tunnel identifier is too large");
+	}
+	const headerLength = 1 + 1 + 2 + 4;
+	const plaintext = Buffer.allocUnsafe(
+		headerLength + clientIdBytes.length + tunnelIdBytes.length + chunk.length,
+	);
+	plaintext.writeUInt8(PROXY_BINARY_KIND_TCP_TUNNEL_DATA, 0);
+	plaintext.writeUInt8(clientIdBytes.length, 1);
+	plaintext.writeUInt16BE(tunnelIdBytes.length, 2);
+	plaintext.writeUInt32BE(sequence, 4);
+	clientIdBytes.copy(plaintext, headerLength);
+	tunnelIdBytes.copy(plaintext, headerLength + clientIdBytes.length);
+	chunk.copy(
+		plaintext,
+		headerLength + clientIdBytes.length + tunnelIdBytes.length,
+	);
+	return plaintext;
+}
+
+function parseTcpTunnelDataFrame(frame: Buffer): {
+	clientId: string;
+	tunnelId: string;
+	sequence: number;
+	data: Buffer;
+} | null {
+	try {
+		if (
+			frame.length < PROXY_BINARY_HEADER_BYTES ||
+			!frame.subarray(0, 4).equals(PROXY_BINARY_MAGIC) ||
+			frame.readUInt8(4) !== PROXY_BINARY_VERSION ||
+			frame.readUInt8(5) !== PROXY_BINARY_KIND_TCP_TUNNEL_DATA
+		) {
+			return null;
+		}
+		const clientIdLength = frame.readUInt8(6);
+		const clientIdStart = PROXY_BINARY_HEADER_BYTES;
+		const clientIdEnd = clientIdStart + clientIdLength;
+		if (clientIdLength === 0 || frame.length <= clientIdEnd) return null;
+		const nonce = frame.subarray(7, PROXY_BINARY_HEADER_BYTES);
+		const plaintext = decryptBytes(nonce, frame.subarray(clientIdEnd));
+		if (!plaintext || plaintext.length < 8) return null;
+		const payload = Buffer.from(plaintext);
+		const kind = payload.readUInt8(0);
+		const payloadClientIdLength = payload.readUInt8(1);
+		const tunnelIdLength = payload.readUInt16BE(2);
+		const sequence = payload.readUInt32BE(4);
+		const payloadClientStart = 8;
+		const tunnelIdStart = payloadClientStart + payloadClientIdLength;
+		const dataStart = tunnelIdStart + tunnelIdLength;
+		if (
+			kind !== PROXY_BINARY_KIND_TCP_TUNNEL_DATA ||
+			payloadClientIdLength === 0 ||
+			dataStart > payload.length
+		) {
+			return null;
+		}
+		const clientId = frame.toString("utf8", clientIdStart, clientIdEnd);
+		const payloadClientId = payload.toString(
+			"utf8",
+			payloadClientStart,
+			tunnelIdStart,
+		);
+		if (payloadClientId !== clientId) return null;
+		return {
+			clientId,
+			tunnelId: payload.toString("utf8", tunnelIdStart, dataStart),
+			sequence,
+			data: payload.subarray(dataStart),
+		};
+	} catch {
+		return null;
+	}
+}
+
+function closeTcpTunnel(
+	conn: HostConnection,
+	tunnel: TcpTunnel,
+	error?: string,
+) {
+	if (tunnel.closed) return;
+	tunnel.closed = true;
+	activeTcpTunnels.delete(tunnel.key);
+	if (!tunnel.socket.destroyed) tunnel.socket.destroy();
+	conn.send({
+		type: MsgType.TCP_TUNNEL_CLOSED,
+		clientId: tunnel.clientId,
+		...(error ? { error: error.slice(0, 512) } : {}),
+		data: { tunnelId: tunnel.tunnelId },
+	});
+}
+
+function rejectUnknownTcpTunnel(
+	conn: HostConnection,
+	clientId: string,
+	tunnelId: string,
+) {
+	conn.send({
+		type: MsgType.TCP_TUNNEL_CLOSED,
+		clientId,
+		error: "Unknown tunnel ID",
+		data: { tunnelId },
+	});
+}
+
+function flushTcpTunnel(conn: HostConnection, tunnel: TcpTunnel) {
+	while (!tunnel.closed && tunnel.sendCredit > 0 && tunnel.sendQueue.length) {
+		const queued = tunnel.sendQueue[0];
+		const size = Math.min(
+			queued.length,
+			tunnel.sendCredit,
+			TCP_TUNNEL_MAX_FRAME_BYTES,
+		);
+		const chunk = queued.subarray(0, size);
+		if (size === queued.length) tunnel.sendQueue.shift();
+		else tunnel.sendQueue[0] = queued.subarray(size);
+		const plaintext = buildTcpTunnelDataPlaintext(
+			tunnel.clientId,
+			tunnel.tunnelId,
+			tunnel.sendSequence++,
+			chunk,
+		);
+		const sent = conn.sendBinary(
+			buildProxyBinaryFrame(
+				PROXY_BINARY_KIND_TCP_TUNNEL_DATA,
+				tunnel.clientId,
+				plaintext,
+			),
+			tunnel.clientId,
+		);
+		if (!sent) {
+			closeTcpTunnel(conn, tunnel, "The client connection was lost");
+			return;
+		}
+		tunnel.sendCredit -= size;
+	}
+	if (tunnel.sendCredit > 0) tunnel.socket.resume();
+	else tunnel.socket.pause();
+}
+
+function initTcpTunnelHandler(conn: HostConnection) {
+	conn.on(MsgType.SESSION_CLIENT_LEFT, (msg) => {
+		for (const tunnel of [...activeTcpTunnels.values()]) {
+			if (tunnel.clientId === msg.data.clientId) {
+				closeTcpTunnel(conn, tunnel, "Client disconnected");
+			}
+		}
+	});
+
+	conn.on(MsgType.TCP_TUNNEL_OPEN, (msg) => {
+		const { clientId } = msg;
+		const { tunnelId, port, initialWindowBytes } = msg.data;
+		if (!conn.clients.isConnected(clientId)) return;
+		const count = [...activeTcpTunnels.values()].filter(
+			(candidate) => candidate.clientId === clientId,
+		).length;
+		if (count >= TCP_TUNNEL_MAX_CONNECTIONS) {
+			conn.send({
+				type: MsgType.TCP_TUNNEL_CLOSED,
+				clientId,
+				respTo: msg.id,
+				error: "Too many active browser tunnels",
+				data: { tunnelId },
+			});
+			return;
+		}
+		const key = tunnelKey(clientId, tunnelId);
+		if (activeTcpTunnels.has(key)) {
+			conn.send({
+				type: MsgType.TCP_TUNNEL_CLOSED,
+				clientId,
+				respTo: msg.id,
+				error: "Tunnel already exists",
+				data: { tunnelId },
+			});
+			return;
+		}
+		const host = msg.data.host === "::1" ? "::1" : "127.0.0.1";
+		const socket = connectTcp({ host, port });
+		const tunnel: TcpTunnel = {
+			key,
+			clientId,
+			tunnelId,
+			socket,
+			sendSequence: 0,
+			receiveSequence: 0,
+			sendCredit: initialWindowBytes,
+			receiveCredit: TCP_TUNNEL_INITIAL_WINDOW_BYTES,
+			sendQueue: [],
+			closed: false,
+		};
+		activeTcpTunnels.set(key, tunnel);
+		socket.pause();
+		socket.setTimeout(10_000);
+		socket.once("connect", () => {
+			socket.setTimeout(0);
+			conn.send({
+				type: MsgType.TCP_TUNNEL_OPENED,
+				clientId,
+				respTo: msg.id,
+				data: {
+					tunnelId,
+					windowBytes: TCP_TUNNEL_INITIAL_WINDOW_BYTES,
+				},
+			});
+			flushTcpTunnel(conn, tunnel);
+		});
+		socket.on("data", (chunk: Buffer) => {
+			tunnel.sendQueue.push(chunk);
+			flushTcpTunnel(conn, tunnel);
+		});
+		socket.once("end", () => {
+			if (tunnel.closed) return;
+			conn.send({
+				type: MsgType.TCP_TUNNEL_END,
+				clientId,
+				data: { tunnelId },
+			});
+		});
+		socket.once("timeout", () =>
+			closeTcpTunnel(conn, tunnel, "Timed out connecting to the remote port"),
+		);
+		socket.once("error", (error) =>
+			closeTcpTunnel(conn, tunnel, error.message),
+		);
+		socket.once("close", () => closeTcpTunnel(conn, tunnel));
+	});
+
+	conn.on(MsgType.TCP_TUNNEL_WINDOW, (msg) => {
+		const tunnel = activeTcpTunnels.get(
+			tunnelKey(msg.clientId, msg.data.tunnelId),
+		);
+		if (!tunnel || tunnel.closed) {
+			rejectUnknownTcpTunnel(conn, msg.clientId, msg.data.tunnelId);
+			return;
+		}
+		tunnel.sendCredit = Math.min(
+			tunnel.sendCredit + msg.data.bytes,
+			TCP_TUNNEL_INITIAL_WINDOW_BYTES,
+		);
+		flushTcpTunnel(conn, tunnel);
+	});
+
+	conn.on(MsgType.TCP_TUNNEL_END, (msg) => {
+		const tunnel = activeTcpTunnels.get(
+			tunnelKey(msg.clientId, msg.data.tunnelId),
+		);
+		if (!tunnel || tunnel.closed) {
+			rejectUnknownTcpTunnel(conn, msg.clientId, msg.data.tunnelId);
+			return;
+		}
+		tunnel.socket.end();
+	});
+
+	conn.on(MsgType.TCP_TUNNEL_CLOSE, (msg) => {
+		const tunnel = activeTcpTunnels.get(
+			tunnelKey(msg.clientId, msg.data.tunnelId),
+		);
+		if (!tunnel) {
+			rejectUnknownTcpTunnel(conn, msg.clientId, msg.data.tunnelId);
+			return;
+		}
+		closeTcpTunnel(conn, tunnel);
+	});
+
+	conn.on("proxy:binary", (frame: Buffer) => {
+		const parsed = parseTcpTunnelDataFrame(frame);
+		if (!parsed || parsed.data.length > TCP_TUNNEL_MAX_FRAME_BYTES) return;
+		const tunnel = activeTcpTunnels.get(
+			tunnelKey(parsed.clientId, parsed.tunnelId),
+		);
+		if (!tunnel) {
+			rejectUnknownTcpTunnel(
+				conn,
+				parsed.clientId,
+				parsed.tunnelId,
+			);
+			return;
+		}
+		if (
+			tunnel.closed ||
+			parsed.sequence !== tunnel.receiveSequence ||
+			parsed.data.length > tunnel.receiveCredit
+		) {
+			if (tunnel) closeTcpTunnel(conn, tunnel, "Invalid tunnel data frame");
+			return;
+		}
+		tunnel.receiveSequence += 1;
+		tunnel.receiveCredit -= parsed.data.length;
+		tunnel.socket.write(parsed.data, () => {
+			if (tunnel.closed) return;
+			tunnel.receiveCredit = Math.min(
+				tunnel.receiveCredit + parsed.data.length,
+				TCP_TUNNEL_INITIAL_WINDOW_BYTES,
+			);
+			conn.send({
+				type: MsgType.TCP_TUNNEL_WINDOW,
+				clientId: tunnel.clientId,
+				data: { tunnelId: tunnel.tunnelId, bytes: parsed.data.length },
+			});
+		});
+	});
+}
+
 export function initProxyHandler(conn: HostConnection) {
+	initTcpTunnelHandler(conn);
 	// ─── HTTP tunneling ───────────────────────────────────────
 
 	conn.on(MsgType.HTTP_REQUEST, (msg) => {
@@ -629,4 +968,10 @@ export function cleanupProxy() {
 		ws.close(1001, "Host disconnected");
 		activeWebSockets.delete(id);
 	}
+
+	for (const tunnel of activeTcpTunnels.values()) {
+		tunnel.closed = true;
+		tunnel.socket.destroy();
+	}
+	activeTcpTunnels.clear();
 }

@@ -20,6 +20,13 @@ export const HostInfoSchema = z.object({
 	 * rather than risk orphaning the process.
 	 */
 	canSelfUpdate: z.boolean().optional(),
+	/** Optional, versioned host features. Unknown future capabilities are kept. */
+	capabilities: z
+		.object({
+			tcpTunnel: z.literal(1).optional(),
+		})
+		.loose()
+		.optional(),
 });
 export type HostInfo = z.infer<typeof HostInfoSchema>;
 

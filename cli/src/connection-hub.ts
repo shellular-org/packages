@@ -40,6 +40,10 @@ export class ConnectionHub extends EventEmitter {
 		};
 		this.registerTransport(transport);
 		connection.setIncomingSink((msg) => this.acceptIncoming(transport.id, msg));
+		connection.setIncomingBinarySink((frame) => {
+			if (!this.transports.has(transport.id)) return false;
+			return super.emit("proxy:binary", frame);
+		});
 		connection.once("disconnected", () => this.detachTransport(transport.id));
 	}
 
