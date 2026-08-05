@@ -264,6 +264,10 @@ export const AiSessionCreateMsgSchema = z.object({
 		additionalDirectories: z.array(z.string()).optional(),
 		mcpServers: z.array(z.record(z.string(), z.unknown())).optional(),
 		model: z.any().optional(),
+		// The selections currently visible in a lazy draft chat. These are sent
+		// when the first prompt creates a session, so the CLI can make the new
+		// agent session match the UI rather than falling back to an agent default.
+		configOptions: z.array(z.any()).optional(),
 	}),
 });
 export type AiSessionCreateMsg = z.infer<typeof AiSessionCreateMsgSchema>;

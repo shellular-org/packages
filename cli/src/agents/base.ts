@@ -616,6 +616,15 @@ export class ACP {
 				acp.methods.agent.session.prompt,
 				params,
 			);
+			// ACP requires the agent to send its turn updates before replying to
+			// session/prompt, but the SDK resolves responses synchronously while it
+			// dispatches notifications through an async handler chain. Consequently
+			// the final assistant chunk can already be on the wire yet not have
+			// reached `transcript.apply()` here. Besides returning a stale result,
+			// that races the manager's turn-boundary SQLite write and leaves a cache
+			// containing only the user's message. Wait for the transport-tracked
+			// dispatch to finish, just as `loadSession()` does for replayed history.
+			await this.client.settled();
 			if (updateTasks.size > 0) {
 				await Promise.all(updateTasks);
 			}

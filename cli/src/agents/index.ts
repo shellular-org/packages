@@ -10,6 +10,7 @@ import type {
 	AiAttachmentWriteResultMsg,
 	AiEvent,
 	AiSession,
+	AiSessionConfigOption,
 	AiSessionCreateMsg,
 	AiSessionRuntimeState,
 	AiSessionState,
@@ -456,6 +457,7 @@ export class AgentsManager {
 			update.workspacePath ??
 			this.sessionSnapshots.get(key)?.session.workspacePath;
 		if (
+			!this.sessionRuntimes.has(key) &&
 			externalCwd &&
 			!isLiveRuntimeStatus(update.status) &&
 			this.attachedSessionClients.get(key)?.size
@@ -839,6 +841,7 @@ export class AgentsManager {
 		agentId: AgentId,
 		cwd: string,
 		options: Parameters<ACP["createSession"]>[1] = {},
+		draftConfigOptions?: AiSessionConfigOption[],
 	) {
 		if (!this.isAgentEnabled(agentId)) {
 			throw new AgentUnavailableError(agentId, "agent is disabled");
@@ -846,10 +849,64 @@ export class AgentsManager {
 		const agent = this.createManagedRuntime(agentId);
 		this.registerPermissionListener(agentId, clientId, agent);
 		await agent.init();
-		const result = await agent.createSession(cwd, options);
+		// This is the same config the draft UI rendered before `session/new`.
+		// Capture it before the new agent response has a chance to replace the
+		// agent-wide cache with its own defaults.
+		const cachedConfig = readCachedSessionConfig(
+			agentId,
+			agent.getInfo().version,
+		);
+		const desiredConfigOptions =
+			draftConfigOptions ?? cachedConfig?.configOptions ?? [];
+		let result = await agent.createSession(cwd, options);
 		const sessionId = result.session.id ?? result.response.sessionId;
 		this.sessionRuntimes.set(this.sessionKey(agentId, sessionId), agent);
 		this.sessionAgents.set(sessionId, agentId);
+		let configOptions = result.response.configOptions;
+		logger.debug(
+			`New ${agentId} session ${sessionId}: ACP defaults ${JSON.stringify(configOptions)}`,
+		);
+		if (desiredConfigOptions.length && configOptions?.length) {
+			for (const desiredOption of desiredConfigOptions) {
+				const liveOption = configOptions.find(
+					(option) => option.id === desiredOption.id,
+				);
+				if (
+					!liveOption ||
+					liveOption.currentValue === undefined ||
+					desiredOption.currentValue === undefined ||
+					liveOption.currentValue === desiredOption.currentValue
+				) {
+					continue;
+				}
+				try {
+					const updated = await agent.setSessionConfigOption({
+						sessionId,
+						configId: desiredOption.id,
+						...(typeof desiredOption.currentValue === "boolean"
+							? { type: "boolean" as const, value: desiredOption.currentValue }
+							: { value: desiredOption.currentValue }),
+					});
+					configOptions = updated.configOptions;
+					logger.debug(
+						`New ${agentId} session ${sessionId}: applied desired ${desiredOption.id}=${JSON.stringify(desiredOption.currentValue)} -> ${JSON.stringify(configOptions)}`,
+					);
+				} catch (err) {
+					logger.warn(
+						`Failed to apply desired config ${desiredOption.id} to new ${agentId} session ${sessionId}:`,
+						err,
+					);
+				}
+			}
+			result = {
+				...result,
+				response: { ...result.response, configOptions },
+				session: {
+					...result.session,
+					configOptions,
+				},
+			};
+		}
 		// Commands are deliberately not cached here. `result.availableCommands`
 		// reads the connection's per-session tracking map, which is keyed by a
 		// session id created moments ago and populated only by an incoming
@@ -1264,6 +1321,11 @@ export class AgentsManager {
 		if (!agent.getSession(sessionId)) {
 			await this.ensureSessionRuntimeLoaded(clientId, agentId, sessionId);
 		}
+		// ACP agents may restore a session with their default config even though
+		// Shellular previously selected a different value for this session. Do not
+		// mutate ACP while loading/attaching; reconcile the persisted desired value
+		// lazily at the first subsequent prompt instead.
+		await this.applyPersistedSessionConfig(clientId, agentId, sessionId, agent);
 		// Captured before the turn starts: live message events upsert into the
 		// snapshot as they stream, so by resolve time its length already includes
 		// the turn. The pre-turn length anchors the durable tail write below.
@@ -1298,12 +1360,21 @@ export class AgentsManager {
 			);
 		}
 		const snapshot = this.sessionSnapshots.get(promptKey);
+		// The ACP response and streamed session/update notifications can cross at
+		// the SDK boundary. Every streamed message event has already upserted the
+		// latest message into this snapshot, so never replace a richer live view
+		// with a shorter prompt result; doing so makes the answer disappear until
+		// the next ACP replay (for example after restarting the CLI).
+		const messages =
+			snapshot && snapshot.messages.length >= result.messages.length
+				? snapshot.messages
+				: result.messages;
 		if (snapshot) {
 			this.sessionSnapshots.set(promptKey, {
 				...snapshot,
-				messages: result.messages,
+				messages,
 				baseIdx: 0,
-				totalCount: result.messages.length,
+				totalCount: messages.length,
 				revision: this.getSessionRevision(agentId, sessionId),
 			});
 		}
@@ -1322,7 +1393,7 @@ export class AgentsManager {
 				agentId,
 				sessionId,
 				snapshot && preTurnComplete ? Math.max(0, preTurnLength - 1) : 0,
-				result.messages,
+				messages,
 				{
 					session,
 					state: snapshot?.state ?? {},
@@ -1330,7 +1401,47 @@ export class AgentsManager {
 				},
 			);
 		}
-		return result;
+		return { ...result, messages };
+	}
+
+	private async applyPersistedSessionConfig(
+		clientId: string,
+		agentId: AgentId,
+		sessionId: string,
+		agent: ACP,
+	) {
+		const desired = this.transcriptStore.getSessionMeta(agentId, sessionId)
+			?.state.configOptions;
+		const live = agent.getSession(sessionId)?.configOptions;
+		if (!desired?.length || !live?.length) return;
+
+		for (const desiredOption of desired) {
+			const liveOption = live.find((option) => option.id === desiredOption.id);
+			// An omitted current value means the agent did not give us a value to
+			// compare against; leave it alone rather than blindly setting it.
+			if (
+				!liveOption ||
+				liveOption.currentValue === undefined ||
+				desiredOption.currentValue === undefined ||
+				liveOption.currentValue === desiredOption.currentValue
+			) {
+				continue;
+			}
+			try {
+				await this.setSessionConfigOption(
+					clientId,
+					agentId,
+					sessionId,
+					desiredOption.id,
+					desiredOption.currentValue,
+				);
+			} catch (err) {
+				logger.warn(
+					`Failed to lazily restore config ${desiredOption.id} for ${agentId}:${sessionId}:`,
+					err,
+				);
+			}
+		}
 	}
 
 	/**
@@ -1506,6 +1617,27 @@ export class AgentsManager {
 			configOptions: response.configOptions,
 			version: agent.getInfo().version,
 		});
+		// `attachSession()` can serve a warm in-memory snapshot without calling
+		// ACP session/load again. Keep that snapshot in sync with the live ACP
+		// response, otherwise leaving and reopening a chat restores the option
+		// value from before this change even though the agent and SQLite cache have
+		// already accepted the new value.
+		const key = this.sessionKey(agentId, sessionId);
+		const snapshot = this.sessionSnapshots.get(key);
+		if (snapshot) {
+			this.sessionSnapshots.set(key, {
+				...snapshot,
+				state: {
+					...snapshot.state,
+					configOptions: response.configOptions,
+				},
+				revision: this.getSessionRevision(agentId, sessionId),
+			});
+			this.transcriptStore.updateState(agentId, sessionId, {
+				...snapshot.state,
+				configOptions: response.configOptions,
+			});
+		}
 		return response;
 	}
 
@@ -1516,7 +1648,24 @@ export class AgentsManager {
 		modeId: string,
 	) {
 		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
-		return agent.setSessionMode({ sessionId, modeId });
+		const result = await agent.setSessionMode({ sessionId, modeId });
+		const key = this.sessionKey(agentId, sessionId);
+		const snapshot = this.sessionSnapshots.get(key);
+		if (snapshot) {
+			const modes =
+				snapshot.state.modes && typeof snapshot.state.modes === "object"
+					? snapshot.state.modes
+					: {};
+			this.sessionSnapshots.set(key, {
+				...snapshot,
+				state: {
+					...snapshot.state,
+					modes: { ...modes, currentModeId: modeId },
+				},
+				revision: this.getSessionRevision(agentId, sessionId),
+			});
+		}
+		return result;
 	}
 
 	destroy() {
@@ -1769,6 +1918,7 @@ export class AgentsManager {
 							additionalDirectories: msg.data.additionalDirectories,
 							mcpServers: msg.data.mcpServers as never,
 						},
+						msg.data.configOptions,
 					);
 				if (session.id) {
 					this.rememberSessionClient(
@@ -2464,8 +2614,19 @@ export class AgentsManager {
 					agentId,
 					session,
 				);
+				const persistedState = this.transcriptStore.getSessionMeta(
+					agentId,
+					sessionId,
+				)?.state;
 				const state = {
-					configOptions: result.response.configOptions ?? undefined,
+					// ACP implementations may treat set_config_option as runtime-only.
+					// Preserve a config selected through Shellular across a CLI restart;
+					// the per-session transcript metadata is distinct from the agent-wide
+					// draft hint and is applied only to this session.
+					configOptions:
+						persistedState?.configOptions ??
+						result.response.configOptions ??
+						undefined,
 					modes: result.response.modes,
 					availableCommands: latestAvailableCommands(
 						result.updates,
