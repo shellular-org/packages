@@ -140,6 +140,12 @@ export const MsgType = {
 	AI_MESSAGES_LIST_RESULT: "ai:messages:list:result",
 	AI_PROMPT: "ai:prompt",
 	AI_PROMPT_ACK: "ai:prompt:ack",
+	AI_PROMPT_QUEUE_UPDATE: "ai:prompt-queue:update",
+	AI_PROMPT_QUEUE_UPDATE_ACK: "ai:prompt-queue:update:ack",
+	AI_PROMPT_QUEUE_REMOVE: "ai:prompt-queue:remove",
+	AI_PROMPT_QUEUE_REMOVE_ACK: "ai:prompt-queue:remove:ack",
+	AI_PROMPT_QUEUE_PAUSE: "ai:prompt-queue:pause",
+	AI_PROMPT_QUEUE_PAUSE_ACK: "ai:prompt-queue:pause:ack",
 	/** Request to write an agent chat attachment into CLI-owned storage */
 	AI_ATTACHMENT_WRITE: "ai:attachment:write",
 	/** Response after agent chat attachment write completes */

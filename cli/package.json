@@ -5,7 +5,9 @@
   "main": "dist/main.js",
   "scripts": {
     "dev": "cross-env SHELLULAR_DEV=true tsx --import ./scripts/register-sql-loader.mjs --watch src/main.ts",
+    "predev": "pnpm --dir ../protocol run build",
     "start": "tsx --import ./scripts/register-sql-loader.mjs src/main.ts",
+    "prestart": "pnpm --dir ../protocol run build",
     "build": "pnpm run schema && tsc && tsup",
     "schema": "tsx scripts/generate-schema.ts",
     "prepublishOnly": "pnpm run build",

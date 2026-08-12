@@ -18,6 +18,9 @@ import {
 	type AiMessagesListMsg,
 	type AiPermissionReplyMsg,
 	type AiPromptMsg,
+	type AiPromptQueuePauseMsg,
+	type AiPromptQueueRemoveMsg,
+	type AiPromptQueueUpdateMsg,
 	type AiProvidersListMsg,
 	type AiQuestionRejectMsg,
 	type AiQuestionReplyMsg,
@@ -336,6 +339,18 @@ export class Connection extends EventEmitter {
 	on(
 		eventName: typeof MsgType.AI_PROMPT,
 		listener: (msg: AiPromptMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_PROMPT_QUEUE_UPDATE,
+		listener: (msg: AiPromptQueueUpdateMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_PROMPT_QUEUE_REMOVE,
+		listener: (msg: AiPromptQueueRemoveMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_PROMPT_QUEUE_PAUSE,
+		listener: (msg: AiPromptQueuePauseMsg) => void,
 	): this;
 	on(
 		eventName: typeof MsgType.AI_ATTACHMENT_WRITE,
@@ -664,6 +679,18 @@ export class Connection extends EventEmitter {
 		msg: AiMessagesListMsg,
 	): boolean;
 	emit(eventName: typeof MsgType.AI_PROMPT, msg: AiPromptMsg): boolean;
+	emit(
+		eventName: typeof MsgType.AI_PROMPT_QUEUE_UPDATE,
+		msg: AiPromptQueueUpdateMsg,
+	): boolean;
+	emit(
+		eventName: typeof MsgType.AI_PROMPT_QUEUE_REMOVE,
+		msg: AiPromptQueueRemoveMsg,
+	): boolean;
+	emit(
+		eventName: typeof MsgType.AI_PROMPT_QUEUE_PAUSE,
+		msg: AiPromptQueuePauseMsg,
+	): boolean;
 	emit(
 		eventName: typeof MsgType.AI_ATTACHMENT_WRITE,
 		msg: AiAttachmentWriteMsg,

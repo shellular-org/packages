@@ -612,6 +612,8 @@ export const AiPromptAckMsgSchema = z.object({
 			ack: z.boolean(),
 			backend: AiBackendSchema.optional(),
 			sessionId: z.string().optional(),
+			promptId: z.string().optional(),
+			queued: z.boolean().optional(),
 		})
 		.optional(),
 });

@@ -9,6 +9,11 @@ import type {
 	AiAttachmentWriteMsg,
 	AiAttachmentWriteResultMsg,
 	AiEvent,
+	AiPromptQueueItem,
+	AiPromptQueuePauseAckMsg,
+	AiPromptQueuePauseMsg,
+	AiPromptQueueRemoveAckMsg,
+	AiPromptQueueUpdateAckMsg,
 	AiSession,
 	AiSessionConfigOption,
 	AiSessionCreateMsg,
@@ -69,6 +74,23 @@ export interface MessageWindow {
 	tail?: number;
 	from?: number;
 	to?: number;
+}
+
+interface QueuedPrompt {
+	id: string;
+	clientId: string;
+	agentId: AgentId;
+	sessionId: string;
+	text: string;
+	content: AcpPromptRequest["prompt"];
+	createdAt: number;
+	updatedAt: number;
+}
+
+interface PromptQueueState {
+	running: boolean;
+	paused: boolean;
+	items: QueuedPrompt[];
 }
 
 /** True when a window asks for an explicit range rather than a tail. */
@@ -288,6 +310,7 @@ export class AgentsManager {
 	// after its load: if it changed, the replay predates a turn and its result
 	// must not overwrite the newer live transcript.
 	private sessionTurnCounts = new Map<string, number>();
+	private promptQueues = new Map<string, PromptQueueState>();
 
 	constructor() {
 		this.reloadDescriptors();
@@ -1404,6 +1427,180 @@ export class AgentsManager {
 		return { ...result, messages };
 	}
 
+	private enqueuePrompt(
+		clientId: string,
+		agentId: AgentId,
+		sessionId: string,
+		content: string | unknown[],
+	) {
+		const queue = this.getPromptQueue(agentId, sessionId);
+		const prompt = normalizePromptContent(content);
+		const now = Date.now();
+		const item: QueuedPrompt = {
+			id: `prompt_queue_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+			clientId,
+			agentId,
+			sessionId,
+			text: promptContentText(prompt),
+			content: prompt,
+			createdAt: now,
+			updatedAt: now,
+		};
+		queue.items.push(item);
+		this.emitPromptQueueUpdate(clientId, agentId, sessionId);
+		void this.drainPromptQueue(clientId, agentId, sessionId);
+		return item;
+	}
+
+	private updateQueuedPrompt(
+		clientId: string,
+		agentId: AgentId,
+		sessionId: string,
+		queueId: string,
+		text: string,
+		content: unknown[],
+	) {
+		const queue = this.getPromptQueue(agentId, sessionId);
+		const item = queue.items.find((entry) => entry.id === queueId);
+		if (!item) throw new Error("Queued prompt is no longer pending");
+		const prompt = normalizePromptContent(content.length ? content : text);
+		item.text = promptContentText(prompt);
+		item.content = prompt;
+		item.updatedAt = Date.now();
+		this.emitPromptQueueUpdate(clientId, agentId, sessionId);
+		return queue;
+	}
+
+	private removeQueuedPrompt(
+		clientId: string,
+		agentId: AgentId,
+		sessionId: string,
+		queueId: string,
+	) {
+		const queue = this.getPromptQueue(agentId, sessionId);
+		const nextItems = queue.items.filter((entry) => entry.id !== queueId);
+		if (nextItems.length === queue.items.length) {
+			throw new Error("Queued prompt is no longer pending");
+		}
+		queue.items = nextItems;
+		this.emitPromptQueueUpdate(clientId, agentId, sessionId);
+		return queue;
+	}
+
+	private async drainPromptQueue(
+		fallbackClientId: string,
+		agentId: AgentId,
+		sessionId: string,
+	) {
+		const queue = this.getPromptQueue(agentId, sessionId);
+		if (queue.running) return;
+		queue.running = true;
+		this.emitPromptQueueUpdate(fallbackClientId, agentId, sessionId);
+		try {
+			if (queue.paused) return;
+			while (queue.items.length > 0) {
+				if (queue.paused) break;
+				const item = queue.items.shift();
+				if (!item) break;
+				this.emitPromptQueueUpdate(item.clientId, agentId, sessionId);
+				this.emitQueuedUserMessage(item);
+				try {
+					await this.prompt(item.clientId, agentId, sessionId, item.content);
+				} catch (err) {
+					logger.error(
+						`Queued agent prompt failed for ${agentId} session ${sessionId} (client ${item.clientId}): ${getErrorMessage(err)}`,
+						err,
+					);
+					this.emit(item.clientId, agentId, {
+						type: "error",
+						properties: {
+							sessionId,
+							error: getErrorMessage(err),
+						},
+					});
+				}
+			}
+		} finally {
+			queue.running = false;
+			this.emitPromptQueueUpdate(fallbackClientId, agentId, sessionId);
+			if (queue.items.length === 0) {
+				this.promptQueues.delete(this.sessionKey(agentId, sessionId));
+			}
+		}
+	}
+
+	private getPromptQueue(agentId: AgentId, sessionId: string) {
+		const key = this.sessionKey(agentId, sessionId);
+		let queue = this.promptQueues.get(key);
+		if (!queue) {
+			queue = { running: false, paused: false, items: [] };
+			this.promptQueues.set(key, queue);
+		}
+		return queue;
+	}
+
+	private promptQueueAckData(agentId: AgentId, sessionId: string) {
+		const queue = this.getPromptQueue(agentId, sessionId);
+		return {
+			backend: agentId,
+			sessionId,
+			queue: queue.items.map((item) => this.toPromptQueueItem(item)),
+			running: queue.running,
+		};
+	}
+
+	private toPromptQueueItem(item: QueuedPrompt): AiPromptQueueItem {
+		return {
+			id: item.id,
+			backend: item.agentId,
+			sessionId: item.sessionId,
+			text: item.text,
+			content: item.content,
+			createdAt: item.createdAt,
+			updatedAt: item.updatedAt,
+		};
+	}
+
+	private emitPromptQueueUpdate(
+		clientId: string,
+		agentId: AgentId,
+		sessionId: string,
+	) {
+		this.emit(clientId, agentId, {
+			type: "prompt_queue.updated",
+			properties: this.promptQueueAckData(agentId, sessionId),
+		});
+	}
+
+	private setPromptQueuePaused(
+		clientId: string,
+		agentId: AgentId,
+		sessionId: string,
+		paused: boolean,
+	) {
+		const queue = this.getPromptQueue(agentId, sessionId);
+		queue.paused = paused;
+		this.emitPromptQueueUpdate(clientId, agentId, sessionId);
+		if (!paused) void this.drainPromptQueue(clientId, agentId, sessionId);
+		return queue;
+	}
+
+	private emitQueuedUserMessage(item: QueuedPrompt) {
+		this.emit(item.clientId, item.agentId, {
+			type: "message",
+			properties: {
+				sessionId: item.sessionId,
+				message: {
+					id: item.id,
+					requestId: item.id,
+					role: "user",
+					parts: promptContentToMessageParts(item.content),
+					timestamp: Date.now(),
+				},
+			},
+		});
+	}
+
 	private async applyPersistedSessionConfig(
 		clientId: string,
 		agentId: AgentId,
@@ -1949,20 +2146,12 @@ export class AgentsManager {
 					},
 				});
 				if (session.id && msg.data.prompt.trim()) {
-					this.prompt(
+					this.enqueuePrompt(
 						msg.clientId,
 						msg.data.backend,
 						session.id,
 						msg.data.content ?? msg.data.prompt,
-					).catch((err) => {
-						this.emit(msg.clientId, msg.data.backend, {
-							type: "error",
-							properties: {
-								sessionId: session.id,
-								error: getErrorMessage(err),
-							},
-						});
-					});
+					);
 				}
 			} catch (err) {
 				conn.send({
@@ -2231,24 +2420,12 @@ export class AgentsManager {
 					msg.data.sessionId,
 					msg.clientId,
 				);
-				this.prompt(
+				const item = this.enqueuePrompt(
 					msg.clientId,
 					msg.data.backend,
 					msg.data.sessionId,
 					msg.data.content ?? msg.data.text,
-				).catch((err) => {
-					logger.error(
-						`Agent prompt failed for ${msg.data.backend} session ${msg.data.sessionId} (client ${msg.clientId}): ${getErrorMessage(err)}`,
-						err,
-					);
-					this.emit(msg.clientId, msg.data.backend, {
-						type: "error",
-						properties: {
-							sessionId: msg.data.sessionId,
-							error: getErrorMessage(err),
-						},
-					});
-				});
+				);
 				conn.send({
 					type: MsgType.AI_PROMPT_ACK,
 					clientId: msg.clientId,
@@ -2257,6 +2434,8 @@ export class AgentsManager {
 						ack: true,
 						backend: msg.data.backend,
 						sessionId: msg.data.sessionId,
+						promptId: item.id,
+						queued: true,
 					},
 				});
 			} catch (err) {
@@ -2266,6 +2445,86 @@ export class AgentsManager {
 					respTo: msg.id,
 					error: getErrorMessage(err),
 				});
+			}
+		});
+
+		conn.on(MsgType.AI_PROMPT_QUEUE_UPDATE, async (msg) => {
+			try {
+				this.updateQueuedPrompt(
+					msg.clientId,
+					msg.data.backend,
+					msg.data.sessionId,
+					msg.data.queueId,
+					msg.data.text,
+					msg.data.content,
+				);
+				const response: AiPromptQueueUpdateAckMsg = {
+					type: MsgType.AI_PROMPT_QUEUE_UPDATE_ACK,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: this.promptQueueAckData(msg.data.backend, msg.data.sessionId),
+				};
+				conn.send(response);
+			} catch (err) {
+				const response: AiPromptQueueUpdateAckMsg = {
+					type: MsgType.AI_PROMPT_QUEUE_UPDATE_ACK,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(err),
+				};
+				conn.send(response);
+			}
+		});
+
+		conn.on(MsgType.AI_PROMPT_QUEUE_REMOVE, async (msg) => {
+			try {
+				this.removeQueuedPrompt(
+					msg.clientId,
+					msg.data.backend,
+					msg.data.sessionId,
+					msg.data.queueId,
+				);
+				const response: AiPromptQueueRemoveAckMsg = {
+					type: MsgType.AI_PROMPT_QUEUE_REMOVE_ACK,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: this.promptQueueAckData(msg.data.backend, msg.data.sessionId),
+				};
+				conn.send(response);
+			} catch (err) {
+				const response: AiPromptQueueRemoveAckMsg = {
+					type: MsgType.AI_PROMPT_QUEUE_REMOVE_ACK,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(err),
+				};
+				conn.send(response);
+			}
+		});
+
+		conn.on(MsgType.AI_PROMPT_QUEUE_PAUSE, (msg: AiPromptQueuePauseMsg) => {
+			try {
+				this.setPromptQueuePaused(
+					msg.clientId,
+					msg.data.backend,
+					msg.data.sessionId,
+					msg.data.paused,
+				);
+				const response: AiPromptQueuePauseAckMsg = {
+					type: MsgType.AI_PROMPT_QUEUE_PAUSE_ACK,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: this.promptQueueAckData(msg.data.backend, msg.data.sessionId),
+				};
+				conn.send(response);
+			} catch (err) {
+				const response: AiPromptQueuePauseAckMsg = {
+					type: MsgType.AI_PROMPT_QUEUE_PAUSE_ACK,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(err),
+				};
+				conn.send(response);
 			}
 		});
 
@@ -3129,6 +3388,79 @@ function normalizePromptContent(
 	});
 
 	return parsed.length ? parsed : [{ type: "text", text: "" }];
+}
+
+function promptContentText(prompt: AcpPromptRequest["prompt"]) {
+	return prompt
+		.map((block) => {
+			if (block.type === "text") return block.text;
+			if (block.type === "resource_link") {
+				return `@${path.basename(filePathFromUriSafe(block.uri) ?? block.uri)}`;
+			}
+			if (block.type === "resource") {
+				const resource = block.resource;
+				const uri =
+					typeof resource === "object" && resource
+						? (resource as { uri?: unknown }).uri
+						: undefined;
+				return typeof uri === "string"
+					? `@${path.basename(filePathFromUriSafe(uri) ?? uri)}`
+					: "@resource";
+			}
+			return "";
+		})
+		.join("")
+		.trim();
+}
+
+function promptContentToMessageParts(
+	prompt: AcpPromptRequest["prompt"],
+): AcpMessage["parts"] {
+	return prompt.flatMap<AcpMessage["parts"][number]>((block) => {
+		if (block.type === "text") {
+			return block.text ? [{ type: "text", text: block.text }] : [];
+		}
+		if (block.type === "resource_link") {
+			const filePath = filePathFromUriSafe(block.uri);
+			return [
+				{
+					type: "file_reference",
+					path: filePath ?? block.uri,
+					name: path.basename(filePath ?? block.uri),
+					title: path.basename(filePath ?? block.uri),
+					rawContent: block,
+				},
+			];
+		}
+		if (block.type === "resource") {
+			const resource = block.resource as {
+				uri?: string;
+				mimeType?: string;
+				text?: string;
+			};
+			const uri = resource.uri ?? "";
+			return [
+				{
+					type: "file_reference",
+					path: filePathFromUriSafe(uri) ?? uri,
+					name: path.basename(uri) || "Resource",
+					title: path.basename(uri) || "Resource",
+					mimeType: resource.mimeType,
+					rawContent: block,
+				},
+			];
+		}
+		return [];
+	});
+}
+
+function filePathFromUriSafe(uri: string) {
+	if (!uri.startsWith("file://")) return null;
+	try {
+		return decodeURIComponent(new URL(uri).pathname);
+	} catch {
+		return uri.slice("file://".length);
+	}
 }
 
 function createAgentRuntime(

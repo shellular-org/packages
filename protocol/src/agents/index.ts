@@ -332,6 +332,59 @@ export const AiAttachmentWriteMsgSchema = z.object({
 });
 export type AiAttachmentWriteMsg = z.infer<typeof AiAttachmentWriteMsgSchema>;
 
+const AiPromptQueueItemSchema = z.object({
+	id: z.string(),
+	backend: AgentIdSchema,
+	sessionId: z.string(),
+	text: z.string(),
+	content: z.array(AcpContentBlockSchema),
+	createdAt: z.number(),
+	updatedAt: z.number(),
+});
+export type AiPromptQueueItem = z.infer<typeof AiPromptQueueItemSchema>;
+
+export const AiPromptQueueUpdateMsgSchema = z.object({
+	id: z.string(),
+	type: z.literal(MsgType.AI_PROMPT_QUEUE_UPDATE),
+	clientId: z.string(),
+	data: z.object({
+		backend: AgentIdSchema,
+		sessionId: z.string(),
+		queueId: z.string(),
+		text: z.string(),
+		content: z.array(AcpContentBlockSchema),
+	}),
+});
+export type AiPromptQueueUpdateMsg = z.infer<
+	typeof AiPromptQueueUpdateMsgSchema
+>;
+
+export const AiPromptQueueRemoveMsgSchema = z.object({
+	id: z.string(),
+	type: z.literal(MsgType.AI_PROMPT_QUEUE_REMOVE),
+	clientId: z.string(),
+	data: z.object({
+		backend: AgentIdSchema,
+		sessionId: z.string(),
+		queueId: z.string(),
+	}),
+});
+export type AiPromptQueueRemoveMsg = z.infer<
+	typeof AiPromptQueueRemoveMsgSchema
+>;
+
+export const AiPromptQueuePauseMsgSchema = z.object({
+	id: z.string(),
+	type: z.literal(MsgType.AI_PROMPT_QUEUE_PAUSE),
+	clientId: z.string(),
+	data: z.object({
+		backend: AgentIdSchema,
+		sessionId: z.string(),
+		paused: z.boolean(),
+	}),
+});
+export type AiPromptQueuePauseMsg = z.infer<typeof AiPromptQueuePauseMsgSchema>;
+
 export const AiAgentsManageListMsgSchema = z.object({
 	id: z.string(),
 	type: z.literal(MsgType.AI_AGENTS_MANAGE_LIST),
@@ -591,4 +644,47 @@ export const AiAttachmentWriteResultMsgSchema = z.object({
 });
 export type AiAttachmentWriteResultMsg = z.infer<
 	typeof AiAttachmentWriteResultMsgSchema
+>;
+
+const AiPromptQueueAckDataSchema = z.object({
+	backend: AgentIdSchema,
+	sessionId: z.string(),
+	queue: z.array(AiPromptQueueItemSchema),
+	running: z.boolean(),
+});
+
+export const AiPromptQueueUpdateAckMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_PROMPT_QUEUE_UPDATE_ACK),
+	clientId: z.string(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: AiPromptQueueAckDataSchema.optional(),
+});
+export type AiPromptQueueUpdateAckMsg = z.infer<
+	typeof AiPromptQueueUpdateAckMsgSchema
+>;
+
+export const AiPromptQueueRemoveAckMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_PROMPT_QUEUE_REMOVE_ACK),
+	clientId: z.string(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: AiPromptQueueAckDataSchema.optional(),
+});
+export type AiPromptQueueRemoveAckMsg = z.infer<
+	typeof AiPromptQueueRemoveAckMsgSchema
+>;
+
+export const AiPromptQueuePauseAckMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_PROMPT_QUEUE_PAUSE_ACK),
+	clientId: z.string(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: AiPromptQueueAckDataSchema.optional(),
+});
+export type AiPromptQueuePauseAckMsg = z.infer<
+	typeof AiPromptQueuePauseAckMsgSchema
 >;
