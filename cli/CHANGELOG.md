@@ -1,5 +1,15 @@
 # shellular
 
+## 0.0.53
+
+### Patch Changes
+
+- ed046de: feat(agents): prompt queueing
+- f43e35a: fix(agents): handle externally owned sessions and defer Codex resume until prompting
+- Updated dependencies [ed046de]
+- Updated dependencies [f43e35a]
+  - @shellular/protocol@0.0.32
+
 ## 0.0.52
 
 ### Patch Changes
