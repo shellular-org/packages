@@ -37,6 +37,7 @@ import {
 	AiSessionDeletedMsgSchema,
 	AiSessionGetResultMsgSchema,
 	AiSessionListResultMsgSchema,
+	AiSessionOwnerKillResultMsgSchema,
 	AiShareResultMsgSchema,
 	AiUnrevertAckMsgSchema,
 } from "@/ai-legacy";
@@ -121,6 +122,7 @@ export const HostToClientSchema = z.discriminatedUnion("type", [
 	AiSessionConfigSetResultMsgSchema,
 	AiSessionModeSetResultMsgSchema,
 	AiAbortAckMsgSchema,
+	AiSessionOwnerKillResultMsgSchema,
 	AiActivityDismissResultMsgSchema,
 	AiActivityListResultMsgSchema,
 	AiAgentsListResultMsgSchema,

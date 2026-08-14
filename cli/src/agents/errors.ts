@@ -1,3 +1,5 @@
+import type { AiSessionOwner } from "@shellular/protocol";
+
 export class AiNewError extends Error {
 	constructor(
 		message: string,
@@ -6,6 +8,26 @@ export class AiNewError extends Error {
 	) {
 		super(message);
 		this.name = "AiNewError";
+	}
+}
+
+export class SessionOwnedByProcessError extends AiNewError {
+	constructor(
+		sessionId: string,
+		workspacePath: string,
+		owner?: AiSessionOwner,
+	) {
+		super(
+			owner
+				? `Session ${sessionId} is owned by the running agent process ${owner.pid}`
+				: `Session ${sessionId} is owned by another running agent process`,
+			"ESESSION_OWNED_BY_PROCESS",
+			{
+				sessionId,
+				workspacePath,
+				owner: owner ?? null,
+			},
+		);
 	}
 }
 

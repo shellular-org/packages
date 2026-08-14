@@ -29,6 +29,15 @@ export const AiSessionSchema = z.object({
 });
 export type AiSession = z.infer<typeof AiSessionSchema>;
 
+/** A locally running agent process that currently owns a session writer. */
+export const AiSessionOwnerSchema = z.object({
+	pid: z.number().int().positive(),
+	command: z.string(),
+	cwd: z.string(),
+	startedAt: z.number().int().nonnegative().optional(),
+});
+export type AiSessionOwner = z.infer<typeof AiSessionOwnerSchema>;
+
 // ─── Message parts ────────────────────────────────────────────────────────────
 
 const AiMessagePartTextSchema = z.object({
@@ -339,6 +348,17 @@ export const AiAbortMsgSchema = z.object({
 });
 export type AiAbortMsg = z.infer<typeof AiAbortMsgSchema>;
 
+export const AiSessionOwnerKillMsgSchema = z.object({
+	id: z.string(),
+	type: z.literal(MsgType.AI_SESSION_OWNER_KILL),
+	clientId: z.string(),
+	data: z.object({
+		backend: AiBackendSchema,
+		sessionId: z.string(),
+	}),
+});
+export type AiSessionOwnerKillMsg = z.infer<typeof AiSessionOwnerKillMsgSchema>;
+
 export const AiAgentsListMsgSchema = z.object({
 	id: z.string(),
 	type: z.literal(MsgType.AI_AGENTS_LIST),
@@ -632,6 +652,23 @@ export const AiAbortAckMsgSchema = z.object({
 		.optional(),
 });
 export type AiAbortAckMsg = z.infer<typeof AiAbortAckMsgSchema>;
+
+export const AiSessionOwnerKillResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_OWNER_KILL_RESULT),
+	clientId: z.string(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			ok: z.boolean(),
+			pid: z.number().int().positive().optional(),
+		})
+		.optional(),
+});
+export type AiSessionOwnerKillResultMsg = z.infer<
+	typeof AiSessionOwnerKillResultMsgSchema
+>;
 
 export const AiAgentsListResultMsgSchema = z.object({
 	id: z.string().optional(),

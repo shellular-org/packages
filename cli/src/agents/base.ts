@@ -20,7 +20,11 @@ import {
 	type ElicitationListener,
 	type PermissionListener,
 } from "./client";
-import { AgentUnavailableError, UnsupportedCapabilityError } from "./errors";
+import {
+	AgentUnavailableError,
+	AiNewError,
+	UnsupportedCapabilityError,
+} from "./errors";
 import {
 	AcpTranscript,
 	type AcpTranscriptOptions,
@@ -78,6 +82,13 @@ export interface SpawnedAgent {
 	stream: acp.Stream;
 }
 
+interface LoadSessionFallback {
+	response: acp.LoadSessionResponse;
+	updates: acp.SessionNotification[];
+	/** The agent must be resumed before the next prompt can be sent. */
+	requiresResume?: boolean;
+}
+
 /**
  * Runtime wrapper for one ACP agent process.
  *
@@ -94,6 +105,8 @@ export class ACP {
 	private transcripts = new Map<string, AcpTranscript>();
 	private sessions = new Map<string, StoredSession>();
 	private loadingSessions = new Map<string, Promise<void>>();
+	private sessionsRequiringResume = new Set<string>();
+	private sessionResumeParams = new Map<string, acp.ResumeSessionRequest>();
 	private activePromptSessionIds = new Set<string>();
 	private stderrBuffer = "";
 	private state: AgentConnectionState = "unavailable";
@@ -431,6 +444,8 @@ export class ACP {
 			session,
 			messages: this.getMessages(params.sessionId),
 		});
+		this.sessionsRequiringResume.delete(params.sessionId);
+		this.sessionResumeParams.delete(params.sessionId);
 		this.getTranscript(params.sessionId);
 		return { response, session };
 	}
@@ -470,6 +485,8 @@ export class ACP {
 		);
 		this.sessions.delete(params.sessionId);
 		this.transcripts.delete(params.sessionId);
+		this.sessionsRequiringResume.delete(params.sessionId);
+		this.sessionResumeParams.delete(params.sessionId);
 		this.client.cancelSessionPermissions(params.sessionId);
 		this.client.cancelSessionElicitations(params.sessionId);
 		return response;
@@ -534,6 +551,8 @@ export class ACP {
 				raw,
 			);
 			this.transcripts.set(sessionId, transcript);
+			this.sessionsRequiringResume.delete(sessionId);
+			this.sessionResumeParams.delete(sessionId);
 			const messages = transcript.getMessages();
 			logger.debug(
 				`ACP ${this.id}: session/load ${sessionId} replayed ${updates.length} updates -> ${messages.length} messages in ${Date.now() - loadStartedAt}ms (~${JSON.stringify(messages).length} bytes)`,
@@ -553,6 +572,54 @@ export class ACP {
 				messages,
 			});
 			return { response, updates, messages };
+		} catch (error) {
+			try {
+				const fallback = await this.loadSessionFallback(params, error);
+				if (fallback) {
+					for (const notification of fallback.updates) {
+						updates.push(notification);
+						transcript.apply(notification);
+					}
+
+					const messages = transcript.getMessages();
+					this.transcripts.set(sessionId, transcript);
+					if (fallback.requiresResume) {
+						this.sessionsRequiringResume.add(sessionId);
+						this.sessionResumeParams.set(sessionId, params);
+					} else {
+						this.sessionsRequiringResume.delete(sessionId);
+						this.sessionResumeParams.delete(sessionId);
+					}
+					const existing = this.sessions.get(sessionId);
+					this.sessions.set(sessionId, {
+						session: existing?.session
+							? {
+									...existing.session,
+									configOptions:
+										fallback.response.configOptions ??
+										existing.session.configOptions,
+								}
+							: newAiSessionFromResponse(
+									{ sessionId, configOptions: fallback.response.configOptions },
+									path.resolve(params.cwd),
+								),
+						messages,
+					});
+					logger.warn(
+						`ACP ${this.id}: session/load used read-only fallback for ${sessionId} (${messages.length} messages)`,
+					);
+					return {
+						response: fallback.response,
+						updates,
+						messages,
+					};
+				}
+			} catch (fallbackError) {
+				logger.warn(
+					`ACP ${this.id}: session/load fallback failed for ${sessionId}: ${this.errorMessage(fallbackError)}`,
+				);
+			}
+			throw error;
 		} finally {
 			// When session is loaded again, this is required to show the permission prompt again.
 			this.client.requestPendingPermission(sessionId, clientId);
@@ -572,6 +639,7 @@ export class ACP {
 		if (loading) {
 			await loading;
 		}
+		await this.ensureWritableSession(params);
 
 		const transcript = this.getTranscript(params.sessionId);
 		let permissionRequested = false;
@@ -646,6 +714,9 @@ export class ACP {
 				properties: {
 					sessionId: params.sessionId,
 					error: this.errorMessage(err),
+					...(err instanceof AiNewError
+						? { errorCode: err.code, errorDetails: err.details }
+						: {}),
 				},
 			});
 			throw err;
@@ -747,6 +818,35 @@ export class ACP {
 
 	protected transcriptOptions(): AcpTranscriptOptions {
 		return {};
+	}
+
+	/**
+	 * Optional recovery path for agents whose native session/load cannot read a
+	 * session while another process owns it. The default keeps ACP behavior
+	 * unchanged for agents that do not need a read-only protocol.
+	 */
+	protected async loadSessionFallback(
+		_params: acp.LoadSessionRequest,
+		_error: unknown,
+	): Promise<LoadSessionFallback | null> {
+		return null;
+	}
+
+	/**
+	 * A read-only history load may not create an agent-owned session. Defer the
+	 * optional ACP resume operation until the user actually sends a prompt.
+	 */
+	private async ensureWritableSession(params: acp.PromptRequest) {
+		if (!this.sessionsRequiringResume.has(params.sessionId)) return;
+
+		const resumeParams = this.sessionResumeParams.get(params.sessionId);
+		if (!resumeParams) {
+			throw new Error(
+				`Session ${params.sessionId} was loaded read-only but has no resume parameters`,
+			);
+		}
+
+		await this.resumeSession(resumeParams);
 	}
 
 	protected setSessionStore(sessionId: string, stored: StoredSession) {

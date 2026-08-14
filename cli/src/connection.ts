@@ -35,6 +35,7 @@ import {
 	type AiSessionGetMsg,
 	type AiSessionListMsg,
 	type AiSessionModeSetMsg,
+	type AiSessionOwnerKillMsg,
 	type AiSessionResumeMsg,
 	type AiShareMsg,
 	type AiUnrevertMsg,
@@ -369,6 +370,10 @@ export class Connection extends EventEmitter {
 		listener: (msg: AiAbortMsg) => void,
 	): this;
 	on(
+		eventName: typeof MsgType.AI_SESSION_OWNER_KILL,
+		listener: (msg: AiSessionOwnerKillMsg) => void,
+	): this;
+	on(
 		eventName: typeof MsgType.AI_AGENTS_LIST,
 		listener: (msg: AiAgentsListMsg) => void,
 	): this;
@@ -696,6 +701,10 @@ export class Connection extends EventEmitter {
 		msg: AiAttachmentWriteMsg,
 	): boolean;
 	emit(eventName: typeof MsgType.AI_ABORT, msg: AiAbortMsg): boolean;
+	emit(
+		eventName: typeof MsgType.AI_SESSION_OWNER_KILL,
+		msg: AiSessionOwnerKillMsg,
+	): boolean;
 	emit(eventName: typeof MsgType.AI_AGENTS_LIST, msg: AiAgentsListMsg): boolean;
 	emit(
 		eventName: typeof MsgType.AI_ACTIVITY_LIST,

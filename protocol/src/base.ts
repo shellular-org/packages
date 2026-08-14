@@ -154,6 +154,8 @@ export const MsgType = {
 	AI_SESSION_CONFIG_SET_RESULT: "ai:session:config:set:result",
 	AI_ABORT: "ai:abort",
 	AI_ABORT_ACK: "ai:abort:ack",
+	AI_SESSION_OWNER_KILL: "ai:session-owner:kill",
+	AI_SESSION_OWNER_KILL_RESULT: "ai:session-owner:kill:result",
 	AI_EVENT: "ai:event",
 	AI_AGENTS_LIST: "ai:agents:list",
 	AI_AGENTS_LIST_RESULT: "ai:agents:list:result",

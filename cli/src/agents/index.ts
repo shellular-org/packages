@@ -17,12 +17,17 @@ import type {
 	AiSession,
 	AiSessionConfigOption,
 	AiSessionCreateMsg,
+	AiSessionOwner,
 	AiSessionRuntimeState,
 	AiSessionState,
 	CustomAcpAgentInput,
 	ManagedAcpAgentInfo,
 } from "@shellular/protocol";
-import { AcpContentBlockSchema, MsgType } from "@shellular/protocol";
+import {
+	AcpContentBlockSchema,
+	AiSessionOwnerSchema,
+	MsgType,
+} from "@shellular/protocol";
 
 import { config } from "@/config";
 import type { Connection } from "@/connection";
@@ -34,13 +39,14 @@ import { ClaudeCode } from "./claude-code";
 import { Codex } from "./codex";
 import { Copilot } from "./copilot";
 import { Cursor } from "./cursor";
-import { AgentUnavailableError } from "./errors";
+import { AgentUnavailableError, AiNewError } from "./errors";
 import { GrokActiveSessionsWatcher } from "./grok-active-sessions-watcher";
 import { GrokBuild } from "./grok-build";
 import { Hermes } from "./hermes";
 import { NotifyBridge, type NotifyEvent } from "./notify-bridge";
 import { OpenCode } from "./opencode";
 import { Pi } from "./pi";
+import { terminateAgentProcess } from "./process-scanner";
 import {
 	readCachedSessionConfig,
 	writeCachedSessionConfig,
@@ -189,6 +195,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
+function errorEventProperties(error: unknown): Record<string, unknown> {
+	if (!(error instanceof AiNewError)) return {};
+	return { errorCode: error.code, errorDetails: error.details };
+}
+
+function sessionOwnerFromError(error: unknown): AiSessionOwner | undefined {
+	if (!(error instanceof AiNewError)) return undefined;
+	if (!isRecord(error.details)) return undefined;
+	const parsed = AiSessionOwnerSchema.safeParse(error.details.owner);
+	return parsed.success ? parsed.data : undefined;
+}
+
 function parseIsoTimestamp(value: unknown): number | undefined {
 	if (typeof value !== "string") return undefined;
 	const timestamp = Date.parse(value);
@@ -311,6 +329,7 @@ export class AgentsManager {
 	// must not overwrite the newer live transcript.
 	private sessionTurnCounts = new Map<string, number>();
 	private promptQueues = new Map<string, PromptQueueState>();
+	private sessionOwners = new Map<string, AiSessionOwner>();
 
 	constructor() {
 		this.reloadDescriptors();
@@ -955,6 +974,9 @@ export class AgentsManager {
 		window?: MessageWindow,
 	) {
 		const startedAt = Date.now();
+		logger.log(
+			`AI attach requested: agent=${agentId} session=${sessionId} workspace=${cwd}`,
+		);
 		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
 		this.attachSessionClient(agentId, sessionId, clientId);
 		this.rememberSessionClient(agentId, sessionId, clientId);
@@ -1507,8 +1529,12 @@ export class AgentsManager {
 				try {
 					await this.prompt(item.clientId, agentId, sessionId, item.content);
 				} catch (err) {
+					const owner = sessionOwnerFromError(err);
+					if (owner) {
+						this.sessionOwners.set(this.sessionKey(agentId, sessionId), owner);
+					}
 					logger.error(
-						`Queued agent prompt failed for ${agentId} session ${sessionId} (client ${item.clientId}): ${getErrorMessage(err)}`,
+						`Agent prompt failed for ${agentId} session ${sessionId} (client ${item.clientId}): ${getErrorMessage(err)}`,
 						err,
 					);
 					this.emit(item.clientId, agentId, {
@@ -1516,6 +1542,7 @@ export class AgentsManager {
 						properties: {
 							sessionId,
 							error: getErrorMessage(err),
+							...errorEventProperties(err),
 						},
 					});
 				}
@@ -1885,6 +1912,7 @@ export class AgentsManager {
 		this.sessionRuntimes.clear();
 		this.sessionRuntimeCleanupTimers.clear();
 		this.sessionAgents.clear();
+		this.sessionOwners.clear();
 		this.transcriptStore.close();
 	}
 
@@ -2641,6 +2669,46 @@ export class AgentsManager {
 			}
 		});
 
+		conn.on(MsgType.AI_SESSION_OWNER_KILL, async (msg) => {
+			const key = this.sessionKey(msg.data.backend, msg.data.sessionId);
+			const owner = this.sessionOwners.get(key);
+			if (!owner) {
+				conn.send({
+					type: MsgType.AI_SESSION_OWNER_KILL_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: "The owning agent process is no longer known to this CLI",
+				});
+				return;
+			}
+
+			try {
+				const terminated = await terminateAgentProcess(msg.data.backend, {
+					...owner,
+					startedAt: owner.startedAt ?? 0,
+				});
+				if (!terminated) {
+					throw new Error(
+						"The owning agent process did not exit after the termination request",
+					);
+				}
+				this.sessionOwners.delete(key);
+				conn.send({
+					type: MsgType.AI_SESSION_OWNER_KILL_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: { ok: true, pid: owner.pid },
+				});
+			} catch (error) {
+				conn.send({
+					type: MsgType.AI_SESSION_OWNER_KILL_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(error),
+				});
+			}
+		});
+
 		conn.on(MsgType.AI_ELICITATION_REPLY, async (msg) => {
 			try {
 				await this.replyElicitation(
@@ -2929,7 +2997,10 @@ export class AgentsManager {
 					});
 				}
 			})
-			.catch(() => {})
+			.catch((error) => {
+				const message = error instanceof Error ? error.message : String(error);
+				logger.warn(`AI refresh ${key} failed: ${message}`);
+			})
 			.finally(() => {
 				// Belt and braces: a replay that threw never reached the claim check
 				// above, and a stale claim would silence the next session's push.

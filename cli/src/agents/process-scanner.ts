@@ -59,13 +59,16 @@ function isAgentCommand(agent: AgentId, command: string): boolean {
 		return base === "claude" || lower.includes("/claude/versions/");
 	}
 	if (agent === "codex") {
-		return base === "codex" || /\/codex(\/|$|-)/.test(argv0);
+		// Codex has shipped both `codex` and `codex-tui` executables. Keep the
+		// match on argv[0] so arguments cannot create false positives, but accept
+		// the executable prefix used by both distributions.
+		return base === "codex" || base.startsWith("codex-");
 	}
 	return false;
 }
 
 /**
- * Returns candidate PIDs for the agent by scanning the process table.
+ * Returns candidate processes for the agent by scanning the process table.
  *
  * We use `ps`, NOT `pgrep`. On macOS, `pgrep -f` matches against a process's
  * argv read via KERN_PROCARGS2, which fails for hardened/signed binaries — and
@@ -75,8 +78,15 @@ function isAgentCommand(agent: AgentId, command: string): boolean {
  * check come back negative and hid live-but-idle sessions. `ps` reads the
  * process table directly and lists them, so we scan its output ourselves.
  */
-async function candidatePids(agent: AgentId): Promise<Map<number, number>> {
-	const result = new Map<number, number>();
+type CandidateProcess = {
+	startedAt: number;
+	command: string;
+};
+
+async function candidateProcesses(
+	agent: AgentId,
+): Promise<Map<number, CandidateProcess>> {
+	const result = new Map<number, CandidateProcess>();
 	try {
 		// -A: all processes; -ww: don't truncate the command column. `lstart` is a
 		// fixed-width absolute start time ("Fri Jul 31 15:29:20 2026"); it must come
@@ -99,7 +109,10 @@ async function candidatePids(agent: AgentId): Promise<Map<number, number>> {
 			if (!Number.isFinite(pid)) continue;
 			if (!isAgentCommand(agent, match[3])) continue;
 			const started = Date.parse(match[2]);
-			result.set(pid, Number.isFinite(started) ? started : 0);
+			result.set(pid, {
+				startedAt: Number.isFinite(started) ? started : 0,
+				command: match[3],
+			});
 		}
 	} catch {
 		// ps unavailable/failed — no candidates; callers treat liveness as unknown.
@@ -161,8 +174,15 @@ export type LiveAgentCwds = {
 	unknown: boolean;
 };
 
+export type AgentProcessInfo = {
+	pid: number;
+	startedAt: number;
+	cwd: string;
+	command: string;
+};
+
 export async function liveAgentCwds(agent: AgentId): Promise<LiveAgentCwds> {
-	const candidates = await candidatePids(agent);
+	const candidates = await candidateProcesses(agent);
 	// No agent process at all is a definite answer, not an unknown one: this is
 	// the post-reboot case, and it must clear every stale session.
 	if (candidates.size === 0) return { cwds: new Map(), unknown: false };
@@ -176,11 +196,11 @@ export async function liveAgentCwds(agent: AgentId): Promise<LiveAgentCwds> {
 
 	if (process.platform === "linux") {
 		let readAny = false;
-		for (const [pid, startedAt] of candidates) {
+		for (const [pid, candidate] of candidates) {
 			const cwd = pidCwdLinux(pid);
 			if (cwd) {
 				readAny = true;
-				record(cwd, startedAt);
+				record(cwd, candidate.startedAt);
 			}
 		}
 		return { cwds, unknown: !readAny };
@@ -189,7 +209,7 @@ export async function liveAgentCwds(agent: AgentId): Promise<LiveAgentCwds> {
 	if (process.platform === "darwin") {
 		const pidCwds = await pidCwdsMacos([...candidates.keys()]);
 		for (const [pid, cwd] of pidCwds) {
-			record(cwd, candidates.get(pid) ?? 0);
+			record(cwd, candidates.get(pid)?.startedAt ?? 0);
 		}
 		// lsof returned nothing for live candidates — we can't attribute them.
 		return { cwds, unknown: pidCwds.size === 0 };
@@ -197,6 +217,100 @@ export async function liveAgentCwds(agent: AgentId): Promise<LiveAgentCwds> {
 
 	// Windows / unknown: per-process cwd is unavailable.
 	return { cwds, unknown: true };
+}
+
+/**
+ * Find agent processes whose working directory matches a session workspace.
+ * This is intentionally a fresh process-table lookup: callers use the result
+ * for a destructive action and must not rely on an old liveness snapshot.
+ */
+export async function findAgentProcesses(
+	agent: AgentId,
+	cwd: string,
+): Promise<AgentProcessInfo[]> {
+	const candidates = await candidateProcesses(agent);
+	if (candidates.size === 0) return [];
+
+	const matches: AgentProcessInfo[] = [];
+	const record = (pid: number, processCwd: string) => {
+		if (processCwd !== cwd) return;
+		const candidate = candidates.get(pid);
+		if (!candidate) return;
+		matches.push({
+			pid,
+			startedAt: candidate.startedAt,
+			cwd: processCwd,
+			command: candidate.command,
+		});
+	};
+
+	if (process.platform === "linux") {
+		for (const pid of candidates.keys()) {
+			const processCwd = pidCwdLinux(pid);
+			if (processCwd) record(pid, processCwd);
+		}
+	} else if (process.platform === "darwin") {
+		const pidCwds = await pidCwdsMacos([...candidates.keys()]);
+		for (const [pid, processCwd] of pidCwds) {
+			record(pid, processCwd);
+		}
+	}
+
+	return matches.sort((a, b) => a.startedAt - b.startedAt);
+}
+
+/**
+ * Terminate a previously identified agent process after revalidating its PID,
+ * executable and cwd. A PID supplied by a client is never trusted by itself.
+ */
+export async function terminateAgentProcess(
+	agent: AgentId,
+	owner: AgentProcessInfo,
+): Promise<boolean> {
+	const current = (await findAgentProcesses(agent, owner.cwd)).find(
+		(processInfo) => processInfo.pid === owner.pid,
+	);
+	if (!current) return false;
+	if (
+		owner.startedAt > 0 &&
+		current.startedAt > 0 &&
+		owner.startedAt !== current.startedAt
+	) {
+		return false;
+	}
+
+	try {
+		process.kill(current.pid, "SIGTERM");
+	} catch (error) {
+		return isProcessGoneError(error);
+	}
+
+	return waitForProcessExit(current.pid);
+}
+
+const PROCESS_EXIT_TIMEOUT_MS = 5000;
+const PROCESS_EXIT_POLL_MS = 100;
+
+function isProcessGoneError(error: unknown): boolean {
+	return error instanceof Error && "code" in error && error.code === "ESRCH";
+}
+
+function isProcessAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return !isProcessGoneError(error);
+	}
+}
+
+async function waitForProcessExit(pid: number): Promise<boolean> {
+	const deadline = Date.now() + PROCESS_EXIT_TIMEOUT_MS;
+	while (isProcessAlive(pid)) {
+		if (Date.now() >= deadline) return false;
+		await new Promise((resolve) => setTimeout(resolve, PROCESS_EXIT_POLL_MS));
+	}
+	return true;
 }
 
 /**

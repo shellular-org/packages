@@ -4,6 +4,7 @@ import type {
 	AcpMessage,
 	AgentId,
 	AiEvent,
+	AiSessionOwner,
 } from "@shellular/protocol";
 
 export type AgentConnectionState =
@@ -83,6 +84,8 @@ export interface PromptCallbacks {
 	onEvent?: (event: AiEvent) => void;
 	onUpdate?: (notification: acp.SessionNotification) => void;
 }
+
+export type SessionOwnerProcess = AiSessionOwner;
 
 export interface LoadSessionResult {
 	response: acp.LoadSessionResponse;
