@@ -1,5 +1,12 @@
 # shellular
 
+## 0.0.54
+
+### Patch Changes
+
+- 9889445: - fix(opencode): support both wrapped and direct session-list responses.
+  - chore: update opencode SDK and fff dependencies to latest versions.
+
 ## 0.0.53
 
 ### Patch Changes
