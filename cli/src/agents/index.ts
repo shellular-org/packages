@@ -974,9 +974,6 @@ export class AgentsManager {
 		window?: MessageWindow,
 	) {
 		const startedAt = Date.now();
-		logger.log(
-			`AI attach requested: agent=${agentId} session=${sessionId} workspace=${cwd}`,
-		);
 		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
 		this.attachSessionClient(agentId, sessionId, clientId);
 		this.rememberSessionClient(agentId, sessionId, clientId);
