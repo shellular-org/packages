@@ -39,12 +39,16 @@ const OpenCodeSessionSchema = z.object({
 			id: z.string(),
 			worktree: z.string(),
 		})
+		.nullable()
 		.optional(),
 });
 
-const OpenCodeSessionListSchema = z.object({
-	data: z.array(OpenCodeSessionSchema),
-});
+// The SDK normally returns its field-style response wrapper, while some beta
+// OpenCode/SDK combinations return the response body directly.
+const OpenCodeSessionListSchema = z.union([
+	z.object({ data: z.array(OpenCodeSessionSchema) }),
+	z.array(OpenCodeSessionSchema),
+]);
 
 /**
  * OpenCode ACP client with custom session listing using opencode sdk.
@@ -122,8 +126,9 @@ export class OpenCode extends ACP {
 			...(params.cwd ? { directory: params.cwd } : { roots: true }),
 		});
 		const parsed = OpenCodeSessionListSchema.parse(response);
+		const openCodeSessions = Array.isArray(parsed) ? parsed : parsed.data;
 
-		const sessions = parsed.data.map((session): acp.SessionInfo => {
+		const sessions = openCodeSessions.map((session): acp.SessionInfo => {
 			const sessionInfo = {
 				sessionId: session.id,
 				cwd: session.directory,
