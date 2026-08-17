@@ -21,14 +21,14 @@ importers:
         specifier: ^1.2.1
         version: 1.2.1(zod@4.3.6)
       '@ff-labs/fff-node':
-        specifier: ^0.6.4
-        version: 0.6.4
+        specifier: ^0.10.5
+        version: 0.10.5
       '@inquirer/prompts':
         specifier: ^8.4.2
         version: 8.4.2(@types/node@22.19.17)
       '@opencode-ai/sdk':
-        specifier: 1.14.41
-        version: 1.14.41
+        specifier: 1.18.18
+        version: 1.18.18
       '@shellular/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -61,7 +61,7 @@ importers:
         version: 1.2.0-beta.12
       pm2:
         specifier: ^7.0.3
-        version: 7.0.3(bufferutil@4.1.0)
+        version: 7.0.3(bufferutil@4.1.0)(supports-color@7.2.0)
       qrcode-terminal:
         specifier: ^0.12.0
         version: 0.12.0
@@ -95,7 +95,7 @@ importers:
         version: 10.1.0
       tsup:
         specifier: ^8.5.1
-        version: 8.5.1(tsx@4.23.1)(typescript@6.0.3)
+        version: 8.5.1(supports-color@7.2.0)(tsx@4.23.1)(typescript@6.0.3)
       tsx:
         specifier: ^4.23.1
         version: 4.23.1
@@ -118,7 +118,7 @@ importers:
     devDependencies:
       tsup:
         specifier: ^8.5.1
-        version: 8.5.1(tsx@4.23.1)(typescript@6.0.3)
+        version: 8.5.1(supports-color@7.2.0)(tsx@4.23.1)(typescript@6.0.3)
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
@@ -561,55 +561,60 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@ff-labs/fff-bin-darwin-arm64@0.6.4':
-    resolution: {integrity: sha512-IiLrUeVL+6oeHlzyBGp6ACrb4j7vl66/GXtkoSASVtXJGt5J3IH9m9OvQTwwBxrQtPSgb0tI7TvdYPX0RGH9Qg==}
+  '@ff-labs/fff-bin-android-arm64@0.10.5':
+    resolution: {integrity: sha512-idn1m9ycwv0Dzz6ih4H8e/X1WpGF6kglUxqP78oYgoC2sgAdPtLxD6hIAZK13p8isK7H8EMwrMze/4lynEDcKQ==}
+    cpu: [arm64]
+    os: [android]
+
+  '@ff-labs/fff-bin-darwin-arm64@0.10.5':
+    resolution: {integrity: sha512-tG0VSt6fs3C2/Y6NDp57YJVXGEnrJ4F/e5gDrFCbNeuwJe9LmcCKh6oHWUEZOaaymYT90kQmwuXZTvORP3G6Vw==}
     cpu: [arm64]
     os: [darwin]
 
-  '@ff-labs/fff-bin-darwin-x64@0.6.4':
-    resolution: {integrity: sha512-COd27jhKVKIsLT3krQ2DrOkgMYJ5jPSnRLrbarwtYe5jVbayKR6N4wUhtGF3VXWnNoYTNstq2uBYcHphOp5AkQ==}
+  '@ff-labs/fff-bin-darwin-x64@0.10.5':
+    resolution: {integrity: sha512-pwdFJUB/oeO4S/SfmRDdE5ipbAMYoVtRMwTZ12Wn2H46PgNU5DWnSjHhUNTLuKmkQU/ZIJL5Sn9j/fzwuIzcoA==}
     cpu: [x64]
     os: [darwin]
 
-  '@ff-labs/fff-bin-linux-arm64-gnu@0.6.4':
-    resolution: {integrity: sha512-E2UWCgpBwCPWaupHnn7RAmHjyCyEmKwruaMyigTjI2tg6gXYvoAIjNR+TGsKkTqGl0B1BmP0sD8Uh65K5koxTQ==}
+  '@ff-labs/fff-bin-linux-arm64-gnu@0.10.5':
+    resolution: {integrity: sha512-prbY72gR+VPoSxl1InglwSwVHM0kErYMjUOpdvjQhS8eRdXYL3hTuYQv9L7fiB0mqaDzcwFa339uMr3p8ujDrw==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@ff-labs/fff-bin-linux-arm64-musl@0.6.4':
-    resolution: {integrity: sha512-t9K3NzYkBxK2UYp6Xy7Lac/RAL+cWa+78HcRNI693k0U9c6G65J2/cVn5SVOiJ1EcnEnC3MCuPsCEmj/9d3Pqw==}
+  '@ff-labs/fff-bin-linux-arm64-musl@0.10.5':
+    resolution: {integrity: sha512-MQN/CEKn4c4toooGCmZ6N8cP9mhgE4tnR6rr6a4k9JjH0xi05fYdG4+BabPkr+l/mDc01DsRpSKVNBmvoZ3IlQ==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@ff-labs/fff-bin-linux-x64-gnu@0.6.4':
-    resolution: {integrity: sha512-tNSYpZok9HpXZoAlTEWbJF0ZQtZKZNmpyU2WfVRa3WhsPZ/ej+YUuPEPI83OYRqxy4F0OVtGYCqj7dos/AVSLg==}
+  '@ff-labs/fff-bin-linux-x64-gnu@0.10.5':
+    resolution: {integrity: sha512-8NzFGGyqrFaCtb+SPTFd0xQGUlHCJMf0KYGwuca46IP37nN4OtDT1wnyZ9oaPDZ+2qqyxox10hCnqGlmj3PJzQ==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@ff-labs/fff-bin-linux-x64-musl@0.6.4':
-    resolution: {integrity: sha512-GHJhJ3P7cGth4F0VTyoe3maFQT0cW+RbMm7R5XKkNZZW2rNtR+4jo+neAU4gchYH6jv7ajCB5HQdNBcou8zxKA==}
+  '@ff-labs/fff-bin-linux-x64-musl@0.10.5':
+    resolution: {integrity: sha512-mioRbn8aAW2Jmm4W0w3poePo65iSE+REfO+Jc0iqsjirImEy6pKt7dswj+7LSU6RPWwPsMb4POTMENwNLMlJww==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@ff-labs/fff-bin-win32-arm64@0.6.4':
-    resolution: {integrity: sha512-+wmwbeoAvkce2ZduY1FSjzMnmE4LNJDpXa1q++mTz+/LsUvjPBl1dSchvXxuyLzKAqhigHpJ1k9Xull0iIDUjQ==}
+  '@ff-labs/fff-bin-win32-arm64@0.10.5':
+    resolution: {integrity: sha512-GIZiea0AhuUDtJtXO2mGWs3wil1OR6lpLKOqXMW8EhHVHs8SB+xwzOgZ3Hg7YLEJm+Ui/2tFW/NLbqRuxpmtrQ==}
     cpu: [arm64]
     os: [win32]
 
-  '@ff-labs/fff-bin-win32-x64@0.6.4':
-    resolution: {integrity: sha512-OOEXudgFtkXS5iF+6JoawCMpK76xg0NodUhsc2bhTKXJP8DjfQhU/ARpxoPFiX7uwAy1/xaPjbaT5dfP16TaCg==}
+  '@ff-labs/fff-bin-win32-x64@0.10.5':
+    resolution: {integrity: sha512-EvCWb7wLrtCvkziksAnTVxcGa0roaWNC978t4nG3ESKEty/Mvrj8kaLAzqWfuA2Xk+gTW+qisJYxa4FqFnqR0Q==}
     cpu: [x64]
     os: [win32]
 
-  '@ff-labs/fff-node@0.6.4':
-    resolution: {integrity: sha512-iC9H2cTxxEhOpGkx9sZaAo4ADX/m+gU+RzvpgB89KNOeDhjtJ6AxedT3YkgV1ZAWHHvBAVDALXwNKI81Ygk7Xg==}
+  '@ff-labs/fff-node@0.10.5':
+    resolution: {integrity: sha512-O4KZoO9lZluTqdHUYgd23xpEX/u7G87qQTgUIgtJ4BFTh1x/p243/M6AU2HdSHYWK+vrMRAdDXDzeUW/9rjk3Q==}
     engines: {node: '>=18.0.0'}
     cpu: [x64, arm64]
-    os: [darwin, linux, win32]
+    os: [darwin, linux, win32, android]
 
   '@inquirer/ansi@2.0.5':
     resolution: {integrity: sha512-doc2sWgJpbFQ64UflSVd17ibMGDuxO1yKgOgLMwavzESnXjFWJqUeG8saYosqKpHp4kWiM5x1nXvEjbpx90gzw==}
@@ -785,8 +790,8 @@ packages:
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
 
-  '@opencode-ai/sdk@1.14.41':
-    resolution: {integrity: sha512-RYb2dCUv0TWIvBNnnO6ANbAPYri6rKuWizSoVFw/Pw+SCDj9ASHM5gAZ+jkskp8gYMfLLHe/Fpkun/9mr8m0IQ==}
+  '@opencode-ai/sdk@1.18.18':
+    resolution: {integrity: sha512-zJlwXskIR47V1dkPJqeKBgq7nejG1uU8lJaGIGqbX3MWRCT8vKn0fEotbxuPCKnTdmWsDyNGNg9q1qIliDSMDA==}
 
   '@pm2/blessed@0.1.81':
     resolution: {integrity: sha512-ZcNHqQjMuNRcQ7Z1zJbFIQZO/BDKV3KbiTckWdfbUaYhj7uNmUwb+FbdDWSCkvxNr9dBJQwvV17o6QBkAvgO0g==}
@@ -2205,42 +2210,46 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
-  '@ff-labs/fff-bin-darwin-arm64@0.6.4':
+  '@ff-labs/fff-bin-android-arm64@0.10.5':
     optional: true
 
-  '@ff-labs/fff-bin-darwin-x64@0.6.4':
+  '@ff-labs/fff-bin-darwin-arm64@0.10.5':
     optional: true
 
-  '@ff-labs/fff-bin-linux-arm64-gnu@0.6.4':
+  '@ff-labs/fff-bin-darwin-x64@0.10.5':
     optional: true
 
-  '@ff-labs/fff-bin-linux-arm64-musl@0.6.4':
+  '@ff-labs/fff-bin-linux-arm64-gnu@0.10.5':
     optional: true
 
-  '@ff-labs/fff-bin-linux-x64-gnu@0.6.4':
+  '@ff-labs/fff-bin-linux-arm64-musl@0.10.5':
     optional: true
 
-  '@ff-labs/fff-bin-linux-x64-musl@0.6.4':
+  '@ff-labs/fff-bin-linux-x64-gnu@0.10.5':
     optional: true
 
-  '@ff-labs/fff-bin-win32-arm64@0.6.4':
+  '@ff-labs/fff-bin-linux-x64-musl@0.10.5':
     optional: true
 
-  '@ff-labs/fff-bin-win32-x64@0.6.4':
+  '@ff-labs/fff-bin-win32-arm64@0.10.5':
     optional: true
 
-  '@ff-labs/fff-node@0.6.4':
+  '@ff-labs/fff-bin-win32-x64@0.10.5':
+    optional: true
+
+  '@ff-labs/fff-node@0.10.5':
     dependencies:
       ffi-rs: 1.3.2
     optionalDependencies:
-      '@ff-labs/fff-bin-darwin-arm64': 0.6.4
-      '@ff-labs/fff-bin-darwin-x64': 0.6.4
-      '@ff-labs/fff-bin-linux-arm64-gnu': 0.6.4
-      '@ff-labs/fff-bin-linux-arm64-musl': 0.6.4
-      '@ff-labs/fff-bin-linux-x64-gnu': 0.6.4
-      '@ff-labs/fff-bin-linux-x64-musl': 0.6.4
-      '@ff-labs/fff-bin-win32-arm64': 0.6.4
-      '@ff-labs/fff-bin-win32-x64': 0.6.4
+      '@ff-labs/fff-bin-android-arm64': 0.10.5
+      '@ff-labs/fff-bin-darwin-arm64': 0.10.5
+      '@ff-labs/fff-bin-darwin-x64': 0.10.5
+      '@ff-labs/fff-bin-linux-arm64-gnu': 0.10.5
+      '@ff-labs/fff-bin-linux-arm64-musl': 0.10.5
+      '@ff-labs/fff-bin-linux-x64-gnu': 0.10.5
+      '@ff-labs/fff-bin-linux-x64-musl': 0.10.5
+      '@ff-labs/fff-bin-win32-arm64': 0.10.5
+      '@ff-labs/fff-bin-win32-x64': 0.10.5
 
   '@inquirer/ansi@2.0.5': {}
 
@@ -2410,27 +2419,27 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.1
 
-  '@opencode-ai/sdk@1.14.41':
+  '@opencode-ai/sdk@1.18.18':
     dependencies:
       cross-spawn: 7.0.6
 
   '@pm2/blessed@0.1.81': {}
 
-  '@pm2/js-api@0.8.1(bufferutil@4.1.0)':
+  '@pm2/js-api@0.8.1(bufferutil@4.1.0)(supports-color@7.2.0)':
     dependencies:
       async: 2.6.4
-      debug: 4.3.7
+      debug: 4.3.7(supports-color@7.2.0)
       eventemitter2: 6.4.9
-      extrareqp2: 1.0.0(debug@4.3.7)
+      extrareqp2: 1.0.0(debug@4.3.7(supports-color@7.2.0))
       ws: 8.21.1(bufferutil@4.1.0)
     transitivePeerDependencies:
       - bufferutil
       - supports-color
       - utf-8-validate
 
-  '@pm2/pm2-version-check@1.0.4':
+  '@pm2/pm2-version-check@1.0.4(supports-color@7.2.0)':
     dependencies:
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -2705,13 +2714,17 @@ snapshots:
 
   dayjs@1.11.15: {}
 
-  debug@4.3.7:
+  debug@4.3.7(supports-color@7.2.0):
     dependencies:
       ms: 2.1.3
+    optionalDependencies:
+      supports-color: 7.2.0
 
-  debug@4.4.3:
+  debug@4.4.3(supports-color@7.2.0):
     dependencies:
       ms: 2.1.3
+    optionalDependencies:
+      supports-color: 7.2.0
 
   degenerator@5.0.1:
     dependencies:
@@ -2806,9 +2819,9 @@ snapshots:
 
   extendable-error@0.1.7: {}
 
-  extrareqp2@1.0.0(debug@4.3.7):
+  extrareqp2@1.0.0(debug@4.3.7(supports-color@7.2.0)):
     dependencies:
-      follow-redirects: 1.16.0(debug@4.3.7)
+      follow-redirects: 1.16.0(debug@4.3.7(supports-color@7.2.0))
     transitivePeerDependencies:
       - debug
 
@@ -2869,9 +2882,9 @@ snapshots:
       mlly: 1.8.2
       rollup: 4.60.2
 
-  follow-redirects@1.16.0(debug@4.3.7):
+  follow-redirects@1.16.0(debug@4.3.7(supports-color@7.2.0)):
     optionalDependencies:
-      debug: 4.3.7
+      debug: 4.3.7(supports-color@7.2.0)
 
   fs-extra@7.0.1:
     dependencies:
@@ -2888,11 +2901,11 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
-  get-uri@6.0.5:
+  get-uri@6.0.5(supports-color@7.2.0):
     dependencies:
       basic-ftp: 5.3.0
       data-uri-to-buffer: 6.0.2
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -2913,17 +2926,17 @@ snapshots:
 
   has-flag@4.0.0: {}
 
-  http-proxy-agent@7.0.2:
+  http-proxy-agent@7.0.2(supports-color@7.2.0):
     dependencies:
       agent-base: 7.1.4
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
     transitivePeerDependencies:
       - supports-color
 
-  https-proxy-agent@7.0.6:
+  https-proxy-agent@7.0.6(supports-color@7.2.0):
     dependencies:
       agent-base: 7.1.4
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -3069,16 +3082,16 @@ snapshots:
 
   p-try@2.2.0: {}
 
-  pac-proxy-agent@7.2.0:
+  pac-proxy-agent@7.2.0(supports-color@7.2.0):
     dependencies:
       '@tootallnate/quickjs-emscripten': 0.23.0
       agent-base: 7.1.4
-      debug: 4.4.3
-      get-uri: 6.0.5
-      http-proxy-agent: 7.0.2
-      https-proxy-agent: 7.0.6
+      debug: 4.4.3(supports-color@7.2.0)
+      get-uri: 6.0.5(supports-color@7.2.0)
+      http-proxy-agent: 7.0.2(supports-color@7.2.0)
+      https-proxy-agent: 7.0.6(supports-color@7.2.0)
       pac-resolver: 7.0.1
-      socks-proxy-agent: 8.0.5
+      socks-proxy-agent: 8.0.5(supports-color@7.2.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -3124,11 +3137,11 @@ snapshots:
       run-series: 1.1.9
       tv4: 1.3.0
 
-  pm2@7.0.3(bufferutil@4.1.0):
+  pm2@7.0.3(bufferutil@4.1.0)(supports-color@7.2.0):
     dependencies:
       '@pm2/blessed': 0.1.81
-      '@pm2/js-api': 0.8.1(bufferutil@4.1.0)
-      '@pm2/pm2-version-check': 1.0.4
+      '@pm2/js-api': 0.8.1(bufferutil@4.1.0)(supports-color@7.2.0)
+      '@pm2/pm2-version-check': 1.0.4(supports-color@7.2.0)
       amp: 0.3.1
       amp-message: 0.1.2
       ansis: 4.0.0-node10
@@ -3138,13 +3151,13 @@ snapshots:
       commander: 2.15.1
       croner: 4.1.97
       dayjs: 1.11.15
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
       eventemitter2: 6.4.9
       fast-json-patch: 3.1.1
       js-yaml: 4.3.0
       pidusage: 4.0.1
       pm2-deploy: 1.0.2
-      proxy-agent: 6.5.0
+      proxy-agent: 6.5.0(supports-color@7.2.0)
       semver: 7.7.2
       tx2: 1.0.5
       ws: 8.21.0(bufferutil@4.1.0)
@@ -3161,16 +3174,16 @@ snapshots:
 
   prettier@2.8.8: {}
 
-  proxy-agent@6.5.0:
+  proxy-agent@6.5.0(supports-color@7.2.0):
     dependencies:
       agent-base: 7.1.4
-      debug: 4.4.3
-      http-proxy-agent: 7.0.2
-      https-proxy-agent: 7.0.6
+      debug: 4.4.3(supports-color@7.2.0)
+      http-proxy-agent: 7.0.2(supports-color@7.2.0)
+      https-proxy-agent: 7.0.6(supports-color@7.2.0)
       lru-cache: 7.18.3
-      pac-proxy-agent: 7.2.0
+      pac-proxy-agent: 7.2.0(supports-color@7.2.0)
       proxy-from-env: 1.1.0
-      socks-proxy-agent: 8.0.5
+      socks-proxy-agent: 8.0.5(supports-color@7.2.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -3256,10 +3269,10 @@ snapshots:
 
   smart-buffer@4.2.0: {}
 
-  socks-proxy-agent@8.0.5:
+  socks-proxy-agent@8.0.5(supports-color@7.2.0):
     dependencies:
       agent-base: 7.1.4
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
       socks: 2.8.7
     transitivePeerDependencies:
       - supports-color
@@ -3328,13 +3341,13 @@ snapshots:
 
   tslib@2.8.1: {}
 
-  tsup@8.5.1(tsx@4.23.1)(typescript@6.0.3):
+  tsup@8.5.1(supports-color@7.2.0)(tsx@4.23.1)(typescript@6.0.3):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.27.7)
       cac: 6.7.14
       chokidar: 4.0.3
       consola: 3.4.2
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
       esbuild: 0.27.7
       fix-dts-default-cjs-exports: 1.0.1
       joycon: 3.1.1

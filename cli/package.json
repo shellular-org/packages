@@ -36,9 +36,9 @@
   ],
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.2.1",
-    "@ff-labs/fff-node": "^0.6.4",
+    "@ff-labs/fff-node": "^0.10.5",
     "@inquirer/prompts": "^8.4.2",
-    "@opencode-ai/sdk": "1.14.41",
+    "@opencode-ai/sdk": "1.18.18",
     "@shellular/protocol": "workspace:*",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
