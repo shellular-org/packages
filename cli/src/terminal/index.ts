@@ -17,6 +17,7 @@ import { config } from "@/config";
 import type { HostConnection } from "@/connection";
 import { logger } from "@/logger";
 import { execFileAsync, mapGetOrInsert } from "@/utils";
+import { resolveNewTerminalCwd, resolveRestoredTerminalCwd } from "./cwd";
 import {
 	type PersistedTerminal,
 	readPersistedTerminalsForClient,
@@ -496,7 +497,7 @@ export function initTerminalHandler(conn: HostConnection, workDir: string) {
 	// Restore a client's terminals only once it is actually connected, so the
 	// restored PTYs have somewhere to stream to. Idempotent across reconnects.
 	conn.on(MsgType.SESSION_CLIENT_JOINED, (msg) => {
-		restoreTerminalsForClient(msg.data.clientId, workDir);
+		restoreTerminalsForClient(msg.data.clientId);
 	});
 
 	conn.on(MsgType.TERMINAL_CREATE, (msg) => {
@@ -519,7 +520,7 @@ export function initTerminalHandler(conn: HostConnection, workDir: string) {
 				clientId,
 				rows,
 				cols,
-				cwd: msg.data.cwd ? path.resolve(workDir, msg.data.cwd) : workDir,
+				cwd: resolveNewTerminalCwd(workDir, msg.data.cwd),
 			});
 		} catch (err) {
 			logger.error("Failed to spawn PTY:", err);
@@ -687,10 +688,7 @@ const restoredClients = new Set<string>();
  * already live in memory is left alone; only ids present on disk but absent
  * from memory are restored.
  */
-export function restoreTerminalsForClient(
-	clientId: string,
-	workDir: string,
-): void {
+export function restoreTerminalsForClient(clientId: string): void {
 	if (restoredClients.has(clientId)) return;
 	restoredClients.add(clientId);
 
@@ -706,8 +704,8 @@ export function restoreTerminalsForClient(
 		if (clientTerminals.has(saved.terminalId)) continue;
 
 		// If the saved cwd no longer exists (deleted between runs), fall back to
-		// the daemon's working dir rather than failing to spawn.
-		const cwd = saved.cwd && fs.existsSync(saved.cwd) ? saved.cwd : workDir;
+		// the user's home directory rather than failing to spawn.
+		const cwd = resolveRestoredTerminalCwd(saved.cwd);
 
 		let entry: TerminalEntry;
 		try {
