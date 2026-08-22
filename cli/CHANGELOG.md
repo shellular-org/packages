@@ -1,5 +1,13 @@
 # shellular
 
+## 0.0.55
+
+### Patch Changes
+
+- 4915ce6: feat(agent): add Vercel fx
+- Updated dependencies [4915ce6]
+  - @shellular/protocol@0.0.33
+
 ## 0.0.54
 
 ### Patch Changes
