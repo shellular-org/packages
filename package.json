@@ -6,13 +6,13 @@
     "dev:cli": "pnpm --filter protocol run build && cd cli && pnpm run dev",
     "build": "pnpm -r run build",
     "ci:publish": "pnpm changeset publish",
-    "format": "pnpx @biomejs/biome check --write"
+    "format": "biome check --write"
   },
   "keywords": [],
   "author": "",
   "license": "AGPL-3.0-only",
   "devDependencies": {
-    "@biomejs/biome": "2.5.8",
+    "@biomejs/biome": "2.5.9",
     "@changesets/cli": "^2.31.0"
   }
 }
