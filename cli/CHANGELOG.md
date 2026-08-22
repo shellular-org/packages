@@ -1,5 +1,11 @@
 # shellular
 
+## 0.0.56
+
+### Patch Changes
+
+- 013990b: Add Vercel fx ACP agent runtime adapter
+
 ## 0.0.55
 
 ### Patch Changes
