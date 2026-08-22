@@ -40,6 +40,7 @@ import { Codex } from "./codex";
 import { Copilot } from "./copilot";
 import { Cursor } from "./cursor";
 import { AgentUnavailableError, AiNewError } from "./errors";
+import { Fx } from "./fx";
 import { GrokActiveSessionsWatcher } from "./grok-active-sessions-watcher";
 import { GrokBuild } from "./grok-build";
 import { Hermes } from "./hermes";
@@ -3548,6 +3549,8 @@ function createAgentRuntime(
 			return Pi.create();
 		case "cursor":
 			return Cursor.create();
+		case "fx":
+			return Fx.create();
 		case "hermes":
 			return Hermes.create();
 		case "grok-build":
