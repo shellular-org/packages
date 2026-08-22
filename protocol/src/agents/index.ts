@@ -22,6 +22,7 @@ export const AGENT_IDS = [
 	"opencode",
 	"codex",
 	"claude-code",
+	"fx",
 	"copilot",
 	"cursor",
 	"pi",

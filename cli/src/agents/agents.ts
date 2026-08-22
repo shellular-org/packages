@@ -62,6 +62,22 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AgentId, AgentDescriptor> = {
 			args: ["acp"],
 		},
 	},
+	fx: {
+		id: "fx",
+		name: "Vercel fx",
+		title: "Vercel Fx",
+		agentExecutable: "fx",
+		installationCommands: {
+			Shell: {
+				os: ["macos", "linux"],
+				command: "curl -fsSL https://fx.sh/setup.sh | bash",
+			},
+		},
+		spawn: {
+			command: "fx",
+			args: ["acp"],
+		},
+	},
 	"claude-code": {
 		id: "claude-code",
 		name: "Claude Code",
@@ -96,33 +112,21 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AgentId, AgentDescriptor> = {
 			args: ["-y", "@agentclientprotocol/claude-agent-acp"],
 		},
 	},
-	copilot: {
-		id: "copilot",
-		name: "GitHub Copilot",
-		title: "GitHub Copilot",
-		registryId: "github-copilot-cli",
-		agentExecutable: "copilot",
+	pi: {
+		id: "pi",
+		name: "Pi",
+		title: "Pi",
+		registryId: "pi-acp",
+		agentExecutable: "pi",
 		installationCommands: {
-			Shell: {
-				os: ["linux", "macos"],
-				command: "curl -fsSL https://gh.io/copilot-install | bash",
-			},
 			npm: {
 				os: ["all"],
-				command: "npm install -g @github/copilot",
-			},
-			PowerShell: {
-				os: ["windows"],
-				command: "winget install GitHub.Copilot",
-			},
-			Homebrew: {
-				os: ["macos", "linux"],
-				command: "brew install copilot-cli",
+				command: "npm install -g @earendil-works/pi-coding-agent",
 			},
 		},
 		spawn: {
 			command: npxCommand,
-			args: ["-y", "@github/copilot@1.0.39", "--acp"],
+			args: ["-y", "pi-acp"],
 		},
 	},
 	cursor: {
@@ -150,23 +154,6 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AgentId, AgentDescriptor> = {
 		spawn: {
 			command: "cursor-agent",
 			args: ["acp"],
-		},
-	},
-	pi: {
-		id: "pi",
-		name: "Pi",
-		title: "Pi",
-		registryId: "pi-acp",
-		agentExecutable: "pi",
-		installationCommands: {
-			npm: {
-				os: ["all"],
-				command: "npm install -g @earendil-works/pi-coding-agent",
-			},
-		},
-		spawn: {
-			command: npxCommand,
-			args: ["-y", "pi-acp"],
 		},
 	},
 	hermes: {
@@ -209,6 +196,35 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AgentId, AgentDescriptor> = {
 		spawn: {
 			command: "grok",
 			args: ["agent", "stdio"],
+		},
+	},
+	copilot: {
+		id: "copilot",
+		name: "GitHub Copilot",
+		title: "GitHub Copilot",
+		registryId: "github-copilot-cli",
+		agentExecutable: "copilot",
+		installationCommands: {
+			Shell: {
+				os: ["linux", "macos"],
+				command: "curl -fsSL https://gh.io/copilot-install | bash",
+			},
+			npm: {
+				os: ["all"],
+				command: "npm install -g @github/copilot",
+			},
+			PowerShell: {
+				os: ["windows"],
+				command: "winget install GitHub.Copilot",
+			},
+			Homebrew: {
+				os: ["macos", "linux"],
+				command: "brew install copilot-cli",
+			},
+		},
+		spawn: {
+			command: npxCommand,
+			args: ["-y", "@github/copilot@1.0.39", "--acp"],
 		},
 	},
 };

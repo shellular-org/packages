@@ -7,6 +7,7 @@ const _AiBackendSchema = z.enum([
 	"opencode",
 	"codex",
 	"claude-code",
+	"fx",
 	"copilot",
 	"cursor",
 	"pi",
