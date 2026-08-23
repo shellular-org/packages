@@ -9,14 +9,25 @@ import type {
 	AiAttachmentWriteMsg,
 	AiAttachmentWriteResultMsg,
 	AiEvent,
+	AiPromptQueueItem,
+	AiPromptQueuePauseAckMsg,
+	AiPromptQueuePauseMsg,
+	AiPromptQueueRemoveAckMsg,
+	AiPromptQueueUpdateAckMsg,
 	AiSession,
+	AiSessionConfigOption,
 	AiSessionCreateMsg,
+	AiSessionOwner,
 	AiSessionRuntimeState,
 	AiSessionState,
 	CustomAcpAgentInput,
 	ManagedAcpAgentInfo,
 } from "@shellular/protocol";
-import { AcpContentBlockSchema, MsgType } from "@shellular/protocol";
+import {
+	AcpContentBlockSchema,
+	AiSessionOwnerSchema,
+	MsgType,
+} from "@shellular/protocol";
 
 import { config } from "@/config";
 import type { HostConnection } from "@/connection";
@@ -28,13 +39,15 @@ import { ClaudeCode } from "./claude-code";
 import { Codex } from "./codex";
 import { Copilot } from "./copilot";
 import { Cursor } from "./cursor";
-import { AgentUnavailableError } from "./errors";
+import { AgentUnavailableError, AiNewError } from "./errors";
+import { Fx } from "./fx";
 import { GrokActiveSessionsWatcher } from "./grok-active-sessions-watcher";
 import { GrokBuild } from "./grok-build";
 import { Hermes } from "./hermes";
 import { NotifyBridge, type NotifyEvent } from "./notify-bridge";
 import { OpenCode } from "./opencode";
 import { Pi } from "./pi";
+import { terminateAgentProcess } from "./process-scanner";
 import {
 	readCachedSessionConfig,
 	writeCachedSessionConfig,
@@ -68,6 +81,23 @@ export interface MessageWindow {
 	tail?: number;
 	from?: number;
 	to?: number;
+}
+
+interface QueuedPrompt {
+	id: string;
+	clientId: string;
+	agentId: AgentId;
+	sessionId: string;
+	text: string;
+	content: AcpPromptRequest["prompt"];
+	createdAt: number;
+	updatedAt: number;
+}
+
+interface PromptQueueState {
+	running: boolean;
+	paused: boolean;
+	items: QueuedPrompt[];
 }
 
 /** True when a window asks for an explicit range rather than a tail. */
@@ -164,6 +194,18 @@ function safeAttachmentSegment(value: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
+}
+
+function errorEventProperties(error: unknown): Record<string, unknown> {
+	if (!(error instanceof AiNewError)) return {};
+	return { errorCode: error.code, errorDetails: error.details };
+}
+
+function sessionOwnerFromError(error: unknown): AiSessionOwner | undefined {
+	if (!(error instanceof AiNewError)) return undefined;
+	if (!isRecord(error.details)) return undefined;
+	const parsed = AiSessionOwnerSchema.safeParse(error.details.owner);
+	return parsed.success ? parsed.data : undefined;
 }
 
 function parseIsoTimestamp(value: unknown): number | undefined {
@@ -287,6 +329,8 @@ export class AgentsManager {
 	// after its load: if it changed, the replay predates a turn and its result
 	// must not overwrite the newer live transcript.
 	private sessionTurnCounts = new Map<string, number>();
+	private promptQueues = new Map<string, PromptQueueState>();
+	private sessionOwners = new Map<string, AiSessionOwner>();
 
 	constructor() {
 		this.reloadDescriptors();
@@ -456,6 +500,7 @@ export class AgentsManager {
 			update.workspacePath ??
 			this.sessionSnapshots.get(key)?.session.workspacePath;
 		if (
+			!this.sessionRuntimes.has(key) &&
 			externalCwd &&
 			!isLiveRuntimeStatus(update.status) &&
 			this.attachedSessionClients.get(key)?.size
@@ -839,6 +884,7 @@ export class AgentsManager {
 		agentId: AgentId,
 		cwd: string,
 		options: Parameters<ACP["createSession"]>[1] = {},
+		draftConfigOptions?: AiSessionConfigOption[],
 	) {
 		if (!this.isAgentEnabled(agentId)) {
 			throw new AgentUnavailableError(agentId, "agent is disabled");
@@ -846,10 +892,64 @@ export class AgentsManager {
 		const agent = this.createManagedRuntime(agentId);
 		this.registerPermissionListener(agentId, clientId, agent);
 		await agent.init();
-		const result = await agent.createSession(cwd, options);
+		// This is the same config the draft UI rendered before `session/new`.
+		// Capture it before the new agent response has a chance to replace the
+		// agent-wide cache with its own defaults.
+		const cachedConfig = readCachedSessionConfig(
+			agentId,
+			agent.getInfo().version,
+		);
+		const desiredConfigOptions =
+			draftConfigOptions ?? cachedConfig?.configOptions ?? [];
+		let result = await agent.createSession(cwd, options);
 		const sessionId = result.session.id ?? result.response.sessionId;
 		this.sessionRuntimes.set(this.sessionKey(agentId, sessionId), agent);
 		this.sessionAgents.set(sessionId, agentId);
+		let configOptions = result.response.configOptions;
+		logger.debug(
+			`New ${agentId} session ${sessionId}: ACP defaults ${JSON.stringify(configOptions)}`,
+		);
+		if (desiredConfigOptions.length && configOptions?.length) {
+			for (const desiredOption of desiredConfigOptions) {
+				const liveOption = configOptions.find(
+					(option) => option.id === desiredOption.id,
+				);
+				if (
+					!liveOption ||
+					liveOption.currentValue === undefined ||
+					desiredOption.currentValue === undefined ||
+					liveOption.currentValue === desiredOption.currentValue
+				) {
+					continue;
+				}
+				try {
+					const updated = await agent.setSessionConfigOption({
+						sessionId,
+						configId: desiredOption.id,
+						...(typeof desiredOption.currentValue === "boolean"
+							? { type: "boolean" as const, value: desiredOption.currentValue }
+							: { value: desiredOption.currentValue }),
+					});
+					configOptions = updated.configOptions;
+					logger.debug(
+						`New ${agentId} session ${sessionId}: applied desired ${desiredOption.id}=${JSON.stringify(desiredOption.currentValue)} -> ${JSON.stringify(configOptions)}`,
+					);
+				} catch (err) {
+					logger.warn(
+						`Failed to apply desired config ${desiredOption.id} to new ${agentId} session ${sessionId}:`,
+						err,
+					);
+				}
+			}
+			result = {
+				...result,
+				response: { ...result.response, configOptions },
+				session: {
+					...result.session,
+					configOptions,
+				},
+			};
+		}
 		// Commands are deliberately not cached here. `result.availableCommands`
 		// reads the connection's per-session tracking map, which is keyed by a
 		// session id created moments ago and populated only by an incoming
@@ -1264,6 +1364,11 @@ export class AgentsManager {
 		if (!agent.getSession(sessionId)) {
 			await this.ensureSessionRuntimeLoaded(clientId, agentId, sessionId);
 		}
+		// ACP agents may restore a session with their default config even though
+		// Shellular previously selected a different value for this session. Do not
+		// mutate ACP while loading/attaching; reconcile the persisted desired value
+		// lazily at the first subsequent prompt instead.
+		await this.applyPersistedSessionConfig(clientId, agentId, sessionId, agent);
 		// Captured before the turn starts: live message events upsert into the
 		// snapshot as they stream, so by resolve time its length already includes
 		// the turn. The pre-turn length anchors the durable tail write below.
@@ -1298,12 +1403,21 @@ export class AgentsManager {
 			);
 		}
 		const snapshot = this.sessionSnapshots.get(promptKey);
+		// The ACP response and streamed session/update notifications can cross at
+		// the SDK boundary. Every streamed message event has already upserted the
+		// latest message into this snapshot, so never replace a richer live view
+		// with a shorter prompt result; doing so makes the answer disappear until
+		// the next ACP replay (for example after restarting the CLI).
+		const messages =
+			snapshot && snapshot.messages.length >= result.messages.length
+				? snapshot.messages
+				: result.messages;
 		if (snapshot) {
 			this.sessionSnapshots.set(promptKey, {
 				...snapshot,
-				messages: result.messages,
+				messages,
 				baseIdx: 0,
-				totalCount: result.messages.length,
+				totalCount: messages.length,
 				revision: this.getSessionRevision(agentId, sessionId),
 			});
 		}
@@ -1322,7 +1436,7 @@ export class AgentsManager {
 				agentId,
 				sessionId,
 				snapshot && preTurnComplete ? Math.max(0, preTurnLength - 1) : 0,
-				result.messages,
+				messages,
 				{
 					session,
 					state: snapshot?.state ?? {},
@@ -1330,7 +1444,226 @@ export class AgentsManager {
 				},
 			);
 		}
-		return result;
+		return { ...result, messages };
+	}
+
+	private enqueuePrompt(
+		clientId: string,
+		agentId: AgentId,
+		sessionId: string,
+		content: string | unknown[],
+	) {
+		const queue = this.getPromptQueue(agentId, sessionId);
+		const prompt = normalizePromptContent(content);
+		const now = Date.now();
+		const item: QueuedPrompt = {
+			id: `prompt_queue_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+			clientId,
+			agentId,
+			sessionId,
+			text: promptContentText(prompt),
+			content: prompt,
+			createdAt: now,
+			updatedAt: now,
+		};
+		queue.items.push(item);
+		this.emitPromptQueueUpdate(clientId, agentId, sessionId);
+		void this.drainPromptQueue(clientId, agentId, sessionId);
+		return item;
+	}
+
+	private updateQueuedPrompt(
+		clientId: string,
+		agentId: AgentId,
+		sessionId: string,
+		queueId: string,
+		text: string,
+		content: unknown[],
+	) {
+		const queue = this.getPromptQueue(agentId, sessionId);
+		const item = queue.items.find((entry) => entry.id === queueId);
+		if (!item) throw new Error("Queued prompt is no longer pending");
+		const prompt = normalizePromptContent(content.length ? content : text);
+		item.text = promptContentText(prompt);
+		item.content = prompt;
+		item.updatedAt = Date.now();
+		this.emitPromptQueueUpdate(clientId, agentId, sessionId);
+		return queue;
+	}
+
+	private removeQueuedPrompt(
+		clientId: string,
+		agentId: AgentId,
+		sessionId: string,
+		queueId: string,
+	) {
+		const queue = this.getPromptQueue(agentId, sessionId);
+		const nextItems = queue.items.filter((entry) => entry.id !== queueId);
+		if (nextItems.length === queue.items.length) {
+			throw new Error("Queued prompt is no longer pending");
+		}
+		queue.items = nextItems;
+		this.emitPromptQueueUpdate(clientId, agentId, sessionId);
+		return queue;
+	}
+
+	private async drainPromptQueue(
+		fallbackClientId: string,
+		agentId: AgentId,
+		sessionId: string,
+	) {
+		const queue = this.getPromptQueue(agentId, sessionId);
+		if (queue.running) return;
+		queue.running = true;
+		this.emitPromptQueueUpdate(fallbackClientId, agentId, sessionId);
+		try {
+			if (queue.paused) return;
+			while (queue.items.length > 0) {
+				if (queue.paused) break;
+				const item = queue.items.shift();
+				if (!item) break;
+				this.emitPromptQueueUpdate(item.clientId, agentId, sessionId);
+				this.emitQueuedUserMessage(item);
+				try {
+					await this.prompt(item.clientId, agentId, sessionId, item.content);
+				} catch (err) {
+					const owner = sessionOwnerFromError(err);
+					if (owner) {
+						this.sessionOwners.set(this.sessionKey(agentId, sessionId), owner);
+					}
+					logger.error(
+						`Agent prompt failed for ${agentId} session ${sessionId} (client ${item.clientId}): ${getErrorMessage(err)}`,
+						err,
+					);
+					this.emit(item.clientId, agentId, {
+						type: "error",
+						properties: {
+							sessionId,
+							error: getErrorMessage(err),
+							...errorEventProperties(err),
+						},
+					});
+				}
+			}
+		} finally {
+			queue.running = false;
+			this.emitPromptQueueUpdate(fallbackClientId, agentId, sessionId);
+			if (queue.items.length === 0) {
+				this.promptQueues.delete(this.sessionKey(agentId, sessionId));
+			}
+		}
+	}
+
+	private getPromptQueue(agentId: AgentId, sessionId: string) {
+		const key = this.sessionKey(agentId, sessionId);
+		let queue = this.promptQueues.get(key);
+		if (!queue) {
+			queue = { running: false, paused: false, items: [] };
+			this.promptQueues.set(key, queue);
+		}
+		return queue;
+	}
+
+	private promptQueueAckData(agentId: AgentId, sessionId: string) {
+		const queue = this.getPromptQueue(agentId, sessionId);
+		return {
+			backend: agentId,
+			sessionId,
+			queue: queue.items.map((item) => this.toPromptQueueItem(item)),
+			running: queue.running,
+		};
+	}
+
+	private toPromptQueueItem(item: QueuedPrompt): AiPromptQueueItem {
+		return {
+			id: item.id,
+			backend: item.agentId,
+			sessionId: item.sessionId,
+			text: item.text,
+			content: item.content,
+			createdAt: item.createdAt,
+			updatedAt: item.updatedAt,
+		};
+	}
+
+	private emitPromptQueueUpdate(
+		clientId: string,
+		agentId: AgentId,
+		sessionId: string,
+	) {
+		this.emit(clientId, agentId, {
+			type: "prompt_queue.updated",
+			properties: this.promptQueueAckData(agentId, sessionId),
+		});
+	}
+
+	private setPromptQueuePaused(
+		clientId: string,
+		agentId: AgentId,
+		sessionId: string,
+		paused: boolean,
+	) {
+		const queue = this.getPromptQueue(agentId, sessionId);
+		queue.paused = paused;
+		this.emitPromptQueueUpdate(clientId, agentId, sessionId);
+		if (!paused) void this.drainPromptQueue(clientId, agentId, sessionId);
+		return queue;
+	}
+
+	private emitQueuedUserMessage(item: QueuedPrompt) {
+		this.emit(item.clientId, item.agentId, {
+			type: "message",
+			properties: {
+				sessionId: item.sessionId,
+				message: {
+					id: item.id,
+					requestId: item.id,
+					role: "user",
+					parts: promptContentToMessageParts(item.content),
+					timestamp: Date.now(),
+				},
+			},
+		});
+	}
+
+	private async applyPersistedSessionConfig(
+		clientId: string,
+		agentId: AgentId,
+		sessionId: string,
+		agent: ACP,
+	) {
+		const desired = this.transcriptStore.getSessionMeta(agentId, sessionId)
+			?.state.configOptions;
+		const live = agent.getSession(sessionId)?.configOptions;
+		if (!desired?.length || !live?.length) return;
+
+		for (const desiredOption of desired) {
+			const liveOption = live.find((option) => option.id === desiredOption.id);
+			// An omitted current value means the agent did not give us a value to
+			// compare against; leave it alone rather than blindly setting it.
+			if (
+				!liveOption ||
+				liveOption.currentValue === undefined ||
+				desiredOption.currentValue === undefined ||
+				liveOption.currentValue === desiredOption.currentValue
+			) {
+				continue;
+			}
+			try {
+				await this.setSessionConfigOption(
+					clientId,
+					agentId,
+					sessionId,
+					desiredOption.id,
+					desiredOption.currentValue,
+				);
+			} catch (err) {
+				logger.warn(
+					`Failed to lazily restore config ${desiredOption.id} for ${agentId}:${sessionId}:`,
+					err,
+				);
+			}
+		}
 	}
 
 	/**
@@ -1506,6 +1839,27 @@ export class AgentsManager {
 			configOptions: response.configOptions,
 			version: agent.getInfo().version,
 		});
+		// `attachSession()` can serve a warm in-memory snapshot without calling
+		// ACP session/load again. Keep that snapshot in sync with the live ACP
+		// response, otherwise leaving and reopening a chat restores the option
+		// value from before this change even though the agent and SQLite cache have
+		// already accepted the new value.
+		const key = this.sessionKey(agentId, sessionId);
+		const snapshot = this.sessionSnapshots.get(key);
+		if (snapshot) {
+			this.sessionSnapshots.set(key, {
+				...snapshot,
+				state: {
+					...snapshot.state,
+					configOptions: response.configOptions,
+				},
+				revision: this.getSessionRevision(agentId, sessionId),
+			});
+			this.transcriptStore.updateState(agentId, sessionId, {
+				...snapshot.state,
+				configOptions: response.configOptions,
+			});
+		}
 		return response;
 	}
 
@@ -1516,7 +1870,24 @@ export class AgentsManager {
 		modeId: string,
 	) {
 		const agent = await this.connectSessionAgent(clientId, agentId, sessionId);
-		return agent.setSessionMode({ sessionId, modeId });
+		const result = await agent.setSessionMode({ sessionId, modeId });
+		const key = this.sessionKey(agentId, sessionId);
+		const snapshot = this.sessionSnapshots.get(key);
+		if (snapshot) {
+			const modes =
+				snapshot.state.modes && typeof snapshot.state.modes === "object"
+					? snapshot.state.modes
+					: {};
+			this.sessionSnapshots.set(key, {
+				...snapshot,
+				state: {
+					...snapshot.state,
+					modes: { ...modes, currentModeId: modeId },
+				},
+				revision: this.getSessionRevision(agentId, sessionId),
+			});
+		}
+		return result;
 	}
 
 	destroy() {
@@ -1539,6 +1910,7 @@ export class AgentsManager {
 		this.sessionRuntimes.clear();
 		this.sessionRuntimeCleanupTimers.clear();
 		this.sessionAgents.clear();
+		this.sessionOwners.clear();
 		this.transcriptStore.close();
 	}
 
@@ -1769,6 +2141,7 @@ export class AgentsManager {
 							additionalDirectories: msg.data.additionalDirectories,
 							mcpServers: msg.data.mcpServers as never,
 						},
+						msg.data.configOptions,
 					);
 				if (session.id) {
 					this.rememberSessionClient(
@@ -1799,20 +2172,12 @@ export class AgentsManager {
 					},
 				});
 				if (session.id && msg.data.prompt.trim()) {
-					void this.prompt(
+					this.enqueuePrompt(
 						msg.clientId,
 						msg.data.backend,
 						session.id,
 						msg.data.content ?? msg.data.prompt,
-					).catch((err) => {
-						this.emit(msg.clientId, msg.data.backend, {
-							type: "error",
-							properties: {
-								sessionId: session.id,
-								error: getErrorMessage(err),
-							},
-						});
-					});
+					);
 				}
 			} catch (err) {
 				conn.send({
@@ -2081,20 +2446,12 @@ export class AgentsManager {
 					msg.data.sessionId,
 					msg.clientId,
 				);
-				void this.prompt(
+				const item = this.enqueuePrompt(
 					msg.clientId,
 					msg.data.backend,
 					msg.data.sessionId,
 					msg.data.content ?? msg.data.text,
-				).catch((err) => {
-					this.emit(msg.clientId, msg.data.backend, {
-						type: "error",
-						properties: {
-							sessionId: msg.data.sessionId,
-							error: getErrorMessage(err),
-						},
-					});
-				});
+				);
 				conn.send({
 					type: MsgType.AI_PROMPT_ACK,
 					clientId: msg.clientId,
@@ -2103,6 +2460,8 @@ export class AgentsManager {
 						ack: true,
 						backend: msg.data.backend,
 						sessionId: msg.data.sessionId,
+						promptId: item.id,
+						queued: true,
 					},
 				});
 			} catch (err) {
@@ -2112,6 +2471,86 @@ export class AgentsManager {
 					respTo: msg.id,
 					error: getErrorMessage(err),
 				});
+			}
+		});
+
+		conn.on(MsgType.AI_PROMPT_QUEUE_UPDATE, async (msg) => {
+			try {
+				this.updateQueuedPrompt(
+					msg.clientId,
+					msg.data.backend,
+					msg.data.sessionId,
+					msg.data.queueId,
+					msg.data.text,
+					msg.data.content,
+				);
+				const response: AiPromptQueueUpdateAckMsg = {
+					type: MsgType.AI_PROMPT_QUEUE_UPDATE_ACK,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: this.promptQueueAckData(msg.data.backend, msg.data.sessionId),
+				};
+				conn.send(response);
+			} catch (err) {
+				const response: AiPromptQueueUpdateAckMsg = {
+					type: MsgType.AI_PROMPT_QUEUE_UPDATE_ACK,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(err),
+				};
+				conn.send(response);
+			}
+		});
+
+		conn.on(MsgType.AI_PROMPT_QUEUE_REMOVE, async (msg) => {
+			try {
+				this.removeQueuedPrompt(
+					msg.clientId,
+					msg.data.backend,
+					msg.data.sessionId,
+					msg.data.queueId,
+				);
+				const response: AiPromptQueueRemoveAckMsg = {
+					type: MsgType.AI_PROMPT_QUEUE_REMOVE_ACK,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: this.promptQueueAckData(msg.data.backend, msg.data.sessionId),
+				};
+				conn.send(response);
+			} catch (err) {
+				const response: AiPromptQueueRemoveAckMsg = {
+					type: MsgType.AI_PROMPT_QUEUE_REMOVE_ACK,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(err),
+				};
+				conn.send(response);
+			}
+		});
+
+		conn.on(MsgType.AI_PROMPT_QUEUE_PAUSE, (msg: AiPromptQueuePauseMsg) => {
+			try {
+				this.setPromptQueuePaused(
+					msg.clientId,
+					msg.data.backend,
+					msg.data.sessionId,
+					msg.data.paused,
+				);
+				const response: AiPromptQueuePauseAckMsg = {
+					type: MsgType.AI_PROMPT_QUEUE_PAUSE_ACK,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: this.promptQueueAckData(msg.data.backend, msg.data.sessionId),
+				};
+				conn.send(response);
+			} catch (err) {
+				const response: AiPromptQueuePauseAckMsg = {
+					type: MsgType.AI_PROMPT_QUEUE_PAUSE_ACK,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(err),
+				};
+				conn.send(response);
 			}
 		});
 
@@ -2224,6 +2663,46 @@ export class AgentsManager {
 					clientId: msg.clientId,
 					respTo: msg.id,
 					error: getErrorMessage(err),
+				});
+			}
+		});
+
+		conn.on(MsgType.AI_SESSION_OWNER_KILL, async (msg) => {
+			const key = this.sessionKey(msg.data.backend, msg.data.sessionId);
+			const owner = this.sessionOwners.get(key);
+			if (!owner) {
+				conn.send({
+					type: MsgType.AI_SESSION_OWNER_KILL_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: "The owning agent process is no longer known to this CLI",
+				});
+				return;
+			}
+
+			try {
+				const terminated = await terminateAgentProcess(msg.data.backend, {
+					...owner,
+					startedAt: owner.startedAt ?? 0,
+				});
+				if (!terminated) {
+					throw new Error(
+						"The owning agent process did not exit after the termination request",
+					);
+				}
+				this.sessionOwners.delete(key);
+				conn.send({
+					type: MsgType.AI_SESSION_OWNER_KILL_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					data: { ok: true, pid: owner.pid },
+				});
+			} catch (error) {
+				conn.send({
+					type: MsgType.AI_SESSION_OWNER_KILL_RESULT,
+					clientId: msg.clientId,
+					respTo: msg.id,
+					error: getErrorMessage(error),
 				});
 			}
 		});
@@ -2460,8 +2939,19 @@ export class AgentsManager {
 					agentId,
 					session,
 				);
+				const persistedState = this.transcriptStore.getSessionMeta(
+					agentId,
+					sessionId,
+				)?.state;
 				const state = {
-					configOptions: result.response.configOptions ?? undefined,
+					// ACP implementations may treat set_config_option as runtime-only.
+					// Preserve a config selected through Shellular across a CLI restart;
+					// the per-session transcript metadata is distinct from the agent-wide
+					// draft hint and is applied only to this session.
+					configOptions:
+						persistedState?.configOptions ??
+						result.response.configOptions ??
+						undefined,
 					modes: result.response.modes,
 					availableCommands: latestAvailableCommands(
 						result.updates,
@@ -2505,7 +2995,10 @@ export class AgentsManager {
 					});
 				}
 			})
-			.catch(() => {})
+			.catch((error) => {
+				const message = error instanceof Error ? error.message : String(error);
+				logger.warn(`AI refresh ${key} failed: ${message}`);
+			})
 			.finally(() => {
 				// Belt and braces: a replay that threw never reached the claim check
 				// above, and a stale claim would silence the next session's push.
@@ -2966,6 +3459,79 @@ function normalizePromptContent(
 	return parsed.length ? parsed : [{ type: "text", text: "" }];
 }
 
+function promptContentText(prompt: AcpPromptRequest["prompt"]) {
+	return prompt
+		.map((block) => {
+			if (block.type === "text") return block.text;
+			if (block.type === "resource_link") {
+				return `@${path.basename(filePathFromUriSafe(block.uri) ?? block.uri)}`;
+			}
+			if (block.type === "resource") {
+				const resource = block.resource;
+				const uri =
+					typeof resource === "object" && resource
+						? (resource as { uri?: unknown }).uri
+						: undefined;
+				return typeof uri === "string"
+					? `@${path.basename(filePathFromUriSafe(uri) ?? uri)}`
+					: "@resource";
+			}
+			return "";
+		})
+		.join("")
+		.trim();
+}
+
+function promptContentToMessageParts(
+	prompt: AcpPromptRequest["prompt"],
+): AcpMessage["parts"] {
+	return prompt.flatMap<AcpMessage["parts"][number]>((block) => {
+		if (block.type === "text") {
+			return block.text ? [{ type: "text", text: block.text }] : [];
+		}
+		if (block.type === "resource_link") {
+			const filePath = filePathFromUriSafe(block.uri);
+			return [
+				{
+					type: "file_reference",
+					path: filePath ?? block.uri,
+					name: path.basename(filePath ?? block.uri),
+					title: path.basename(filePath ?? block.uri),
+					rawContent: block,
+				},
+			];
+		}
+		if (block.type === "resource") {
+			const resource = block.resource as {
+				uri?: string;
+				mimeType?: string;
+				text?: string;
+			};
+			const uri = resource.uri ?? "";
+			return [
+				{
+					type: "file_reference",
+					path: filePathFromUriSafe(uri) ?? uri,
+					name: path.basename(uri) || "Resource",
+					title: path.basename(uri) || "Resource",
+					mimeType: resource.mimeType,
+					rawContent: block,
+				},
+			];
+		}
+		return [];
+	});
+}
+
+function filePathFromUriSafe(uri: string) {
+	if (!uri.startsWith("file://")) return null;
+	try {
+		return decodeURIComponent(new URL(uri).pathname);
+	} catch {
+		return uri.slice("file://".length);
+	}
+}
+
 function createAgentRuntime(
 	agentId: AgentId,
 	descriptor: AgentDescriptor,
@@ -2983,6 +3549,8 @@ function createAgentRuntime(
 			return Pi.create();
 		case "cursor":
 			return Cursor.create();
+		case "fx":
+			return Fx.create();
 		case "hermes":
 			return Hermes.create();
 		case "grok-build":

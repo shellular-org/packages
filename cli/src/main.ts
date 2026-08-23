@@ -840,10 +840,13 @@ async function runCli({
 		});
 	}
 
-	let cleanedUp = false;
+	let cleaningUp = false;
 	const cleanup = () => {
-		if (cleanedUp) return;
-		cleanedUp = true;
+		if (cleaningUp) {
+			return;
+		}
+
+		cleaningUp = true;
 		logger.log("Cleaning up resources...");
 		stopCaffeinate();
 		releaseBootLock();
@@ -856,12 +859,13 @@ async function runCli({
 		closeDb();
 	};
 
-	const exitCleanly = () => {
+	const shutdown = () => {
 		cleanup();
 		process.exit(0);
 	};
-	process.once("SIGINT", exitCleanly); // Ctrl+C
-	process.once("SIGTERM", exitCleanly); // kill / docker stop / watch restart
+
+	process.on("SIGINT", shutdown); // Ctrl+C
+	process.on("SIGTERM", shutdown); // kill / docker stop / pm2 stop
 	process.on("beforeExit", cleanup);
 
 	process.on("uncaughtException", (err) => {
@@ -906,13 +910,6 @@ async function runCli({
 						"🔒",
 						chalk.green(
 							`Messages are ${chalk.underline("end-to-end encrypted")}.`,
-						),
-					);
-
-					logger.log(
-						"🚀",
-						chalk.cyan(
-							`New relay servers in US and EU for lower latency. Update the app to ${chalk.bold("v0.0.36")} to use them.`,
 						),
 					);
 					logger.log();

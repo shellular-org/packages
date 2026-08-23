@@ -1,6 +1,6 @@
 {
   "name": "@shellular/protocol",
-  "version": "0.0.31",
+  "version": "0.0.33",
   "description": "Shellular wire protocol — shared Zod schemas and TypeScript types.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -30,7 +30,7 @@
   "author": "Shellular <team@shellular.dev>",
   "license": "AGPL-3.0-only",
   "dependencies": {
-    "@agentclientprotocol/sdk": "^1.2.1",
+    "@agentclientprotocol/sdk": "^1.4.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

@@ -25,18 +25,20 @@ import {
  * "working", and "finished" sessions that Shellular never started.
  *
  * Surfacing gate: a session is surfaced if its log was appended to within
- * ACTIVE_WINDOW_MS (actively working/just finished), OR if it was touched
- * within DISCOVERY_WINDOW_MS (2h) and a live agent process exists in its
- * launch cwd (idle but CLI still open). Historical sessions beyond the
- * discovery window are never surfaced. Once surfaced, the session is tracked.
+ * ACTIVE_WINDOW_MS (actively working/just finished), OR if a live agent process
+ * can be attributed to its launch cwd (idle but CLI still open). Historical
+ * sessions are bounded by DISCOVERY_WINDOW_MS unless that live-process check
+ * proves the session predates Shellular's startup. Once surfaced, the session
+ * is tracked.
  *
  * Retention: a session that finished (authoritatively, via a Stop hook or
  * task_complete marker) is sticky — it stays until the user explicitly dismisses
  * it, even if the CLI closes, because the user needs to check the result. A
- * running/permission session that goes silent for KILL_CHECK_TIMEOUT_MS is
- * disambiguated with a cheap pgrep check: if the agent process is dead, the CLI
- * was killed/closed mid-turn → remove; if alive, the turn finished naturally →
- * decay to a sticky finished.
+ * Claude/permission sessions that go silent for KILL_CHECK_TIMEOUT_MS are
+ * disambiguated with a cheap process check: if the agent process is dead, the
+ * CLI was killed/closed mid-turn → remove; if alive, the turn finished
+ * naturally → decay to a sticky finished. Codex keeps a task_started session
+ * working until its terminal lifecycle marker arrives.
  *
  * Neither agent records permission/approval prompts to disk, so those are
  * handled separately by the notify bridge. This watcher only reports presence
@@ -66,6 +68,8 @@ export type ExternalSessionUpdate = {
 	 * authoritative ones are kill-checked after KILL_CHECK_TIMEOUT_MS.
 	 */
 	authoritativeFinished?: boolean;
+	/** Codex has started a turn and has not written its terminal lifecycle event. */
+	turnInProgress?: boolean;
 };
 
 type WatchTarget = {
@@ -82,12 +86,10 @@ const DEBOUNCE_MS = 300;
 // at discovery without a process check.
 const ACTIVE_WINDOW_MS = 30 * 1000;
 // How long a non-authoritative running/finished session can be silent before we
-// disambiguate "idle finished" from "killed" with a pgrep check.
+// disambiguate "idle finished" from "killed" with a process scan.
 const KILL_CHECK_TIMEOUT_MS = 60 * 1000;
-// Bounding window for discoverFresh's safety-net scan and the surfacing gate.
-// Sessions whose log was touched within this window but beyond ACTIVE_WINDOW_MS
-// are surfaced only if a live agent process exists in their cwd (pgrep check).
-// Beyond this window, sessions are considered historical and not surfaced.
+// Bounding window for discoverFresh's safety-net scan and the default surfacing
+// gate. A known live process may still surface an older session at startup.
 const DISCOVERY_WINDOW_MS = 2 * 60 * 60 * 1000;
 // How often we decay state, drop killed sessions, and re-discover missed files.
 const DECAY_INTERVAL_MS = 10 * 1000;
@@ -123,14 +125,16 @@ function statusLabel(status: AiSessionRuntimeStatus): string {
 	}
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function safeParseJson(line: string): Record<string, unknown> | undefined {
 	const trimmed = line.trim();
 	if (!trimmed) return undefined;
 	try {
-		const value = JSON.parse(trimmed);
-		return value && typeof value === "object"
-			? (value as Record<string, unknown>)
-			: undefined;
+		const value: unknown = JSON.parse(trimmed);
+		return isRecord(value) ? value : undefined;
 	} catch {
 		return undefined;
 	}
@@ -152,6 +156,11 @@ function parseTimestamp(value: unknown): number | undefined {
 // be far bigger than a tail window. Grow the read until a newline is found.
 const FIRST_LINE_MAX_BYTES = 512 * 1024;
 
+// A few Codex rollout variants append session_meta after an initial record.
+// Scan just beyond the maximum first-line size to recognize those variants
+// without turning every session parse into a full-file read.
+const CODEX_META_SCAN_BYTES = FIRST_LINE_MAX_BYTES + TAIL_BYTES;
+
 async function readFirstLine(filePath: string): Promise<string | undefined> {
 	const handle = await open(filePath, "r");
 	try {
@@ -167,6 +176,35 @@ async function readFirstLine(filePath: string): Promise<string | undefined> {
 			offset += bytesRead;
 		}
 		return acc || undefined;
+	} finally {
+		await handle.close();
+	}
+}
+
+async function readCodexSessionMeta(
+	filePath: string,
+	size: number,
+	first?: Record<string, unknown>,
+): Promise<Record<string, unknown> | undefined> {
+	if (first?.type === "session_meta") {
+		return isRecord(first.payload) ? first.payload : undefined;
+	}
+	if (size <= 0) return undefined;
+
+	const handle = await open(filePath, "r");
+	try {
+		const length = Math.min(size, CODEX_META_SCAN_BYTES);
+		const buffer = Buffer.alloc(length);
+		const { bytesRead } = await handle.read(buffer, 0, length, 0);
+		const text = buffer.subarray(0, bytesRead).toString("utf8");
+		for (const line of text.split("\n")) {
+			if (!line.includes("session_meta")) continue;
+			const parsed = safeParseJson(line);
+			if (parsed?.type !== "session_meta") continue;
+			return isRecord(parsed.payload) ? parsed.payload : undefined;
+		}
+	} catch {
+		return undefined;
 	} finally {
 		await handle.close();
 	}
@@ -321,7 +359,7 @@ async function claudeHasConversation(
 function claudeTurnInProgress(last?: Record<string, unknown>): boolean {
 	if (!last) return false;
 	const type = last.type;
-	const message = last.message as Record<string, unknown> | undefined;
+	const message = isRecord(last.message) ? last.message : undefined;
 	// An assistant line whose stop_reason is tool_use means the model is about
 	// to (or is) running tools — i.e. mid-turn.
 	if (type === "assistant" && message) {
@@ -339,7 +377,8 @@ function claudeTurnInProgress(last?: Record<string, unknown>): boolean {
 				(block) =>
 					block &&
 					typeof block === "object" &&
-					(block as { type?: unknown }).type === "tool_result",
+					isRecord(block) &&
+					block.type === "tool_result",
 			);
 		}
 	}
@@ -422,7 +461,7 @@ async function readClaudeFirstPrompt(
 		if (!line.includes('"user"')) continue;
 		const parsed = safeParseJson(line);
 		if (parsed?.type !== "user") continue;
-		const message = parsed.message as Record<string, unknown> | undefined;
+		const message = isRecord(parsed.message) ? parsed.message : undefined;
 		const prompt = extractUserText(message?.content);
 		if (prompt) return prompt.slice(0, TITLE_MAX_LEN);
 	}
@@ -440,10 +479,11 @@ function extractUserText(content: unknown): string | undefined {
 			if (
 				block &&
 				typeof block === "object" &&
-				(block as { type?: unknown }).type === "text" &&
-				typeof (block as { text?: unknown }).text === "string"
+				isRecord(block) &&
+				block.type === "text" &&
+				typeof block.text === "string"
 			) {
-				const text = (block as { text: string }).text.trim();
+				const text = block.text.trim();
 				if (text && !text.startsWith("<")) return text;
 			}
 		}
@@ -456,6 +496,39 @@ function extractUserText(content: unknown): string | undefined {
 // The session id lives in the first `session_meta` line's payload.id (and in the
 // filename). Lifecycle is explicit: event_msg/task_started (running),
 // task_complete (finished), turn_aborted (cancelled).
+
+/**
+ * Codex persists child/background agents in the same rollout directory as
+ * user sessions. Their rollout ids look valid, but they are not resumable
+ * user conversations through ACP session/load, so exposing them produces a
+ * dead activity entry with an empty transcript.
+ *
+ * `source` is the authoritative marker in current Codex versions. The other
+ * fields cover older or partially-written metadata.
+ */
+function isCodexBackgroundSession(meta?: Record<string, unknown>): boolean {
+	if (!meta) return false;
+
+	const source = meta.source;
+	if (typeof source === "string") {
+		if (source === "subagent" || source.startsWith("subagent_")) return true;
+	} else if (source && typeof source === "object") {
+		if (isRecord(source) && ("subagent" in source || "internal" in source)) {
+			return true;
+		}
+	}
+
+	if (meta.thread_source === "subagent") return true;
+
+	// These fields are only written for Codex child agents. Require a parent id
+	// so a future root-session metadata field cannot accidentally hide a session.
+	return (
+		typeof meta.parent_thread_id === "string" &&
+		(typeof meta.agent_path === "string" ||
+			typeof meta.agent_role === "string" ||
+			typeof meta.agent_nickname === "string")
+	);
+}
 
 async function parseCodexSession(
 	filePath: string,
@@ -471,10 +544,8 @@ async function parseCodexSession(
 
 	const firstLine = await readFirstLine(filePath);
 	const first = firstLine ? safeParseJson(firstLine) : undefined;
-	const meta =
-		first?.type === "session_meta"
-			? (first.payload as Record<string, unknown> | undefined)
-			: undefined;
+	const meta = await readCodexSessionMeta(filePath, stat.size, first);
+	if (isCodexBackgroundSession(meta)) return undefined;
 	const sessionId =
 		(typeof meta?.id === "string" && meta.id) || codexIdFromFilename(filePath);
 	if (!sessionId) return undefined;
@@ -482,12 +553,15 @@ async function parseCodexSession(
 
 	const lastEvent = await readCodexLastLifecycle(filePath, stat.size);
 	const mtime = stat.mtimeMs;
-	const recentlyActive = Date.now() - mtime <= ACTIVE_WINDOW_MS;
 
 	let status: AiSessionRuntimeStatus;
+	const turnInProgress = lastEvent?.type === "task_started";
 	if (lastEvent?.type === "turn_aborted") {
 		status = "cancelled";
-	} else if (lastEvent?.type === "task_started" && recentlyActive) {
+	} else if (turnInProgress) {
+		// A turn can spend longer than ACTIVE_WINDOW_MS thinking or waiting on a
+		// tool without appending another lifecycle marker. task_complete is the
+		// authoritative end; mtime alone made these sessions appear finished.
 		status = "running";
 	} else {
 		status = "finished";
@@ -506,6 +580,7 @@ async function parseCodexSession(
 		workspacePath,
 		title,
 		message: statusLabel(status) || undefined,
+		turnInProgress,
 		authoritativeFinished:
 			lastEvent?.type === "task_complete" || lastEvent?.type === "turn_aborted",
 	};
@@ -528,7 +603,7 @@ async function readCodexTitle(
 				continue;
 			}
 			const parsed = safeParseJson(line);
-			const payload = parsed?.payload as Record<string, unknown> | undefined;
+			const payload = isRecord(parsed?.payload) ? parsed.payload : undefined;
 			if (!payload) continue;
 			// event_msg/user_message carries the prompt as a plain string.
 			if (
@@ -558,10 +633,11 @@ function extractCodexInputText(content: unknown): string | undefined {
 		if (
 			block &&
 			typeof block === "object" &&
-			(block as { type?: unknown }).type === "input_text" &&
-			typeof (block as { text?: unknown }).text === "string"
+			isRecord(block) &&
+			block.type === "input_text" &&
+			typeof block.text === "string"
 		) {
-			const text = (block as { text: string }).text.trim();
+			const text = block.text.trim();
 			if (text && !text.startsWith("<")) return text;
 		}
 	}
@@ -577,6 +653,11 @@ function codexIdFromFilename(filePath: string): string | undefined {
 	return match?.[0];
 }
 
+// A large assistant/tool record can push the lifecycle marker more than one
+// tail window away. Expand a bounded read in that case so status does not
+// silently fall back to "finished" just because the marker is out of view.
+const CODEX_LIFECYCLE_MAX_BYTES = 512 * 1024;
+
 /** Finds the most recent task lifecycle event by scanning the tail. */
 async function readCodexLastLifecycle(
 	filePath: string,
@@ -585,37 +666,53 @@ async function readCodexLastLifecycle(
 	if (size <= 0) return undefined;
 	const handle = await open(filePath, "r");
 	try {
-		const start = Math.max(0, size - TAIL_BYTES);
-		const length = size - start;
-		const buffer = Buffer.alloc(length);
-		const { bytesRead } = await handle.read(buffer, 0, length, start);
-		const text = buffer.subarray(0, bytesRead).toString("utf8");
-		const lines = text.split("\n");
-		let result: { type: string; timestamp?: number } | undefined;
-		for (const line of lines) {
-			if (
-				!line.includes("task_started") &&
-				!line.includes("task_complete") &&
-				!line.includes("turn_aborted")
-			) {
-				continue;
+		for (
+			let window = Math.min(size, TAIL_BYTES);
+			;
+			window = Math.min(size, window * 4)
+		) {
+			const start = Math.max(0, size - window);
+			const buffer = Buffer.alloc(size - start);
+			const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+			const text = buffer.subarray(0, bytesRead).toString("utf8");
+			const lines = text.split("\n");
+			// The first line may begin in the middle of a JSON record. It cannot be
+			// the latest lifecycle record, so do not let a partial parse influence it.
+			if (start > 0) lines.shift();
+
+			let result: { type: string; timestamp?: number } | undefined;
+			for (const line of lines) {
+				if (
+					!line.includes("task_started") &&
+					!line.includes("task_complete") &&
+					!line.includes("turn_aborted")
+				) {
+					continue;
+				}
+				const parsed = safeParseJson(line);
+				if (parsed?.type !== "event_msg") continue;
+				const payload = isRecord(parsed.payload) ? parsed.payload : undefined;
+				const type = payload?.type;
+				if (
+					type === "task_started" ||
+					type === "task_complete" ||
+					type === "turn_aborted"
+				) {
+					result = {
+						type,
+						timestamp: parseTimestamp(parsed.timestamp),
+					};
+				}
 			}
-			const parsed = safeParseJson(line);
-			if (parsed?.type !== "event_msg") continue;
-			const payload = parsed.payload as Record<string, unknown> | undefined;
-			const type = payload?.type;
 			if (
-				type === "task_started" ||
-				type === "task_complete" ||
-				type === "turn_aborted"
+				result ||
+				start === 0 ||
+				window >= CODEX_LIFECYCLE_MAX_BYTES ||
+				window >= size
 			) {
-				result = {
-					type,
-					timestamp: parseTimestamp(parsed.timestamp),
-				};
+				return result;
 			}
 		}
-		return result;
 	} catch {
 		return undefined;
 	} finally {
@@ -671,7 +768,9 @@ export class SessionWatcher {
 		for (const target of this.targets) {
 			this.watchTarget(target);
 		}
-		this.seed();
+		void this.seed().catch((err) => {
+			logger.debug("SessionWatcher: startup discovery failed:", err);
+		});
 
 		this.decayTimer = setInterval(() => {
 			void this.reconcile();
@@ -765,12 +864,25 @@ export class SessionWatcher {
 			// - Between ACTIVE_WINDOW_MS and DISCOVERY_WINDOW_MS (2h): the session
 			//   is idle but the CLI might still be open. Surface only if a live
 			//   agent process in its launch cwd can actually account for it.
-			// - Beyond DISCOVERY_WINDOW_MS: historical, never surface.
+			// - Beyond DISCOVERY_WINDOW_MS: surface only when a known live process
+			//   started before the last write can account for the session.
 			// Already-tracked sessions always get processed (new activity).
 			if (!this.tracked.has(key)) {
 				const age = now - update.updatedAt;
-				if (age > DISCOVERY_WINDOW_MS) return;
-				if (age > ACTIVE_WINDOW_MS) {
+				if (age > DISCOVERY_WINDOW_MS) {
+					const resolved =
+						options.live ?? (await liveAgentCwds(update.agentId));
+					if (
+						resolved.unknown ||
+						!(await this.canSurfaceIdle(update, resolved))
+					) {
+						return;
+					}
+				} else if (age > ACTIVE_WINDOW_MS) {
+					// A live process is allowed to vouch for an older rollout too. This
+					// is what lets startup discover a CLI that was already open before
+					// Shellular started; the process start-time check still rejects stale
+					// history in the same workspace.
 					if (!(await this.canSurfaceIdle(update, options.live))) return;
 				}
 			}
@@ -879,7 +991,7 @@ export class SessionWatcher {
 	 * for missed fs.watch events), decay stale running -> finished, and detect
 	 * killed CLIs. Authoritative-finished sessions are sticky and never removed
 	 * here. Non-authoritative sessions that have been silent for
-	 * KILL_CHECK_TIMEOUT_MS are disambiguated with a cheap pgrep check: alive →
+	 * KILL_CHECK_TIMEOUT_MS are disambiguated with a cheap process scan: alive →
 	 * upgrade to sticky finished; dead → remove.
 	 */
 	private async reconcile() {
@@ -904,8 +1016,30 @@ export class SessionWatcher {
 
 			const quietMs = now - update.updatedAt;
 
+			// Codex writes task_complete when a turn ends. Until that marker arrives,
+			// a quiet log is still an in-progress turn: model/tool work can run for
+			// longer than ACTIVE_WINDOW_MS without touching the rollout. Only remove
+			// it when the owning CLI is definitely gone.
+			if (
+				update.agentId === "codex" &&
+				update.status === "running" &&
+				update.turnInProgress
+			) {
+				if (quietMs <= ACTIVE_WINDOW_MS) continue;
+				const alive = await isAgentAliveInCwd(
+					update.agentId,
+					update.workspacePath,
+					update.updatedAt,
+				);
+				if (alive === "dead") {
+					this.tracked.delete(key);
+					this.onRemove(update.agentId, update.sessionId);
+				}
+				continue;
+			}
+
 			// Running session that went quiet: decay to finished. If it stays
-			// quiet past KILL_CHECK_TIMEOUT_MS, the reconcile below will pgrep.
+			// quiet past KILL_CHECK_TIMEOUT_MS, the reconcile below scans processes.
 			if (update.status === "running" && quietMs > ACTIVE_WINDOW_MS) {
 				const finished: ExternalSessionUpdate = {
 					...update,
@@ -922,7 +1056,7 @@ export class SessionWatcher {
 			}
 
 			// Non-authoritative finished or waiting-for-permission, silent long
-			// enough to suspect the CLI was killed: disambiguate with pgrep.
+			// enough to suspect the CLI was killed: disambiguate with a process scan.
 			if (quietMs <= KILL_CHECK_TIMEOUT_MS) continue;
 			if (
 				update.status === "waiting_for_permission" ||
@@ -956,7 +1090,7 @@ export class SessionWatcher {
 			}
 
 			// Non-authoritative finished, silent past kill-check timeout: the CLI
-			// is probably gone. Disambiguate with pgrep; if alive, upgrade to
+			// is probably gone. Disambiguate with a process scan; if alive, upgrade to
 			// sticky so we stop checking.
 			if (update.status === "finished") {
 				const alive = await isAgentAliveInCwd(
@@ -977,12 +1111,16 @@ export class SessionWatcher {
 		}
 	}
 
-	private seed() {
+	private async seed() {
 		for (const target of this.targets) {
 			if (!existsSync(target.root)) continue;
+			// Share one process scan across the startup seed. Without this, every
+			// idle file independently scans ps/lsof, which is expensive on machines
+			// with many recent rollout files.
+			const live = await liveAgentCwds(target.agentId);
 			const files = this.recentFiles(target.root, SEED_LIMIT);
 			for (const filePath of files) {
-				void this.processFile(target, filePath);
+				await this.processFile(target, filePath, { live });
 			}
 		}
 	}
@@ -1023,30 +1161,22 @@ export class SessionWatcher {
 	 * CLI left open) is never re-examined and can be missed if its one surfacing
 	 * check didn't happen at the right moment. Here liveness drives discovery
 	 * instead of file writes: we enumerate live agent process cwds once, then
-	 * surface any untracked recent log those processes can account for (see
+	 * surface any untracked log those processes can account for (see
 	 * canSurfaceIdle). Cheap on idle machines — the process scan short-circuits to
 	 * an empty set when no agent runs.
 	 */
 	private async discoverLiveSessions() {
-		const now = Date.now();
 		for (const target of this.targets) {
 			if (!existsSync(target.root)) continue;
 			const live = await liveAgentCwds(target.agentId);
 			if (live.cwds.size === 0 && !live.unknown) continue;
 			for (const filePath of this.recentFiles(target.root, SEED_LIMIT)) {
-				let mtime: number;
-				try {
-					mtime = statSync(filePath).mtimeMs;
-				} catch {
-					continue;
-				}
-				if (now - mtime > DISCOVERY_WINDOW_MS) continue;
 				// Already-surfaced sessions are re-reported cheaply (report() dedupes),
 				// so we only skip re-parsing when nothing about the file changed since
 				// we last surfaced it — the common idle case.
 				if (this.tracked.has(this.trackedKeyForFile(target, filePath)))
 					continue;
-				void this.processFile(target, filePath, { live });
+				await this.processFile(target, filePath, { live });
 			}
 		}
 	}

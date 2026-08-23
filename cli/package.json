@@ -1,12 +1,14 @@
 {
   "name": "shellular",
-  "version": "0.0.51",
+  "version": "0.0.56",
   "description": "Shellular CLI — host your dev environment for remote access from your phone.",
   "main": "dist/main.js",
   "scripts": {
     "dev": "cross-env SHELLULAR_DEV=true tsx --import ./scripts/register-sql-loader.mjs --watch src/main.ts",
     "activate:local": "cross-env SHELLULAR_DEV=true tsx --import ./scripts/register-sql-loader.mjs src/main.ts --start-local --no-qr",
+    "predev": "pnpm --dir ../protocol run build",
     "start": "tsx --import ./scripts/register-sql-loader.mjs src/main.ts",
+    "prestart": "pnpm --dir ../protocol run build",
     "build": "pnpm run schema && tsc && tsup",
     "schema": "tsx scripts/generate-schema.ts",
     "test": "pnpm run build && tsx --import ./scripts/register-sql-loader.mjs --test src/*.test.ts src/**/*.test.ts",
@@ -35,10 +37,10 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@agentclientprotocol/sdk": "^1.2.1",
-    "@ff-labs/fff-node": "^0.6.4",
+    "@agentclientprotocol/sdk": "^1.4.0",
+    "@ff-labs/fff-node": "^0.10.5",
     "@inquirer/prompts": "^8.4.2",
-    "@opencode-ai/sdk": "1.14.41",
+    "@opencode-ai/sdk": "1.18.18",
     "@shellular/protocol": "workspace:*",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",

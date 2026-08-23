@@ -7,6 +7,7 @@ const _AiBackendSchema = z.enum([
 	"opencode",
 	"codex",
 	"claude-code",
+	"fx",
 	"copilot",
 	"cursor",
 	"pi",
@@ -28,6 +29,15 @@ export const AiSessionSchema = z.object({
 	configOptions: z.array(z.any()).optional(),
 });
 export type AiSession = z.infer<typeof AiSessionSchema>;
+
+/** A locally running agent process that currently owns a session writer. */
+export const AiSessionOwnerSchema = z.object({
+	pid: z.number().int().positive(),
+	command: z.string(),
+	cwd: z.string(),
+	startedAt: z.number().int().nonnegative().optional(),
+});
+export type AiSessionOwner = z.infer<typeof AiSessionOwnerSchema>;
 
 // ─── Message parts ────────────────────────────────────────────────────────────
 
@@ -264,6 +274,10 @@ export const AiSessionCreateMsgSchema = z.object({
 		additionalDirectories: z.array(z.string()).optional(),
 		mcpServers: z.array(z.record(z.string(), z.unknown())).optional(),
 		model: z.any().optional(),
+		// The selections currently visible in a lazy draft chat. These are sent
+		// when the first prompt creates a session, so the CLI can make the new
+		// agent session match the UI rather than falling back to an agent default.
+		configOptions: z.array(z.any()).optional(),
 	}),
 });
 export type AiSessionCreateMsg = z.infer<typeof AiSessionCreateMsgSchema>;
@@ -334,6 +348,17 @@ export const AiAbortMsgSchema = z.object({
 	}),
 });
 export type AiAbortMsg = z.infer<typeof AiAbortMsgSchema>;
+
+export const AiSessionOwnerKillMsgSchema = z.object({
+	id: z.string(),
+	type: z.literal(MsgType.AI_SESSION_OWNER_KILL),
+	clientId: z.string(),
+	data: z.object({
+		backend: AiBackendSchema,
+		sessionId: z.string(),
+	}),
+});
+export type AiSessionOwnerKillMsg = z.infer<typeof AiSessionOwnerKillMsgSchema>;
 
 export const AiAgentsListMsgSchema = z.object({
 	id: z.string(),
@@ -608,6 +633,8 @@ export const AiPromptAckMsgSchema = z.object({
 			ack: z.boolean(),
 			backend: AiBackendSchema.optional(),
 			sessionId: z.string().optional(),
+			promptId: z.string().optional(),
+			queued: z.boolean().optional(),
 		})
 		.optional(),
 });
@@ -626,6 +653,23 @@ export const AiAbortAckMsgSchema = z.object({
 		.optional(),
 });
 export type AiAbortAckMsg = z.infer<typeof AiAbortAckMsgSchema>;
+
+export const AiSessionOwnerKillResultMsgSchema = z.object({
+	id: z.string().optional(),
+	type: z.literal(MsgType.AI_SESSION_OWNER_KILL_RESULT),
+	clientId: z.string(),
+	respTo: z.string().optional(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			ok: z.boolean(),
+			pid: z.number().int().positive().optional(),
+		})
+		.optional(),
+});
+export type AiSessionOwnerKillResultMsg = z.infer<
+	typeof AiSessionOwnerKillResultMsgSchema
+>;
 
 export const AiAgentsListResultMsgSchema = z.object({
 	id: z.string().optional(),

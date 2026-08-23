@@ -18,6 +18,9 @@ import {
 	type AiMessagesListMsg,
 	type AiPermissionReplyMsg,
 	type AiPromptMsg,
+	type AiPromptQueuePauseMsg,
+	type AiPromptQueueRemoveMsg,
+	type AiPromptQueueUpdateMsg,
 	type AiProvidersListMsg,
 	type AiQuestionRejectMsg,
 	type AiQuestionReplyMsg,
@@ -32,6 +35,7 @@ import {
 	type AiSessionGetMsg,
 	type AiSessionListMsg,
 	type AiSessionModeSetMsg,
+	type AiSessionOwnerKillMsg,
 	type AiSessionResumeMsg,
 	type AiShareMsg,
 	type AiUnrevertMsg,
@@ -72,16 +76,16 @@ import {
 	type SessionErrorMsg,
 	type SessionHostMsg,
 	type SysmonGetMsg,
+	type TcpTunnelCloseMsg,
+	type TcpTunnelEndMsg,
+	type TcpTunnelOpenMsg,
+	type TcpTunnelWindowMsg,
 	type TerminalAttachMsg,
 	type TerminalCloseMsg,
 	type TerminalCreateMsg,
 	type TerminalDataMsg,
 	type TerminalListMsg,
 	type TerminalResizeMsg,
-	type TcpTunnelCloseMsg,
-	type TcpTunnelEndMsg,
-	type TcpTunnelOpenMsg,
-	type TcpTunnelWindowMsg,
 	type WsCloseMsg,
 	type WsDataMsg,
 	type WsOpenMsg,
@@ -413,6 +417,18 @@ export class Connection extends EventEmitter {
 		listener: (msg: AiPromptMsg) => void,
 	): this;
 	on(
+		eventName: typeof MsgType.AI_PROMPT_QUEUE_UPDATE,
+		listener: (msg: AiPromptQueueUpdateMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_PROMPT_QUEUE_REMOVE,
+		listener: (msg: AiPromptQueueRemoveMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_PROMPT_QUEUE_PAUSE,
+		listener: (msg: AiPromptQueuePauseMsg) => void,
+	): this;
+	on(
 		eventName: typeof MsgType.AI_ATTACHMENT_WRITE,
 		listener: (msg: AiAttachmentWriteMsg) => void,
 	): this;
@@ -427,6 +443,10 @@ export class Connection extends EventEmitter {
 	on(
 		eventName: typeof MsgType.AI_ABORT,
 		listener: (msg: AiAbortMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.AI_SESSION_OWNER_KILL,
+		listener: (msg: AiSessionOwnerKillMsg) => void,
 	): this;
 	on(
 		eventName: typeof MsgType.AI_AGENTS_LIST,
@@ -745,10 +765,26 @@ export class Connection extends EventEmitter {
 	): boolean;
 	emit(eventName: typeof MsgType.AI_PROMPT, msg: AiPromptMsg): boolean;
 	emit(
+		eventName: typeof MsgType.AI_PROMPT_QUEUE_UPDATE,
+		msg: AiPromptQueueUpdateMsg,
+	): boolean;
+	emit(
+		eventName: typeof MsgType.AI_PROMPT_QUEUE_REMOVE,
+		msg: AiPromptQueueRemoveMsg,
+	): boolean;
+	emit(
+		eventName: typeof MsgType.AI_PROMPT_QUEUE_PAUSE,
+		msg: AiPromptQueuePauseMsg,
+	): boolean;
+	emit(
 		eventName: typeof MsgType.AI_ATTACHMENT_WRITE,
 		msg: AiAttachmentWriteMsg,
 	): boolean;
 	emit(eventName: typeof MsgType.AI_ABORT, msg: AiAbortMsg): boolean;
+	emit(
+		eventName: typeof MsgType.AI_SESSION_OWNER_KILL,
+		msg: AiSessionOwnerKillMsg,
+	): boolean;
 	emit(eventName: typeof MsgType.AI_AGENTS_LIST, msg: AiAgentsListMsg): boolean;
 	emit(
 		eventName: typeof MsgType.AI_ACTIVITY_LIST,

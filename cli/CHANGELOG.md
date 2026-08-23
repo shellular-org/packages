@@ -1,5 +1,50 @@
 # shellular
 
+## 0.0.56
+
+### Patch Changes
+
+- 013990b: Add Vercel fx ACP agent runtime adapter
+
+## 0.0.55
+
+### Patch Changes
+
+- 4915ce6: feat(agent): add Vercel fx
+- Updated dependencies [4915ce6]
+  - @shellular/protocol@0.0.33
+
+## 0.0.54
+
+### Patch Changes
+
+- 9889445: - fix(opencode): support both wrapped and direct session-list responses.
+  - chore: update opencode SDK and fff dependencies to latest versions.
+
+## 0.0.53
+
+### Patch Changes
+
+- ed046de: feat(agents): prompt queueing
+- f43e35a: fix(agents): handle externally owned sessions and defer Codex resume until prompting
+- Updated dependencies [ed046de]
+- Updated dependencies [f43e35a]
+  - @shellular/protocol@0.0.32
+
+## 0.0.52
+
+### Patch Changes
+
+- 3768466: Fix false-success daemon start/restart, prefix streamed logs, and harden shutdown
+
+  - `start`/`restart` no longer report success the instant PM2 forks the daemon. `pollDaemonReady` now requires the process to hold `online` for a stability window and watches the restart counter to catch crash loops, so a daemon that dies on startup is reported as failed instead of "running".
+  - On start failure, detect the stale-PM2-module case (leftover daemon resolving modules from a removed install) and print a targeted `npx pm2 kill` recovery hint instead of a raw `MODULE_NOT_FOUND`.
+  - Streamed logs are prefixed with `[stdout]`/`[stderr]` via a line-buffering transform so the two streams are distinguishable.
+  - Add `spawnEnvOverride` hook so agent subclasses can inject host-state-dependent env at spawn time, and surface agent prompt failures with a logged error instead of a swallowed `void` promise.
+  - Prevent completed streamed assistant messages from disappearing by waiting for ACP session updates to settle, preferring the resident live snapshot when finalizing prompt results, and avoiding stale external refreshes while a live session is attached.
+  - Persist and lazily restore per-session ACP config choices so resumed sessions keep user-selected model/mode/permission settings across navigation and CLI restarts.
+  - Cache agent session config for draft chats, keep new chats as true drafts until the first prompt, and apply the exact draft config shown in the app when that first prompt creates the ACP session.
+
 ## 0.0.51
 
 ### Patch Changes

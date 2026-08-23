@@ -639,11 +639,7 @@ function initTcpTunnelHandler(conn: HostConnection) {
 			tunnelKey(parsed.clientId, parsed.tunnelId),
 		);
 		if (!tunnel) {
-			rejectUnknownTcpTunnel(
-				conn,
-				parsed.clientId,
-				parsed.tunnelId,
-			);
+			rejectUnknownTcpTunnel(conn, parsed.clientId, parsed.tunnelId);
 			return;
 		}
 		if (

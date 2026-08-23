@@ -132,7 +132,7 @@ export function getFileSize(filePath: string): number {
 export function streamFile(
 	filePath: string,
 	startAt: number,
-	stream: NodeJS.WriteStream,
+	stream: NodeJS.WritableStream,
 ) {
 	let offset = startAt;
 	let hasData = offset > 0;

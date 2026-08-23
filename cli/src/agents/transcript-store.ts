@@ -338,6 +338,20 @@ export class TranscriptStore {
 		}
 	}
 
+	/** Persist session-scoped configuration without rewriting transcript rows. */
+	updateState(agentId: string, sessionId: string, state: AiSessionState): void {
+		if (!this.db) return;
+		try {
+			this.db
+				.prepare(
+					`UPDATE ${TABLES.sessions} SET state_json = ?, updated_at = ? WHERE agent_id = ? AND session_id = ?`,
+				)
+				.run(JSON.stringify(state), Date.now(), agentId, sessionId);
+		} catch (err) {
+			logger.warn("Transcript store: failed to update session state:", err);
+		}
+	}
+
 	deleteSession(agentId: string, sessionId: string): void {
 		if (!this.db) return;
 		try {

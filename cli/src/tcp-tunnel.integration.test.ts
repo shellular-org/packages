@@ -5,14 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 
-import {
-	MsgType,
-	TCP_TUNNEL_INITIAL_WINDOW_BYTES,
-} from "@shellular/protocol";
+import { MsgType, TCP_TUNNEL_INITIAL_WINDOW_BYTES } from "@shellular/protocol";
 import sodium from "libsodium-wrappers";
 
 const originalHome = process.env.HOME;
-const testHome = fs.mkdtempSync(path.join(os.tmpdir(), "shellular-tunnel-test-"));
+const testHome = fs.mkdtempSync(
+	path.join(os.tmpdir(), "shellular-tunnel-test-"),
+);
 process.env.HOME = testHome;
 
 const clientId = "client-tunnel-test";
@@ -20,8 +19,8 @@ const tunnelId = "tunnel-integration-1";
 let echoServer: net.Server;
 let echoPort = 0;
 let hub: import("./connection-hub").ConnectionHub;
-let messages: Array<Record<string, unknown>> = [];
-let binaryFrames: Buffer[] = [];
+const messages: Array<Record<string, unknown>> = [];
+const binaryFrames: Buffer[] = [];
 let encryptionKey: Uint8Array;
 const activeEchoSockets = new Set<net.Socket>();
 
@@ -194,7 +193,9 @@ function encodeTunnelFrame(
 ): Buffer {
 	const client = Buffer.from(clientId);
 	const tunnel = Buffer.from(tunnelIdValue);
-	const plaintext = Buffer.alloc(8 + client.length + tunnel.length + data.length);
+	const plaintext = Buffer.alloc(
+		8 + client.length + tunnel.length + data.length,
+	);
 	plaintext.writeUInt8(2, 0);
 	plaintext.writeUInt8(client.length, 1);
 	plaintext.writeUInt16BE(tunnel.length, 2);
