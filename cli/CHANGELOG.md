@@ -1,5 +1,18 @@
 # shellular
 
+## 0.1.0
+
+### Minor Changes
+
+- d175255: feat: add Oh My Pi ACP agent support
+
+### Patch Changes
+
+- 77cdb7d: chore: update @agentclientprotocol/sdk to 1.4.0
+- Updated dependencies [d175255]
+- Updated dependencies [77cdb7d]
+  - @shellular/protocol@0.1.0
+
 ## 0.0.56
 
 ### Patch Changes
