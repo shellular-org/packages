@@ -11,6 +11,7 @@ const _AiBackendSchema = z.enum([
 	"copilot",
 	"cursor",
 	"pi",
+	"omp",
 	"hermes",
 	"grok-build",
 ]);

@@ -129,6 +129,34 @@ export const BUILTIN_AGENT_DESCRIPTORS: Record<AgentId, AgentDescriptor> = {
 			args: ["-y", "pi-acp"],
 		},
 	},
+	omp: {
+		id: "omp",
+		name: "Oh My Pi",
+		title: "Oh My Pi",
+		agentExecutable: "omp",
+		installationCommands: {
+			Shell: {
+				os: ["macos", "linux"],
+				command: "curl -fsSL https://omp.sh/install | sh",
+			},
+			Homebrew: {
+				os: ["macos", "linux"],
+				command: "brew install can1357/tap/omp",
+			},
+			bun: {
+				os: ["all"],
+				command: "bun install -g @oh-my-pi/pi-coding-agent",
+			},
+			PowerShell: {
+				os: ["windows"],
+				command: "irm https://omp.sh/install.ps1 | iex",
+			},
+		},
+		spawn: {
+			command: "omp",
+			args: ["acp"],
+		},
+	},
 	cursor: {
 		id: "cursor",
 		name: "Cursor",

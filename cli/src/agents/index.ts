@@ -45,6 +45,7 @@ import { GrokActiveSessionsWatcher } from "./grok-active-sessions-watcher";
 import { GrokBuild } from "./grok-build";
 import { Hermes } from "./hermes";
 import { NotifyBridge, type NotifyEvent } from "./notify-bridge";
+import { Omp } from "./omp";
 import { OpenCode } from "./opencode";
 import { Pi } from "./pi";
 import { terminateAgentProcess } from "./process-scanner";
@@ -3547,6 +3548,8 @@ function createAgentRuntime(
 			return OpenCode.create();
 		case "pi":
 			return Pi.create();
+		case "omp":
+			return Omp.create();
 		case "cursor":
 			return Cursor.create();
 		case "fx":

@@ -26,6 +26,7 @@ export const AGENT_IDS = [
 	"copilot",
 	"cursor",
 	"pi",
+	"omp",
 	"hermes",
 	"grok-build",
 ];
