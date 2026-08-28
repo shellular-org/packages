@@ -30,7 +30,7 @@ import {
 } from "@shellular/protocol";
 
 import { config } from "@/config";
-import type { Connection } from "@/connection";
+import type { HostConnection } from "@/connection";
 import { logger } from "@/logger";
 import { commandsExist } from "@/utils";
 import { BUILTIN_AGENT_DESCRIPTORS } from "./agents";
@@ -1943,7 +1943,7 @@ export class AgentsManager {
 		return () => this.subscribers.delete(emitter);
 	}
 
-	handleConnection(conn: Connection) {
+	handleConnection(conn: HostConnection) {
 		// This adapter keeps the current app protocol stable while the internals
 		// move to ACP. Future UI work can consume listAgents/connectAgent directly.
 		const unsubscribe = this.subscribe((clientId, backend, event) => {

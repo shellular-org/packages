@@ -4,6 +4,7 @@ import type {
 	GitBranch,
 	GitCommit,
 	GitCommitFile,
+	GitDiffTarget,
 	GitOperation,
 	GitStatus,
 	GitWorkingTreeFile,
@@ -389,26 +390,58 @@ async function showHeadBlob(root: string, relPath: string): Promise<Buffer> {
 	}
 }
 
+async function showIndexBlob(root: string, relPath: string): Promise<Buffer> {
+	try {
+		const { stdout } = await execFileAsync("git", ["show", `:${relPath}`], {
+			cwd: root,
+			encoding: "buffer",
+			maxBuffer: MAX_DIFF_FILE_BYTES,
+		});
+		return stdout;
+	} catch {
+		return Buffer.alloc(0);
+	}
+}
+
 export async function getWorkingTreeFileDiff(
 	projectPath: string,
 	filePath: string,
+	diffTarget: GitDiffTarget = "head-to-worktree",
 ): Promise<GitWorkingTreeFileDiff | null> {
 	const root = await findGitRoot(projectPath);
 	if (!root) return null;
 
-	return getWorkingTreeFileDiffAtRoot(root, filePath);
+	return getWorkingTreeFileDiffAtRoot(root, filePath, diffTarget);
 }
 
 async function getWorkingTreeFileDiffAtRoot(
 	root: string,
 	filePath: string,
+	diffTarget: GitDiffTarget = "head-to-worktree",
 ): Promise<GitWorkingTreeFileDiff> {
 	const relPath = normalizeGitPath(filePath);
+	const status = await getWorkingTreeStatusAtRoot(root);
+	const originalPath =
+		status.files.find((file) => file.path === relPath)?.originalPath ?? relPath;
 	const absPath = path.join(root, relPath);
-	const [oldBuf, newBuf] = await Promise.all([
-		showHeadBlob(root, relPath),
-		fsReadFileSafe(absPath),
-	]);
+	let oldBuf: Buffer;
+	let newBuf: Buffer;
+	if (diffTarget === "head-to-index") {
+		[oldBuf, newBuf] = await Promise.all([
+			showHeadBlob(root, originalPath),
+			showIndexBlob(root, relPath),
+		]);
+	} else if (diffTarget === "index-to-worktree") {
+		[oldBuf, newBuf] = await Promise.all([
+			showIndexBlob(root, relPath),
+			fsReadFileSafe(absPath),
+		]);
+	} else {
+		[oldBuf, newBuf] = await Promise.all([
+			showHeadBlob(root, originalPath),
+			fsReadFileSafe(absPath),
+		]);
+	}
 
 	if (isBinaryBuffer(oldBuf) || isBinaryBuffer(newBuf)) {
 		return { path: relPath, oldText: "", newText: "", binary: true };
@@ -552,6 +585,7 @@ export async function runGitOperation(
 		message?: string;
 		branch?: string;
 		force?: boolean;
+		diffTarget?: GitDiffTarget;
 	} = {},
 ): Promise<{
 	ok: boolean;
@@ -569,7 +603,11 @@ export async function runGitOperation(
 
 	if (operation === "diff") {
 		if (!options.file) throw new Error("No file selected");
-		const diff = await getWorkingTreeFileDiffAtRoot(root, options.file);
+		const diff = await getWorkingTreeFileDiffAtRoot(
+			root,
+			options.file,
+			options.diffTarget,
+		);
 		return { ok: true, diff };
 	}
 
@@ -593,7 +631,10 @@ export async function runGitOperation(
 			break;
 		case "discard": {
 			if (!files.length) throw new Error("No files selected");
-			const statuses = await getFileGitStatuses(root, ".");
+			const status = await getWorkingTreeStatusAtRoot(root);
+			const statuses = new Map(
+				status.files.map((file) => [file.path, file.status]),
+			);
 			const tracked: string[] = [];
 			const untracked: string[] = [];
 			for (const file of files) {

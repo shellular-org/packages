@@ -82,6 +82,12 @@ export const MsgType = {
 	WS_DATA: "ws:data",
 	WS_CLOSE: "ws:close",
 	WS_CLOSED: "ws:closed",
+	TCP_TUNNEL_OPEN: "tcp:tunnel:open",
+	TCP_TUNNEL_OPENED: "tcp:tunnel:opened",
+	TCP_TUNNEL_WINDOW: "tcp:tunnel:window",
+	TCP_TUNNEL_END: "tcp:tunnel:end",
+	TCP_TUNNEL_CLOSE: "tcp:tunnel:close",
+	TCP_TUNNEL_CLOSED: "tcp:tunnel:closed",
 	PING: "ping",
 	PONG: "pong",
 	PORTS_LIST: "ports:list",
@@ -96,6 +102,10 @@ export const MsgType = {
 	PROJECT_FILE_SEARCH: "project:file-search",
 	/** Response with project file search results */
 	PROJECT_FILE_SEARCH_RESULT: "project:file-search:result",
+	/** Request a paged, stable project tree snapshot */
+	PROJECT_TREE: "project:tree",
+	/** Response with one page from a project tree snapshot */
+	PROJECT_TREE_RESULT: "project:tree:result",
 	/** Request to read original file content from git */
 	GIT_READ: "git:read",
 	/** Response with original file content from git */

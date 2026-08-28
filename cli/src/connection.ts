@@ -67,6 +67,7 @@ import {
 	type PortsListMsg,
 	type ProjectFileSearchMsg,
 	type ProjectInfoMsg,
+	type ProjectTreeMsg,
 	parseMessage,
 	ServerCloseCodeAndReason,
 	type SessionClientJoinedMsg,
@@ -75,6 +76,10 @@ import {
 	type SessionErrorMsg,
 	type SessionHostMsg,
 	type SysmonGetMsg,
+	type TcpTunnelCloseMsg,
+	type TcpTunnelEndMsg,
+	type TcpTunnelOpenMsg,
+	type TcpTunnelWindowMsg,
 	type TerminalAttachMsg,
 	type TerminalCloseMsg,
 	type TerminalCreateMsg,
@@ -137,13 +142,44 @@ export class UpgradeRejectedError extends Error {
 	}
 }
 
-type OutgoingMsg = HostToClientMsg | HostToServerMsg;
-type SendableMsg = {
+// Exported: the local WebSocket server (connection-hub.ts) is a second consumer
+// of the host transport's message types, alongside the relay path.
+export type OutgoingMsg = HostToClientMsg | HostToServerMsg;
+export type SendableMsg = {
 	[TType in OutgoingMsg["type"]]: Omit<
 		Extract<OutgoingMsg, { type: TType }>,
 		"id"
 	>;
 }[OutgoingMsg["type"]];
+
+export function decodeHostIncoming(raw: string): HostIncomingMsg | null {
+	const baseMsg = parseMessage(raw, BaseMsgSchema);
+	if (!baseMsg.data) return null;
+	if (PLAINTEXT_TYPES.has(baseMsg.data.type)) {
+		return parseMessage(baseMsg.data, HostIncomingMsgSchema).data ?? null;
+	}
+	if (baseMsg.data.type !== MsgType.ENCRYPTED) return null;
+	const envelope = parseMessage(baseMsg.data, EncryptedMsgSchema).data;
+	if (!envelope) return null;
+	const plaintext = decrypt(envelope.nonce, envelope.ciphertext);
+	if (!plaintext) return null;
+	return parseMessage(plaintext, HostIncomingMsgSchema).data ?? null;
+}
+
+export function encodeHostOutgoing(msg: SendableMsg): string {
+	const id = `host_${nanoid()}`;
+	const msgWithId = { id, ...msg } as OutgoingMsg;
+	if (PLAINTEXT_TYPES.has(msg.type)) return JSON.stringify(msgWithId);
+	const { nonce, ciphertext } = encrypt(JSON.stringify(msgWithId));
+	const clientId = "clientId" in msg ? msg.clientId : undefined;
+	return JSON.stringify({
+		id,
+		type: MsgType.ENCRYPTED,
+		...(clientId ? { clientId } : {}),
+		nonce,
+		ciphertext,
+	});
+}
 
 export class Connection extends EventEmitter {
 	hostInfo: HostInfo;
@@ -154,6 +190,8 @@ export class Connection extends EventEmitter {
 	readonly relayWsUrl: string;
 	private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 	clients: ConnectedClients;
+	private incomingSink: ((msg: HostIncomingMsg) => boolean) | null = null;
+	private incomingBinarySink: ((frame: Buffer) => boolean) | null = null;
 
 	constructor(relayWsUrl: string | URL, hostInfo: HostInfo, token: string) {
 		super();
@@ -166,6 +204,22 @@ export class Connection extends EventEmitter {
 		wsUrl.searchParams.set("token", token);
 
 		this.ws = new WebSocket(wsUrl.toString());
+	}
+
+	setIncomingSink(sink: ((msg: HostIncomingMsg) => boolean) | null): void {
+		this.incomingSink = sink;
+	}
+
+	setIncomingBinarySink(sink: ((frame: Buffer) => boolean) | null): void {
+		this.incomingBinarySink = sink;
+	}
+
+	isOpen(): boolean {
+		return this.ws.readyState === WebSocket.OPEN;
+	}
+
+	getBufferedAmount(): number {
+		return this.ws.bufferedAmount;
 	}
 
 	on(
@@ -253,6 +307,10 @@ export class Connection extends EventEmitter {
 		listener: (msg: ProjectFileSearchMsg) => void,
 	): this;
 	on(
+		eventName: typeof MsgType.PROJECT_TREE,
+		listener: (msg: ProjectTreeMsg) => void,
+	): this;
+	on(
 		eventName: typeof MsgType.GIT_READ,
 		listener: (msg: GitReadMsg) => void,
 	): this;
@@ -296,6 +354,23 @@ export class Connection extends EventEmitter {
 		eventName: typeof MsgType.WS_CLOSE,
 		listener: (msg: WsCloseMsg) => void,
 	): this;
+	on(
+		eventName: typeof MsgType.TCP_TUNNEL_OPEN,
+		listener: (msg: TcpTunnelOpenMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.TCP_TUNNEL_WINDOW,
+		listener: (msg: TcpTunnelWindowMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.TCP_TUNNEL_END,
+		listener: (msg: TcpTunnelEndMsg) => void,
+	): this;
+	on(
+		eventName: typeof MsgType.TCP_TUNNEL_CLOSE,
+		listener: (msg: TcpTunnelCloseMsg) => void,
+	): this;
+	on(eventName: "proxy:binary", listener: (frame: Buffer) => void): this;
 
 	on(
 		eventName: typeof MsgType.AI_SESSION_LIST,
@@ -546,6 +621,10 @@ export class Connection extends EventEmitter {
 		listener: (msg: ProjectFileSearchMsg) => void,
 	): this;
 	once(
+		eventName: typeof MsgType.PROJECT_TREE,
+		listener: (msg: ProjectTreeMsg) => void,
+	): this;
+	once(
 		eventName: typeof MsgType.GIT_READ,
 		listener: (msg: GitReadMsg) => void,
 	): this;
@@ -649,6 +728,7 @@ export class Connection extends EventEmitter {
 		eventName: typeof MsgType.PROJECT_FILE_SEARCH,
 		msg: ProjectFileSearchMsg,
 	): boolean;
+	emit(eventName: typeof MsgType.PROJECT_TREE, msg: ProjectTreeMsg): boolean;
 	emit(eventName: typeof MsgType.GIT_READ, msg: GitReadMsg): boolean;
 	emit(eventName: typeof MsgType.GIT_LOG, msg: GitLogMsg): boolean;
 	emit(
@@ -826,7 +906,8 @@ export class Connection extends EventEmitter {
 
 		// SAFETY: IncomingMsgSchema validated the message. The generic emit
 		// avoids exhaustive overload matching on every MsgType variant.
-		return super.emit(msg.type, msg) as boolean;
+		const handledBySink = this.incomingSink?.(msg) ?? false;
+		return (super.emit(msg.type, msg) as boolean) || handledBySink;
 	}
 
 	private wrapListener<TArgs extends unknown[]>(
@@ -912,7 +993,15 @@ export class Connection extends EventEmitter {
 						this.sessionId = msg.data.data.sessionId;
 						resolve();
 
-						this.ws.on("message", (nextRaw) => {
+						this.ws.on("message", (nextRaw, isBinary) => {
+							if (isBinary) {
+								this.incomingBinarySink?.(
+									Buffer.isBuffer(nextRaw)
+										? nextRaw
+										: Buffer.from(nextRaw as ArrayBuffer),
+								);
+								return;
+							}
 							this.handleIncomingMessage(nextRaw.toString());
 						});
 
@@ -992,7 +1081,7 @@ export class Connection extends EventEmitter {
 		}
 	}
 
-	sendBinary(data: Uint8Array | Buffer): boolean {
+	sendBinary(data: Uint8Array | Buffer, _clientId?: string): boolean {
 		if (this.ws.readyState !== WebSocket.OPEN) {
 			return false;
 		}
@@ -1033,6 +1122,14 @@ export class Connection extends EventEmitter {
 		this.ws.close();
 	}
 }
+
+export type HostConnection = Pick<
+	Connection,
+	"on" | "once" | "send" | "sendBinary" | "clients"
+> & {
+	isOpen(clientId?: string): boolean;
+	getBufferedAmount(clientId?: string): number;
+};
 
 function isRetryableError(err: unknown): boolean {
 	if (

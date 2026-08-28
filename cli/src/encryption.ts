@@ -120,3 +120,15 @@ export function decrypt(
 		return null;
 	}
 }
+
+export function decryptBytes(
+	nonce: Uint8Array,
+	ciphertext: Uint8Array,
+): Uint8Array | null {
+	try {
+		return sodium.crypto_secretbox_open_easy(ciphertext, nonce, getKey());
+	} catch {
+		logger.error("E2EE binary decryption failed — dropping frame");
+		return null;
+	}
+}

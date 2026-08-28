@@ -56,6 +56,7 @@ import {
 	GitReadMsgSchema,
 	ProjectFileSearchMsgSchema,
 	ProjectInfoMsgSchema,
+	ProjectTreeMsgSchema,
 } from "@/filesystem";
 import { HostUpdateMsgSchema } from "@/host/update";
 import {
@@ -74,6 +75,12 @@ import {
 	TerminalListMsgSchema,
 	TerminalResizeMsgSchema,
 } from "@/terminal";
+import {
+	TcpTunnelCloseMsgSchema,
+	TcpTunnelEndMsgSchema,
+	TcpTunnelOpenMsgSchema,
+	TcpTunnelWindowMsgSchema,
+} from "@/tunnel";
 
 export const ClientToHostMsgSchema = z.discriminatedUnion("type", [
 	TerminalCreateMsgSchema,
@@ -99,6 +106,7 @@ export const ClientToHostMsgSchema = z.discriminatedUnion("type", [
 	PortsKillMsgSchema,
 	ProjectInfoMsgSchema,
 	ProjectFileSearchMsgSchema,
+	ProjectTreeMsgSchema,
 	GitReadMsgSchema,
 	GitLogMsgSchema,
 	GitCommitFilesMsgSchema,
@@ -142,6 +150,10 @@ export const ClientToHostMsgSchema = z.discriminatedUnion("type", [
 	AiQuestionReplyMsgSchema,
 	AiQuestionRejectMsgSchema,
 	HostUpdateMsgSchema,
+	TcpTunnelOpenMsgSchema,
+	TcpTunnelWindowMsgSchema,
+	TcpTunnelEndMsgSchema,
+	TcpTunnelCloseMsgSchema,
 ]);
 
 export type ClientToHostMsg = z.infer<typeof ClientToHostMsgSchema>;
