@@ -61,6 +61,36 @@ function safePath(rootDir: string, requestedPath: string): string | null {
 	return resolved;
 }
 
+/**
+ * Whether a buffer should be sent as base64 rather than decoded as UTF-8.
+ *
+ * A NUL-byte check alone misses binary files that happen to have no NUL early
+ * on — JPEG, PNG, PDF and ZIP do not have to contain one. `toString("utf-8")`
+ * is not fatal, so those bytes become U+FFFD and `FS_READ_RESULT` carries
+ * `encoding: "utf-8"`, which makes the client re-encode the damaged string.
+ * Mirrors `isLikelyBinaryBytes` on the app side so both ends agree.
+ */
+function looksBinary(buffer: Buffer): boolean {
+	const sample = buffer.subarray(0, 8000);
+	if (sample.length === 0) return false;
+
+	let suspicious = 0;
+	for (const byte of sample) {
+		if (byte === 0) return true;
+		if (byte < 7 || (byte > 13 && byte < 32) || byte === 127) {
+			suspicious++;
+		}
+	}
+
+	try {
+		new TextDecoder("utf-8", { fatal: true }).decode(sample);
+	} catch {
+		return true;
+	}
+
+	return suspicious / sample.length > 0.3;
+}
+
 function findNearestExistingDir(targetPath: string): string | null {
 	let current = targetPath;
 	while (true) {
@@ -185,7 +215,7 @@ export function initFilesystemHandler(conn: Connection, rootDir: string) {
 			}
 
 			const buffer = fs.readFileSync(filePath);
-			const isBinary = buffer.includes(0);
+			const isBinary = looksBinary(buffer);
 
 			const respMsg: FsReadResultMsg = {
 				type: MsgType.FS_READ_RESULT,
