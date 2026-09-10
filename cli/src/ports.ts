@@ -111,6 +111,7 @@ export function initPortsHandler(conn: Connection) {
 				output = execSync("netstat -ano | findstr LISTENING", {
 					encoding: "utf-8",
 					timeout: 5000,
+					windowsHide: true,
 				});
 
 				const lines = output.trim().split("\n");
@@ -211,7 +212,10 @@ export function initPortsHandler(conn: Connection) {
 					}
 				}
 			} else if (platform === "win32") {
-				const result = spawnSync("netstat", ["-ano"], { encoding: "utf-8" });
+				const result = spawnSync("netstat", ["-ano"], {
+					encoding: "utf-8",
+					windowsHide: true,
+				});
 				const lines = (result.stdout || "").trim().split("\n");
 				for (const line of lines) {
 					if (!line.includes("LISTENING")) continue;
@@ -221,7 +225,9 @@ export function initPortsHandler(conn: Connection) {
 						const p = parseInt(parts[4], 10);
 						if (localAddr.endsWith(`:${portNum}`)) {
 							if (pid === null) pid = p;
-							spawnSync("taskkill", ["/F", "/PID", String(p)]);
+							spawnSync("taskkill", ["/F", "/PID", String(p)], {
+								windowsHide: true,
+							});
 						}
 					}
 				}

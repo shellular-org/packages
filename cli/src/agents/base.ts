@@ -293,6 +293,9 @@ export class ACP {
 				env: { ...process.env, ...(config.env ?? {}) },
 				stdio: ["pipe", "pipe", "pipe"],
 				shell: useShell,
+				// A shell-backed spawn allocates its own console window on Windows,
+				// which flashes on screen and can steal focus. No-op elsewhere.
+				windowsHide: true,
 			},
 		);
 

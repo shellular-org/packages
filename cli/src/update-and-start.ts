@@ -34,6 +34,7 @@ export function isShellularInstalledGlobally(): Promise<boolean> {
 		const child = spawn("npm", ["list", "-g", "shellular", "--depth=0"], {
 			stdio: "ignore",
 			shell: process.platform === "win32",
+			windowsHide: true,
 		});
 
 		child.on("close", (code) => {

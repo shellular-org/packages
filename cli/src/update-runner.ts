@@ -54,6 +54,7 @@ export async function runSelfUpdate(): Promise<void> {
 			stdio: ["ignore", logFd, logFd],
 			cwd: config.SHELLULAR_DIR,
 			env: process.env,
+			windowsHide: true,
 		});
 		child.unref();
 	} else {
