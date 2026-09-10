@@ -17,16 +17,21 @@ function escapePowerShell(s: string) {
 }
 
 function run(cmd: string, args: string[]) {
-	execFile(cmd, args, { timeout: 5000 }, (error, _stdout, stderr) => {
-		if (error) {
-			logger.debug(`${cmd} failed`, error);
-			return;
-		}
+	execFile(
+		cmd,
+		args,
+		{ timeout: 5000, windowsHide: true },
+		(error, _stdout, stderr) => {
+			if (error) {
+				logger.debug(`${cmd} failed`, error);
+				return;
+			}
 
-		if (stderr?.trim()) {
-			logger.debug(`${cmd} stderr: ${stderr.trim()}`);
-		}
-	});
+			if (stderr?.trim()) {
+				logger.debug(`${cmd} stderr: ${stderr.trim()}`);
+			}
+		},
+	);
 }
 
 export function notify({ title, body }: NotifyArgs): boolean {

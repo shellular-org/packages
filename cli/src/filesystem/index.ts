@@ -711,6 +711,7 @@ export function initFilesystemHandler(conn: Connection, rootDir: string) {
 					cwd: gitRoot,
 					encoding: "utf-8",
 					stdio: ["pipe", "pipe", "pipe"], // silence stderr
+					windowsHide: true,
 				});
 			} catch {
 				// File might not exist in HEAD (new file), return empty

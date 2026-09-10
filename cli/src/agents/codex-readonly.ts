@@ -64,6 +64,7 @@ export async function readCodexThread(
 	const child = spawn(command, ["app-server", "--stdio"], {
 		cwd,
 		stdio: ["pipe", "pipe", "pipe"],
+		windowsHide: true,
 	});
 
 	let stderr = "";

@@ -91,6 +91,7 @@ export function commandExists(command: string): boolean {
 			const result = spawnSync("where", [command], {
 				stdio: "ignore",
 				shell: false,
+				windowsHide: true,
 			});
 			return result.status === 0;
 		}
